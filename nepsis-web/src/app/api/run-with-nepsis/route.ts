@@ -16,6 +16,7 @@ export async function POST(req: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "OpenAI-Beta": "responses-2024-12-01",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
@@ -36,13 +37,14 @@ export async function POST(req: Request) {
     const data = await llmRes.json();
     const rawAnswer = data.output_text ?? "[No model output returned]";
 
-    const cgnResult = {
-      valid: true,
-      distance: 0,
-      violations: [] as unknown[],
-    };
-
-    return NextResponse.json({ rawAnswer, cgn: cgnResult });
+    return NextResponse.json({
+      rawAnswer,
+      cgn: {
+        valid: true,
+        distance: 0,
+        violations: [],
+      },
+    });
   } catch (err) {
     console.error("run-with-nepsis error:", err);
     return NextResponse.json({ error: "Internal error", detail: String(err) }, { status: 500 });
