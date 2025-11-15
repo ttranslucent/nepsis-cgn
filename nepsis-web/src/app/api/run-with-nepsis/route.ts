@@ -16,7 +16,7 @@ export async function POST(req: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "OpenAI-Beta": "responses-2024-12-01",
+        "OpenAI-Beta": "responses-2024-12-01=v1",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
