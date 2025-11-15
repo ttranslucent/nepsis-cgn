@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=58.0.4"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nepsis-cgn"
+version = "0.0.1"
+description = "Nepsis Constraint Geometry Navigation (NepsisCGN) – interpretant-aware constraint solver."
+authors = [{ name = "Trent Thorn" }]
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+    "mypy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
