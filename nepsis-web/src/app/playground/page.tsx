@@ -34,6 +34,12 @@ export default function PlaygroundPage() {
       return;
     }
 
+    if (!prompt.trim()) {
+      setLoading(false);
+      setError("Please enter a prompt before running NepsisCGN.");
+      return;
+    }
+
     try {
       const res = await fetch("/api/run-with-nepsis", {
         method: "POST",
@@ -76,8 +82,7 @@ export default function PlaygroundPage() {
 
         <button
           onClick={runNepsis}
-          disabled={loading || !prompt}
-          className="rounded-full bg-nepsis-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+          className="mt-2 rounded-full bg-nepsis-accent px-4 py-2 text-sm font-medium text-black hover:bg-nepsis-accentSoft focus:outline-none focus:ring-2 focus:ring-nepsis-accent"
         >
           {loading ? "Running..." : "Run with NepsisCGN"}
         </button>
