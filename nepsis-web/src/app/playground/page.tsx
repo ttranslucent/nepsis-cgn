@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type CgnResult = {
   valid: boolean;
@@ -14,6 +14,12 @@ export default function PlaygroundPage() {
   const [cgn, setCgn] = useState<CgnResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("nepsis_openai_key");
+    setConnected(!!stored);
+  }, []);
 
   async function runNepsis() {
     setLoading(true);
@@ -53,6 +59,9 @@ export default function PlaygroundPage() {
     <div className="flex h-full flex-col gap-4 px-4 py-6">
       <div className="mx-auto w-full max-w-4xl">
         <h1 className="mb-2 text-xl font-semibold">NepsisCGN Playground</h1>
+        <p className="mb-2 text-xs text-nepsis-muted">
+          Status: {connected ? "Connected to OpenAI (local key)" : "Not connected – add a key in Settings."}
+        </p>
         <p className="mb-4 text-sm text-nepsis-muted">
           Enter a prompt, run your LLM through NepsisCGN, and inspect the output and constraint
           evaluation side-by-side.
