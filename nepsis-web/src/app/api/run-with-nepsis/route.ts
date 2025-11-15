@@ -5,14 +5,14 @@ export async function POST(req: Request) {
     const { prompt, apiKey } = await req.json();
 
     if (!prompt || typeof prompt !== "string") {
-      return NextResponse.json({ error: "prompt is required" }, { status: 400 });
+      return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
     }
 
     if (!apiKey || typeof apiKey !== "string") {
-      return NextResponse.json({ error: "apiKey is required" }, { status: 400 });
+      return NextResponse.json({ error: "API key is required." }, { status: 400 });
     }
 
-    const completionRes = await fetch("https://api.openai.com/v1/chat/completions", {
+    const llmRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -20,20 +20,12 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a helpful assistant used for testing NepsisCGN. Answer clearly and concisely.",
-          },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.2,
+        input: prompt,
       }),
     });
 
-    if (!completionRes.ok) {
-      const errText = await completionRes.text();
+    if (!llmRes.ok) {
+      const errText = await llmRes.text();
       console.error("OpenAI error:", errText);
       return NextResponse.json(
         { error: "OpenAI API error", detail: errText },
@@ -41,9 +33,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const completionData = await completionRes.json();
-    const rawAnswer =
-      completionData?.choices?.[0]?.message?.content ?? "[No content returned from model]";
+    const data = await llmRes.json();
+    const rawAnswer = data.output_text ?? "[No model output returned]";
 
     const cgnResult = {
       valid: true,
