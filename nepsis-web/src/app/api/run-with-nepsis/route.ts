@@ -21,7 +21,17 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4.1-mini",
-        input: prompt,
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: prompt,
+              },
+            ],
+          },
+        ],
       }),
     });
 
