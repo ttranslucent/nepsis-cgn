@@ -45,7 +45,19 @@ export async function POST(req: Request) {
     }
 
     const data = await llmRes.json();
-    const rawAnswer = data.output_text ?? "[No model output returned]";
+    let rawAnswer = "[No model output returned]";
+
+    if (typeof data.output_text === "string") {
+      rawAnswer = data.output_text;
+    } else if (
+      Array.isArray(data.output) &&
+      data.output.length > 0 &&
+      data.output[0].content &&
+      Array.isArray(data.output[0].content) &&
+      data.output[0].content[0]?.text
+    ) {
+      rawAnswer = data.output[0].content[0].text;
+    }
 
     return NextResponse.json({
       rawAnswer,
