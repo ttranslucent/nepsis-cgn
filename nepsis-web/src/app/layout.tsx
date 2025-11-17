@@ -26,6 +26,9 @@ export default function RootLayout({
               <a href="/playground" className="hover:text-nepsis-accent">
                 Playground
               </a>
+              <a href="/proto-puzzle" className="hover:text-nepsis-accent">
+                Proto Puzzle
+              </a>
               <a href="/settings" className="hover:text-nepsis-accent">
                 Settings
               </a>
