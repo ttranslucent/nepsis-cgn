@@ -24,6 +24,7 @@ class Utf8Manifold(ManifoldSpec):
 
 class Utf8PuzzleDomainHandler(DomainHandler):
   domain_name: str = "utf8_puzzle"
+  default_template_id: str = "invisible_equivalence"
 
   def detect(self, query: str) -> Optional[DomainGuess]:
     lower = query.lower()

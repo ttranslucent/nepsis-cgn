@@ -80,8 +80,13 @@ class NepsisRA:
   ) -> Dict[str, Any]:
     detection = self.detect(query)
     domain = override_domain or detection.primary.domain
-    template_id = override_template or detection.primary.template_id
     handler = self._get_handler(domain)
+
+    template_id = override_template
+    if template_id is None:
+      template_id = self._template_for_domain(detection, domain)
+    if template_id is None:
+      template_id = getattr(handler, "default_template_id", detection.primary.template_id)
 
     spec = handler.parse_spec(query)
     if puzzle_id is not None:
@@ -103,6 +108,12 @@ class NepsisRA:
       "manifold": manifold,
       "trace": trace,
     }
+
+  def _template_for_domain(self, detection: DetectionResult, domain: str) -> Optional[str]:
+    for guess in [detection.primary] + detection.alternatives:
+      if guess.domain == domain:
+        return guess.template_id
+    return None
 
   def detect(self, query: str) -> DetectionResult:
     guesses: List[DomainGuess] = []

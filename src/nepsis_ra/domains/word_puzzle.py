@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
+import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
 from nepsis_ra.core import (
@@ -21,8 +24,21 @@ class WordPuzzleManifold(ManifoldSpec):
   constraints: List[Dict[str, Any]]
 
 
+WORDLIST_PATH = pathlib.Path(__file__).parent.parent / "data" / "wordlist.txt"
+
+
+@lru_cache(maxsize=1)
+def load_dictionary() -> List[str]:
+  if not WORDLIST_PATH.exists():
+    return []
+
+  with WORDLIST_PATH.open() as f:
+    return [line.strip().lower() for line in f if line.strip()]
+
+
 class WordPuzzleDomainHandler(DomainHandler):
   domain_name: str = "word_puzzle"
+  default_template_id: str = "exact_anagram"
 
   def detect(self, query: str) -> Optional[DomainGuess]:
     lower = query.lower()
@@ -46,8 +62,15 @@ class WordPuzzleDomainHandler(DomainHandler):
     if "letters:" in lower:
       part = lower.split("letters:", 1)[1].strip()
       tokens = part.replace(",", " ").split()
-      letters = [token for token in tokens if token.isalpha()]
-      spec["letters"] = " ".join(letters).upper()
+      letters: List[str] = []
+      for token in tokens:
+        if token.isalpha() and len(token) == 1:
+          letters.append(token.upper())
+          continue
+        if letters:
+          break
+      if letters:
+        spec["letters"] = " ".join(letters)
 
     for token in lower.replace(",", " ").split():
       if token.isdigit():
@@ -80,24 +103,64 @@ class WordPuzzleDomainHandler(DomainHandler):
     )
 
   def solve(self, manifold: WordPuzzleManifold, spec: Dict[str, Any]) -> Tuple[Any, RunTrace]:
-    # TODO: plug into real solver; placeholder for now
-    dummy_answer = None
-    constraint_results = [
-      ConstraintResult("LengthConstraint", 0.0, "Not evaluated (stub)."),
-      ConstraintResult("LetterMultisetConstraint", 0.0, "Not evaluated (stub)."),
-      ConstraintResult("DictionaryConstraint", 0.0, "Not evaluated (stub)."),
-    ]
-    step = EvaluationStep(step_index=0, candidate="<stub>", total_score=0.0, constraint_results=constraint_results)
+    letters = manifold.letters.replace(" ", "").lower()
+    target_len = manifold.target_length
+    allow_repeats = manifold.allow_repeats
+
+    dict_words = load_dictionary()
+    allowed_counter = Counter(letters)
+
+    steps: List[EvaluationStep] = []
+    best: Optional[str] = None
+    candidate_index = 0
+
+    for w in dict_words:
+      if len(w) != target_len:
+        continue
+
+      crs: List[ConstraintResult] = []
+
+      score_len = 0.0 if len(w) == target_len else 1.0
+      crs.append(ConstraintResult("LengthConstraint", score_len, f"len={len(w)}, target={target_len}"))
+
+      candidate_counter = Counter(w)
+      if allow_repeats:
+        ok_multiset = all(candidate_counter[ch] <= allowed_counter[ch] for ch in candidate_counter)
+      else:
+        ok_multiset = candidate_counter == allowed_counter
+
+      score_multiset = 0.0 if ok_multiset else 1.0
+      crs.append(ConstraintResult("LetterMultisetConstraint", score_multiset, f"ok={ok_multiset}"))
+
+      score_dict = 0.0
+      crs.append(ConstraintResult("DictionaryConstraint", score_dict, "in wordlist"))
+
+      total_score = sum(cr.score for cr in crs)
+      steps.append(
+        EvaluationStep(
+          step_index=candidate_index,
+          candidate=w,
+          total_score=total_score,
+          constraint_results=crs,
+        )
+      )
+      candidate_index += 1
+
+      if total_score == 0.0:
+        best = w
+        break
+
+    success = best is not None
 
     trace = RunTrace(
-      run_id="word_puzzle-stub",
+      run_id="word_puzzle-v0.1",
       domain=manifold.domain,
       template_id=manifold.template_id,
       puzzle_id=spec.get("puzzle_id"),
-      steps=[step],
-      final_choice=dummy_answer,
-      success=False,
-      meta={"note": "WordPuzzleDomainHandler.solve() is still a stub."},
+      steps=steps,
+      final_choice=best,
+      success=success,
+      meta={"letters": letters, "target_length": target_len},
     )
 
-    return dummy_answer, trace
+    return best, trace
