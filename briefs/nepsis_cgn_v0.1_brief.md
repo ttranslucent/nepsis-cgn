@@ -5,7 +5,7 @@ NepsisCGN v0.2-pre update (work-in-progress)
 - Manifolds:
   - WordGameManifold: multiset red-channel with repair deltas.
   - UTF8HiddenManifold: enforces hidden U+200B marker after target phrase.
-  - SeedManifold (Voronoi-based): neutral adversarial reasoning demo with forbidden-token ruin seed and utility seeds.
+  - SeedManifold (Voronoi-based): neutral adversarial reasoning demo with forbidden-token ruin seed and utility seeds; drift detection based on region flips/ruin-distance oscillation; blue score uses Voronoi margin.
 - Geometry: added additive-weighted NepsisVoronoi engine for seed-based partitioning.
 - Meta: DevianceMonitor adjusts tau_R when near-miss history is high.
 - CLI: supports --mode word_game|utf8|seed and --model selection; routes through provider factory.

@@ -133,9 +133,8 @@ class WordGameManifold(BaseManifold):
                 },
             )
 
-        score = len(candidate) * 10
-        if len(candidate) == len(source_letters_list):
-            score += 50
+        # Normalized blue score based on how completely the candidate uses the available letters.
+        score = min(1.0, len(candidate) / max(1, len(source_letters_list)))
 
         return ValidationResult(
             outcome="SUCCESS",
