@@ -93,16 +93,43 @@ class SeedManifold(BaseManifold):
         violations: List[str] = []
         repair_hints: List[str] = []
 
+        # Compute nearest safe/ruin distances (raw metrics, unweighted) for margin and blue score
+        safe_dists = [d for seed, d in result.raw_metrics.items() if not seed.startswith("RUIN_")]
+        ruin_dists = [d for seed, d in result.raw_metrics.items() if seed.startswith("RUIN_")]
+        d_safe = min(safe_dists) if safe_dists else None
+        d_ruin = min(ruin_dists) if ruin_dists else None
+
         if result.is_ruin_region:
             violations.append(f"Ruin seed dominated: {result.dominant_seed}")
             repair_hints.append("Remove forbidden tokens and satisfy required tokens.")
 
-        # Basic utility scoring: inverse of dominant value if not ruin
         blue_score = 0.0
-        if not result.is_ruin_region:
+        if not result.is_ruin_region and d_safe is not None and d_ruin is not None:
+            # Voronoi-style safety margin: d_ruin / (d_ruin + d_safe)
+            denom = d_ruin + d_safe
+            blue_score = d_ruin / denom if denom > 0 else 0.0
+        elif not result.is_ruin_region:
             blue_score = max(0.0, 1.0 / (1.0 + max(result.dominant_value, 0.0)))
-            if "VALID_OK_TOKEN" not in result.per_seed_values:
-                repair_hints.append("Include token 'OK' to satisfy utility.")
+
+        if not result.is_ruin_region and "VALID_OK_TOKEN" not in result.per_seed_values:
+            repair_hints.append("Include token 'OK' to satisfy utility.")
+
+        # Drift detection: region flip or large ruin-distance oscillation across attempts
+        drift_detected = False
+        last_region = projection.trace.get("last_region")
+        last_ruin_distance = projection.trace.get("last_ruin_distance")
+        current_ruin_distance = d_ruin
+        if last_region is not None and last_region != result.dominant_seed:
+            drift_detected = True
+        if (
+            last_ruin_distance is not None
+            and current_ruin_distance is not None
+            and abs(last_ruin_distance - current_ruin_distance) > 0.5
+        ):
+            drift_detected = True
+
+        projection.trace["last_region"] = result.dominant_seed
+        projection.trace["last_ruin_distance"] = current_ruin_distance
 
         success = not violations
         if not success:
@@ -113,7 +140,7 @@ class SeedManifold(BaseManifold):
                 metrics={
                     "red_violations": violations,
                     "blue_score": blue_score,
-                    "drift_detected": True,
+                    "drift_detected": drift_detected or True,
                     "dominant_seed": result.dominant_seed,
                 },
                 final_artifact=text,
@@ -130,7 +157,7 @@ class SeedManifold(BaseManifold):
             metrics={
                 "red_violations": [],
                 "blue_score": blue_score,
-                "drift_detected": False,
+                "drift_detected": drift_detected,
                 "dominant_seed": result.dominant_seed,
             },
             final_artifact=text,
