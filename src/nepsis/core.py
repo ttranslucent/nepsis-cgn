@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .deviance import DevianceMonitor
 from .llm import BaseLLMProvider, SimulatedWordGameLLM
 from .manifolds import BaseManifold, ProjectionSpec, TriageResult, ValidationResult, WordGameManifold
 from .scoring import assess_channel
@@ -66,6 +67,7 @@ class NepsisSupervisor:
         self.llm: BaseLLMProvider = llm_provider or SimulatedWordGameLLM()
         self.max_retries = max_retries
         self.trace_log: List[Dict[str, Any]] = []
+        self.deviance_monitor: Optional[DevianceMonitor] = DevianceMonitor()
 
     def execute(self, raw_query: str, context: str = "cli") -> Dict[str, Any]:
         """
@@ -101,6 +103,14 @@ class NepsisSupervisor:
             validation = self._run_validation(projection_spec, raw_artifact)
             self.trace_log.append(validation)
 
+            # Deviance tracking
+            manifold_name = projection_spec.get("manifold_context", {}).get("domain") if isinstance(projection_spec, dict) else projection_spec.manifold_context.get("domain")
+            if self.deviance_monitor and manifold_name:
+                metrics = validation.get("candidate_metrics", {})
+                blue = metrics.get("blue_score", 0.0)
+                drift = metrics.get("drift_detected", False)
+                self.deviance_monitor.record(manifold_name, validation["outcome"], blue, drift)
+
             if validation["outcome"] == "SUCCESS":
                 print("   [RED CHANNEL] CLEAR. Candidate Accepted.")
                 return validation
@@ -133,6 +143,11 @@ class NepsisSupervisor:
             channel = ChannelState(**assess_channel(raw_query))
         else:
             channel = ChannelState(red=1.0, blue=0.0, tau_R=0.2)
+
+        # Adjust tau_R based on deviance history
+        manifold_name = triage.detected_manifold
+        if self.deviance_monitor and manifold_name:
+            channel.tau_R = self.deviance_monitor.adjust_tau(manifold_name, channel.tau_R)
 
         return {
             "$schema": "nepsis/triage/v1",

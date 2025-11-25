@@ -9,4 +9,5 @@ __all__ = [
     "core",
     "scoring",
     "manifolds",
+    "geometry",
 ]

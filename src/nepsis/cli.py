@@ -3,7 +3,8 @@ import json
 import sys
 
 from .core import NepsisSupervisor
-from .llm import SimulatedWordGameLLM
+from .llm import get_llm_provider
+from .manifolds import UTF8HiddenManifold, WordGameManifold
 
 
 def main():
@@ -12,16 +13,20 @@ def main():
     # Mode selection (future expansion)
     parser.add_argument(
         "--mode",
-        choices=["word_game", "python", "arc"],
+        choices=["word_game", "utf8", "seed", "python", "arc"],
         default="word_game",
         help="Manifold selection",
     )
 
     # Word Game arguments
     parser.add_argument("--letters", type=str, help="Letters for the word game (e.g., 'J A N I G L L')")
+    # UTF8 arguments
+    parser.add_argument("--target", type=str, help="Target phrase for utf8 hidden mode (default: NEPSIS)")
+    parser.add_argument("--candidate", type=str, help="Raw candidate text for seed manifold (default: OK)")
 
     # Generic arguments
     parser.add_argument("--query", type=str, help="Raw query string (for non-word-game modes)")
+    parser.add_argument("--model", type=str, default="simulated", help="Model provider name (e.g., simulated, gpt-4o)")
     parser.add_argument("--verbose", action="store_true", help="Show full JSON traces")
 
     args = parser.parse_args()
@@ -32,6 +37,10 @@ def main():
             print("Error: --letters required for word_game mode.")
             sys.exit(1)
         raw_query = args.letters
+    elif args.mode == "utf8":
+        raw_query = args.target or "NEPSIS"
+    elif args.mode == "seed":
+        raw_query = args.candidate or "OK"
     else:
         raw_query = args.query
 
@@ -39,15 +48,33 @@ def main():
         print("Error: No input provided.")
         sys.exit(1)
 
-    # 2. Initialize supervisor with a pluggable LLM provider (simulator for now)
-    llm_engine = SimulatedWordGameLLM()
-    supervisor = NepsisSupervisor(llm_provider=llm_engine)
+    # 2. Initialize manifold
+    if args.mode == "word_game":
+        manifold = WordGameManifold()
+    elif args.mode == "utf8":
+        manifold = UTF8HiddenManifold(target_phrase=raw_query)
+    elif args.mode == "seed":
+        from .manifolds import SeedManifold
 
-    # 3. Execute
+        manifold = SeedManifold()
+    else:
+        print(f"Error: Mode '{args.mode}' not yet implemented.")
+        sys.exit(1)
+
+    # 3. Initialize LLM provider (credentialed via env)
+    try:
+        llm_engine = get_llm_provider(args.model)
+    except Exception as exc:
+        print(f"Error initializing model '{args.model}': {exc}")
+        sys.exit(1)
+
+    supervisor = NepsisSupervisor(default_manifold=manifold, llm_provider=llm_engine)
+
+    # 4. Execute
     print(f"--- Booting Nepsis [Mode: {args.mode}] ---")
     report = supervisor.execute(raw_query, context="cli")
 
-    # 4. Render output
+    # 5. Render output
     outcome = report.get("outcome", "UNKNOWN")
 
     if outcome == "SUCCESS":
@@ -69,7 +96,7 @@ def main():
         print("\nUNKNOWN OUTCOME")
         print(json.dumps(report, indent=2))
 
-    # 5. Dump trace if requested
+    # 6. Dump trace if requested
     if args.verbose:
         print("\n--- JSON TRACE ---")
         print(json.dumps(supervisor.trace_log, indent=2))
