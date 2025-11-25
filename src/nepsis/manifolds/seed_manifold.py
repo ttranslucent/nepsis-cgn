@@ -140,7 +140,7 @@ class SeedManifold(BaseManifold):
                 metrics={
                     "red_violations": violations,
                     "blue_score": blue_score,
-                    "drift_detected": drift_detected or True,
+                    "drift_detected": drift_detected,
                     "dominant_seed": result.dominant_seed,
                 },
                 final_artifact=text,
