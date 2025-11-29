@@ -100,14 +100,21 @@ class OpenAIProvider(BaseLLMProvider):
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_instruction or "You are a precise reasoning engine. Output exactly what is requested."},
+                    {
+                        "role": "system",
+                        "content": system_instruction
+                        or "You are a precise reasoning engine. Output exactly what is requested.",
+                    },
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.0,
             )
-            return (response.choices[0].message.content or "").strip()
+            content = response.choices[0].message.content or ""
+            if content.startswith("```"):
+                content = content.strip("`").replace("json\n", "").replace("python\n", "")
+            return content.strip()
         except Exception as exc:
-            return f"Error: {exc}"
+            raise RuntimeError(f"OpenAI API Error ({self.model}): {exc}") from exc
 
 
 def get_llm_provider(model_name: str) -> BaseLLMProvider:
@@ -117,6 +124,8 @@ def get_llm_provider(model_name: str) -> BaseLLMProvider:
     normalized = model_name.lower()
     if normalized == "simulated":
         return SimulatedWordGameLLM()
-    if normalized in {"openai"} or normalized.startswith("gpt"):
+    if normalized == "openai":
+        return OpenAIProvider(model="gpt-4o")
+    if normalized.startswith("gpt"):
         return OpenAIProvider(model=model_name)
     raise ValueError(f"Unknown model architecture: {model_name}")
