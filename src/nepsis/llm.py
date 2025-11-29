@@ -117,6 +117,6 @@ def get_llm_provider(model_name: str) -> BaseLLMProvider:
     normalized = model_name.lower()
     if normalized == "simulated":
         return SimulatedWordGameLLM()
-    if normalized.startswith("gpt"):
+    if normalized in {"openai"} or normalized.startswith("gpt"):
         return OpenAIProvider(model=model_name)
     raise ValueError(f"Unknown model architecture: {model_name}")

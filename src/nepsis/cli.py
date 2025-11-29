@@ -13,7 +13,7 @@ def main():
     # Mode selection (future expansion)
     parser.add_argument(
         "--mode",
-        choices=["word_game", "utf8", "seed", "python", "arc"],
+        choices=["word_game", "utf8", "seed", "arc", "python"],
         default="word_game",
         help="Manifold selection",
     )
@@ -26,7 +26,13 @@ def main():
 
     # Generic arguments
     parser.add_argument("--query", type=str, help="Raw query string (for non-word-game modes)")
-    parser.add_argument("--model", type=str, default="simulated", help="Model provider name (e.g., simulated, gpt-4o)")
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["simulated", "openai"],
+        default="simulated",
+        help="Model provider name (e.g., simulated, openai)",
+    )
     parser.add_argument("--verbose", action="store_true", help="Show full JSON traces")
 
     args = parser.parse_args()
@@ -41,6 +47,8 @@ def main():
         raw_query = args.target or "NEPSIS"
     elif args.mode == "seed":
         raw_query = args.candidate or "OK"
+    elif args.mode == "arc":
+        raw_query = args.query or "[[0,0,0],[0,1,0],[0,0,0],[2,2,2]]"
     else:
         raw_query = args.query
 
@@ -57,6 +65,10 @@ def main():
         from .manifolds import SeedManifold
 
         manifold = SeedManifold()
+    elif args.mode == "arc":
+        from .manifolds import GravityRoomManifold
+
+        manifold = GravityRoomManifold()
     else:
         print(f"Error: Mode '{args.mode}' not yet implemented.")
         sys.exit(1)
