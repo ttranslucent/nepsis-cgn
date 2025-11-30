@@ -1,6 +1,7 @@
 """Manifold registry and base abstractions."""
 
 from .base import BaseManifold, ProjectionSpec, TriageResult, ValidationResult
+from .arc_attach import ArcAttachManifold
 from .gravity_room import GravityRoomManifold
 from .seed_manifold import SeedManifold
 from .utf8_hidden import UTF8HiddenManifold
@@ -14,6 +15,7 @@ __all__ = [
     "ValidationResult",
     "SeedManifold",
     "GravityRoomManifold",
+    "ArcAttachManifold",
     "UTF8HiddenManifold",
     "Utf8StreamManifold",
     "WordGameManifold",

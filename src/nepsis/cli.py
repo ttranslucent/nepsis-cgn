@@ -13,7 +13,7 @@ def main():
     # Mode selection (future expansion)
     parser.add_argument(
         "--mode",
-        choices=["word_game", "utf8", "seed", "arc", "python"],
+        choices=["word_game", "utf8", "seed", "arc", "arc_attach", "python"],
         default="word_game",
         help="Manifold selection",
     )
@@ -49,6 +49,8 @@ def main():
         raw_query = args.candidate or "OK"
     elif args.mode == "arc":
         raw_query = args.query or "[[0,0,0],[0,1,0],[0,0,0],[2,2,2]]"
+    elif args.mode == "arc_attach":
+        raw_query = args.query
     else:
         raw_query = args.query
 
@@ -69,6 +71,10 @@ def main():
         from .manifolds import GravityRoomManifold
 
         manifold = GravityRoomManifold()
+    elif args.mode == "arc_attach":
+        from .manifolds import ArcAttachManifold
+
+        manifold = ArcAttachManifold()
     else:
         print(f"Error: Mode '{args.mode}' not yet implemented.")
         sys.exit(1)
