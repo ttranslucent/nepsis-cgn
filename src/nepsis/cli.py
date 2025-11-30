@@ -35,6 +35,11 @@ def main():
         help="Model provider name (e.g., simulated, openai)",
     )
     parser.add_argument("--verbose", action="store_true", help="Show full JSON traces")
+    parser.add_argument(
+        "--quiet-json",
+        action="store_true",
+        help="Emit only the final artifact as JSON (suppresses logs/pretty printing).",
+    )
 
     args = parser.parse_args()
 
@@ -96,8 +101,14 @@ def main():
     supervisor = NepsisSupervisor(default_manifold=manifold, llm_provider=llm_engine)
 
     # 4. Execute
-    print(f"--- Booting Nepsis [Mode: {args.mode}] ---")
+    if not args.quiet_json:
+        print(f"--- Booting Nepsis [Mode: {args.mode}] ---")
     report = supervisor.execute(raw_query, context="cli")
+
+    # Quiet JSON mode for benchmarking
+    if args.quiet_json:
+        print(json.dumps(report.get("final_artifact", report)))
+        return
 
     # 5. Render output
     outcome = report.get("outcome", "UNKNOWN")
