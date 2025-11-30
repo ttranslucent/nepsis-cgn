@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 
 from .core import NepsisSupervisor
@@ -53,6 +54,12 @@ def main():
         raw_query = args.query
     else:
         raw_query = args.query
+
+    # If raw_query points to a file, read its contents
+    if raw_query and os.path.exists(raw_query) and os.path.isfile(raw_query):
+        print(f"--- [CLI] Reading Query from File: {raw_query} ---")
+        with open(raw_query, "r") as f:
+            raw_query = f.read()
 
     if not raw_query:
         print("Error: No input provided.")

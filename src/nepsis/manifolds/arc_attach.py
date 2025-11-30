@@ -41,6 +41,8 @@ class ArcAttachManifold(BaseManifold):
     # --- PROJECTION ---
     def project(self, triage: TriageResult) -> ProjectionSpec:
         bundle = triage.manifold_meta.get("grid_bundle") or {}
+        if not bundle or "train" not in bundle:
+            raise ValueError("CRITICAL: ArcAttachManifold received no training data. Check JSON input.")
         train_pairs = bundle.get("train", [])
         test_inputs = bundle.get("test", [])
         target_input = test_inputs[0]["input"] if test_inputs else []
