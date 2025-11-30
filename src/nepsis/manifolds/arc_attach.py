@@ -236,14 +236,13 @@ class ArcAttachManifold(BaseManifold):
                     red_violations.append(
                         f"Constraint Violation (FIXED): Expected output shape {target_hint}, got {candidate_shape}."
                     )
-
-                elif mode == "DYNAMIC":
-                    # For extraction tasks, output is usually smaller than input.
-                    # If LLM returns input size, it's likely lazy/failed.
-                    if test_input_shape and candidate_shape == test_input_shape:
-                        red_violations.append(
-                            "Constraint Violation (DYNAMIC): Puzzle implies object extraction. Output should likely be smaller than input."
-                        )
+            elif mode == "DYNAMIC":
+                # For extraction tasks, output is usually smaller than input.
+                # If LLM returns input size, it's likely lazy/failed.
+                if test_input_shape and candidate_shape == test_input_shape:
+                    red_violations.append(
+                        "Constraint Violation (DYNAMIC): Puzzle implies object extraction. Output should likely be smaller than input."
+                    )
 
         outcome = "SUCCESS" if not red_violations else "REJECTED"
         if outcome == "SUCCESS" and grid is not None:
