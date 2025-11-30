@@ -129,6 +129,55 @@ class ArcAttachManifold(BaseManifold):
                 continue
         return None
 
+    # --- BLUE CHANNEL: The Quality Judge ---
+    def _calculate_blue_score(self, grid: Grid, context: Dict[str, Any]) -> float:
+        """
+        Heuristic blue score when ground truth is unknown.
+        Factors:
+          - Palette consistency (penalize hallucinated colors unless training shows new colors)
+          - For ISOMETRIC tasks, penalize lazy copies or total noise
+        """
+        score = 1.0
+        task_data = context.get("arc_task", {}) or {}
+        mode = context.get("constraint_mode")
+
+        # Palette consistency
+        if task_data and "test" in task_data:
+            input_grid = task_data["test"][0].get("input", [])
+            input_colors = set(c for row in input_grid for c in row) if input_grid else set()
+            output_colors = set(c for row in grid for c in row) if grid else set()
+
+            allows_new_colors = False
+            for p in task_data.get("train", []):
+                t_in = set(c for r in p.get("input", []) for c in r)
+                t_out = set(c for r in p.get("output", []) for c in r)
+                if not t_out.issubset(t_in):
+                    allows_new_colors = True
+                    break
+
+            if not allows_new_colors:
+                new_colors = output_colors - input_colors
+                if new_colors:
+                    score -= 0.3  # hallucinated palette
+
+        # ISOMETRIC laziness/noise checks
+        if mode == "ISOMETRIC" and task_data.get("test"):
+            input_grid = task_data["test"][0].get("input", [])
+            if input_grid:
+                diffs = 0
+                total = len(grid) * len(grid[0]) if grid else 1
+                for r in range(len(grid)):
+                    for c in range(len(grid[0])):
+                        if r < len(input_grid) and c < len(input_grid[0]):
+                            if grid[r][c] != input_grid[r][c]:
+                                diffs += 1
+                if diffs == 0:
+                    score -= 0.2  # pure copy
+                if diffs == total:
+                    score -= 0.1  # total noise
+
+        return max(0.0, min(1.0, score))
+
     # --- VALIDATE: The Adaptive Guardrails ---
     def validate(self, projection: ProjectionSpec, artifact: Any) -> ValidationResult:
         raw = artifact
@@ -188,17 +237,34 @@ class ArcAttachManifold(BaseManifold):
                         f"Constraint Violation (FIXED): Expected output shape {target_hint}, got {candidate_shape}."
                     )
 
-            elif mode == "DYNAMIC":
-                # For extraction tasks, output is usually smaller than input.
-                # If LLM returns input size, it's likely lazy/failed.
-                if test_input_shape and candidate_shape == test_input_shape:
-                    red_violations.append(
-                        "Constraint Violation (DYNAMIC): Puzzle implies object extraction. Output should likely be smaller than input."
-                    )
+                elif mode == "DYNAMIC":
+                    # For extraction tasks, output is usually smaller than input.
+                    # If LLM returns input size, it's likely lazy/failed.
+                    if test_input_shape and candidate_shape == test_input_shape:
+                        red_violations.append(
+                            "Constraint Violation (DYNAMIC): Puzzle implies object extraction. Output should likely be smaller than input."
+                        )
 
         outcome = "SUCCESS" if not red_violations else "REJECTED"
-        if outcome == "SUCCESS":
-            blue_score = 1.0
+        if outcome == "SUCCESS" and grid is not None:
+            # Prefer ground-truth scoring if available
+            task_data = projection.manifold_context.get("arc_task", {}) or {}
+            ground_truth = None
+            if task_data.get("test") and "output" in task_data["test"][0]:
+                ground_truth = task_data["test"][0].get("output")
+            if ground_truth:
+                if len(grid) != len(ground_truth) or (len(grid) > 0 and len(grid[0]) != len(ground_truth[0])):
+                    blue_score = 0.0
+                else:
+                    total = len(grid) * len(grid[0]) if grid else 1
+                    errors = 0
+                    for r in range(len(grid)):
+                        for c in range(len(grid[0])):
+                            if grid[r][c] != ground_truth[r][c]:
+                                errors += 1
+                    blue_score = max(0.0, 1.0 - (errors / total))
+            else:
+                blue_score = self._calculate_blue_score(grid, projection.manifold_context)
 
         repair = None
         if outcome == "REJECTED":

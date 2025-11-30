@@ -61,11 +61,13 @@ class NepsisSupervisor:
         default_manifold: Optional[BaseManifold] = None,
         llm_provider: Optional[BaseLLMProvider] = None,
         max_retries: int = 3,
+        blue_threshold: float = 0.0,
     ):
         self.system_id = system_id
         self.default_manifold = default_manifold or WordGameManifold()
         self.llm: BaseLLMProvider = llm_provider or SimulatedWordGameLLM()
         self.max_retries = max_retries
+        self.blue_threshold = blue_threshold
         self.trace_log: List[Dict[str, Any]] = []
         self.deviance_monitor: Optional[DevianceMonitor] = DevianceMonitor()
 
@@ -112,8 +114,21 @@ class NepsisSupervisor:
                 self.deviance_monitor.record(manifold_name, validation["outcome"], blue, drift)
 
             if validation["outcome"] == "SUCCESS":
-                print("   [RED CHANNEL] CLEAR. Candidate Accepted.")
-                return validation
+                # Blue threshold veto
+                blue = validation.get("candidate_metrics", {}).get("blue_score", 1.0)
+                if self.blue_threshold and blue < self.blue_threshold:
+                    print(f"   [BLUE CHANNEL] VETO. Score {blue:.2f} < {self.blue_threshold}.")
+                    validation["outcome"] = "REJECTED"
+                    hints = ["Solution is valid structurally but failed quality checks."]
+                    validation["repair"] = validation.get("repair") or {
+                        "needed": True,
+                        "hints": hints,
+                        "next_projection_delta": "Review palette/geometry; avoid lazy copies/noise.",
+                        "tactic": "quality_refinement",
+                    }
+                else:
+                    print("   [RED CHANNEL] CLEAR. Candidate Accepted.")
+                    return validation
 
             print(f"   [RED CHANNEL] BLOCKED. Violations: {validation['candidate_metrics']['red_violations']}")
 
