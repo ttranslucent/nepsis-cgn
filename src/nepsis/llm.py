@@ -97,6 +97,10 @@ class OpenAIProvider(BaseLLMProvider):
         user_prompt = "\n".join(user_parts) if user_parts else "Follow the system instruction precisely."
 
         try:
+            response_format = None
+            if manifold_context.get("domain") == "reasoning.arc_attach":
+                response_format = {"type": "json_object"}
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -108,6 +112,7 @@ class OpenAIProvider(BaseLLMProvider):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.0,
+                response_format=response_format,
             )
             content = response.choices[0].message.content or ""
             if content.startswith("```"):

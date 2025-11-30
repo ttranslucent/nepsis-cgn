@@ -61,9 +61,15 @@ class ArcAttachManifold(BaseManifold):
         prompt_parts.append("--- TEST INPUT ---")
         prompt_parts.append(json.dumps(target_input))
         prompt_parts.append("")
-        prompt_parts.append("Return ONLY the OUTPUT grid as raw JSON (list of lists). No markdown, no explanations.")
+        prompt_parts.append(
+            "Return ONLY a JSON object with one key 'grid' whose value is the 2D integer array. "
+            "Example: {\"grid\": [[0,1],[2,3]]}. Do not use Markdown or explanations."
+        )
 
-        system_instruction = "You solve ARC puzzles by inferring geometric/color transformations and producing the correct output grid."
+        system_instruction = (
+            "You solve ARC puzzles by inferring geometric/color transformations and producing the correct output grid. "
+            "If you respond with anything other than a JSON object of the form {\"grid\": [[...],[...]]}, your answer will be discarded."
+        )
         user_prompt = "\n".join(prompt_parts)
 
         return ProjectionSpec(
@@ -85,42 +91,42 @@ class ArcAttachManifold(BaseManifold):
 
         violations: List[str] = []
 
+        grid = None
         try:
-            grid = json.loads(clean)
-        except json.JSONDecodeError:
-            violations.append("Output was not valid JSON.")
-            return ValidationResult(
-                outcome="REJECTED",
-                metrics={"red_violations": violations, "blue_score": 0.0},
-                final_artifact=artifact,
-                repair={
-                    "needed": True,
-                    "hints": ["Return only the grid as JSON."],
-                    "next_projection_delta": "Emit raw JSON (list of lists).",
-                    "tactic": "constraint_injection",
-                },
-            )
+            candidate = json.loads(clean)
+        except Exception:
+            candidate = self._extract_first_json_block(clean)
 
-        if not isinstance(grid, list) or not all(isinstance(row, list) for row in grid):
-            violations.append("Output must be a 2D grid (list of lists).")
+        if candidate is None:
+            violations.append("Output was not valid JSON or could not be parsed.")
+        elif isinstance(candidate, dict) and "grid" in candidate:
+            grid = candidate.get("grid")
         else:
-            for row in grid:
-                for cell in row:
-                    if not isinstance(cell, int):
-                        violations.append("Grid must contain integers only.")
+            grid = candidate
+
+        if grid is not None:
+            if not isinstance(grid, list) or not all(isinstance(row, list) for row in grid):
+                violations.append("Output must be a 2D grid (list of lists).")
+            else:
+                for row in grid:
+                    for cell in row:
+                        if not isinstance(cell, int):
+                            violations.append("Grid must contain integers only.")
+                            break
+                    if violations:
                         break
-                if violations:
-                    break
+        else:
+            violations.append("Output did not contain a parsable grid.")
 
         if violations:
             return ValidationResult(
                 outcome="REJECTED",
                 metrics={"red_violations": violations, "blue_score": 0.0},
-                final_artifact=grid,
+                final_artifact=grid if grid is not None else artifact,
                 repair={
                     "needed": True,
                     "hints": violations,
-                    "next_projection_delta": "Ensure output is a JSON list of lists of integers.",
+                    "next_projection_delta": "Ensure output is a JSON object with key 'grid' containing a list of lists of integers.",
                     "tactic": "constraint_injection",
                 },
             )
@@ -131,3 +137,20 @@ class ArcAttachManifold(BaseManifold):
             final_artifact=grid,
             repair={"needed": False},
         )
+
+    @staticmethod
+    def _extract_first_json_block(text: str) -> Optional[Any]:
+        """
+        Heuristic: find the first parseable JSON object/array in the text.
+        """
+        for start_char in ["{", "["]:
+            start = text.find(start_char)
+            while start != -1:
+                for end in range(len(text), start, -1):
+                    chunk = text[start:end]
+                    try:
+                        return json.loads(chunk)
+                    except Exception:
+                        continue
+                start = text.find(start_char, start + 1)
+        return None
