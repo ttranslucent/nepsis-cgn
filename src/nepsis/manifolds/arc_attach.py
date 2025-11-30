@@ -1,170 +1,217 @@
 import json
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseManifold, ProjectionSpec, TriageResult, ValidationResult
+
+Grid = List[List[int]]
 
 
 class ArcAttachManifold(BaseManifold):
     """
-    ARC manifold for presenting train/test grids and enforcing structural validity
-    of candidate outputs (hard red channel).
+    ARC Manifold v2 (Adaptive):
+    - Detects 'Physics' (Isometric vs. Fixed vs. Dynamic).
+    - Enforces strict JSON formatting.
+    - Applies context-aware geometric constraints.
     """
 
     name = "reasoning.arc_attach"
 
-    # --- TRIAGE ---
-    def triage(self, raw_query: str, context: str = "") -> TriageResult:
-        grid_bundle: Optional[Dict[str, Any]] = None
+    # --- TRIAGE: The Physics Engine ---
+    def triage(self, raw_query: str, context: str) -> TriageResult:
+        data: Optional[Dict[str, Any]] = None
         confidence = 0.0
-        target_shape: Optional[tuple[int, int]] = None
+
+        # Physics State
+        constraint_mode = "UNKNOWN"  # ISOMETRIC, FIXED, or DYNAMIC
+        target_shape_hint: Optional[Tuple[int, int]] = None  # (rows, cols) if FIXED
+
         try:
-            parsed = json.loads(raw_query)
-            if isinstance(parsed, dict) and "train" in parsed and "test" in parsed:
-                grid_bundle = parsed
+            data = json.loads(raw_query)
+            if isinstance(data, dict) and "train" in data:
                 confidence = 1.0
-                if parsed.get("test"):
-                    test_in = parsed["test"][0].get("input", [])
-                    rows = len(test_in)
-                    cols = len(test_in[0]) if rows > 0 else 0
-                    target_shape = (rows, cols)
+
+                # Analyze Training Examples to infer Physics
+                train_pairs = data["train"]
+                input_shapes = []
+                output_shapes = []
+
+                for p in train_pairs:
+                    # Safely get shapes
+                    i_grid = p.get("input", [])
+                    o_grid = p.get("output", [])
+
+                    i_r = len(i_grid)
+                    i_c = len(i_grid[0]) if i_r > 0 else 0
+                    o_r = len(o_grid)
+                    o_c = len(o_grid[0]) if o_r > 0 else 0
+
+                    input_shapes.append((i_r, i_c))
+                    output_shapes.append((o_r, o_c))
+
+                # 1. ISOMETRIC: Input Shape == Output Shape (Always)
+                if all(i == o for i, o in zip(input_shapes, output_shapes)):
+                    constraint_mode = "ISOMETRIC"
+
+                # 2. FIXED: Output Shape is constant (but different from input)
+                elif len(set(output_shapes)) == 1:
+                    constraint_mode = "FIXED"
+                    target_shape_hint = output_shapes[0]
+
+                # 3. DYNAMIC: Output Shape varies
+                else:
+                    constraint_mode = "DYNAMIC"
+
         except json.JSONDecodeError:
-            confidence = 0.0
+            pass
 
         return TriageResult(
             detected_manifold=self.name,
             confidence=confidence,
-            is_well_posed=grid_bundle is not None,
-            hard_red=[
-                "Output must be valid JSON.",
-                "Output must be a 2D grid (list of lists).",
-                "Grid must contain integers.",
-            ],
-            hard_blue=["Match ARC output grid for the given test input."],
-            soft_blue=[],
-            manifold_meta={"grid_bundle": grid_bundle, "target_shape": target_shape} if grid_bundle else {},
+            is_well_posed=(confidence == 1.0),
+            manifold_meta={
+                "arc_task": data,
+                "constraint_mode": constraint_mode,
+                "target_shape_hint": target_shape_hint,
+            },
+            hard_red=["Must be valid JSON.", "Must be 2D Grid."],
         )
 
-    # --- PROJECTION ---
+    # --- PROJECT: The Instruction ---
     def project(self, triage: TriageResult) -> ProjectionSpec:
-        bundle = triage.manifold_meta.get("grid_bundle") or {}
-        if not bundle or "train" not in bundle:
-            raise ValueError("CRITICAL: ArcAttachManifold received no training data. Check JSON input.")
-        train_pairs = bundle.get("train", [])
-        test_inputs = bundle.get("test", [])
-        target_input = test_inputs[0]["input"] if test_inputs else []
+        data = triage.manifold_meta.get("arc_task")
+        if not data or "train" not in data:
+            raise ValueError("CRITICAL: ArcAttachManifold received no training data.")
 
-        prompt_parts: List[str] = [
-            "You are an abstract reasoning engine solving an ARC puzzle.",
-            "Training examples map INPUT grids to OUTPUT grids.",
-            "Analyze the transformation and apply it to the TEST INPUT.",
-            "",
-        ]
+        train_pairs = data.get("train", [])
+        test_cases = data.get("test", [])
+        target_input = test_cases[0]["input"] if test_cases else []
 
-        for idx, pair in enumerate(train_pairs):
-            prompt_parts.append(f"--- EXAMPLE {idx + 1} ---")
-            prompt_parts.append(f"INPUT: {json.dumps(pair.get('input', []))}")
-            prompt_parts.append(f"OUTPUT: {json.dumps(pair.get('output', []))}")
-            prompt_parts.append("")
-
-        prompt_parts.append("--- TEST INPUT ---")
-        prompt_parts.append(json.dumps(target_input))
-        prompt_parts.append("")
-        prompt_parts.append(
-            "Return ONLY a JSON object with one key 'grid' whose value is the 2D integer array. "
-            "Example: {\"grid\": [[0,1],[2,3]]}. Do not use Markdown or explanations."
-        )
-
+        # Force JSON Object wrapper
         system_instruction = (
-            "You solve ARC puzzles by inferring geometric/color transformations and producing the correct output grid. "
-            "If you respond with anything other than a JSON object of the form {\"grid\": [[...],[...]]}, your answer will be discarded."
+            "You are an abstract reasoning engine solving an ARC puzzle.\n"
+            "You must output a single JSON object containing the solution grid.\n"
+            'Format: {"grid": [[row1], [row2], ...]}\n'
+            "Do not output Markdown. Do not explain. STRICT JSON ONLY."
         )
-        user_prompt = "\n".join(prompt_parts)
+
+        user_prompt_parts = ["TRAINING EXAMPLES:\n"]
+        for i, pair in enumerate(train_pairs):
+            user_prompt_parts.append(f"--- EXAMPLE {i+1} ---\n")
+            user_prompt_parts.append(f"INPUT: {json.dumps(pair['input'])}\n")
+            user_prompt_parts.append(f"OUTPUT: {json.dumps(pair['output'])}\n\n")
+
+        user_prompt_parts.append("--- TEST INPUT ---\n")
+        user_prompt_parts.append(json.dumps(target_input))
 
         return ProjectionSpec(
             system_instruction=system_instruction,
-            manifold_context={"domain": self.name, "target_shape": triage.manifold_meta.get("target_shape")},
+            manifold_context=triage.manifold_meta,  # Pass physics context down
             invariants=[
                 "Output must be valid JSON.",
                 "Output must be a 2D grid (list of lists).",
-                "Cells must be integers.",
+                "Grid cells must be integers.",
             ],
             objective_function={"primary": "Produce the correct ARC test output grid."},
-            trace={"manifold": self.name, "grid_bundle": bundle, "user_prompt": user_prompt},
+            trace={"manifold": self.name, "user_prompt": "".join(user_prompt_parts)},
         )
 
-    # --- VALIDATION ---
+    # --- HELPERS ---
+    def _extract_first_json_block(self, text: str) -> Optional[Any]:
+        match = re.search(r"[{\\[]", text)
+        if not match:
+            return None
+        start = match.start()
+        for end in range(len(text), start, -1):
+            try:
+                return json.loads(text[start:end])
+            except Exception:
+                continue
+        return None
+
+    # --- VALIDATE: The Adaptive Guardrails ---
     def validate(self, projection: ProjectionSpec, artifact: Any) -> ValidationResult:
-        raw = artifact if isinstance(artifact, str) else str(artifact)
-        clean = raw.replace("```json", "").replace("```", "").strip()
+        raw = artifact
+        grid: Optional[Grid] = None
+        red_violations: List[str] = []
+        blue_score = 0.0
 
-        violations: List[str] = []
-
-        grid = None
+        # 1. Parsing (Belt-and-Suspenders)
         try:
-            candidate = json.loads(clean)
+            obj = json.loads(str(raw))
         except Exception:
-            candidate = self._extract_first_json_block(clean)
+            obj = self._extract_first_json_block(str(raw))
 
-        if candidate is None:
-            violations.append("Output was not valid JSON or could not be parsed.")
-        elif isinstance(candidate, dict) and "grid" in candidate:
-            grid = candidate.get("grid")
+        if obj is None:
+            red_violations.append("Output was not valid JSON.")
         else:
-            grid = candidate
-
-        if grid is not None:
-            if not isinstance(grid, list) or not all(isinstance(row, list) for row in grid):
-                violations.append("Output must be a 2D grid (list of lists).")
+            # Unwrap
+            if isinstance(obj, dict) and "grid" in obj:
+                grid = obj["grid"]
+            elif isinstance(obj, list):
+                grid = obj
             else:
-                for row in grid:
-                    for cell in row:
-                        if not isinstance(cell, int):
-                            violations.append("Grid must contain integers only.")
-                            break
-                    if violations:
-                        break
-            target_shape = projection.manifold_context.get("target_shape")
-            if target_shape and not violations:
-                rows = len(grid)
-                cols = len(grid[0]) if rows > 0 else 0
-                if (rows, cols) != target_shape:
-                    violations.append(f"Dimension mismatch: expected {target_shape}, got {(rows, cols)}.")
-        else:
-            violations.append("Output did not contain a parsable grid.")
+                red_violations.append("JSON valid but missing 'grid' key.")
 
-        if violations:
-            return ValidationResult(
-                outcome="REJECTED",
-                metrics={"red_violations": violations, "blue_score": 0.0},
-                final_artifact=grid if grid is not None else artifact,
-                repair={
-                    "needed": True,
-                    "hints": violations,
-                    "next_projection_delta": "Ensure output is a JSON object with key 'grid' containing a list of lists of integers.",
-                    "tactic": "constraint_injection",
-                },
-            )
+        # 2. Topology
+        if grid is not None:
+            if not isinstance(grid, list) or not all(isinstance(r, list) for r in grid):
+                red_violations.append("Output must be a 2D grid.")
+
+        # 3. PHYSICS & GEOMETRY CHECK
+        if grid is not None and not red_violations:
+            rows = len(grid)
+            cols = len(grid[0]) if rows > 0 else 0
+            candidate_shape = (rows, cols)
+
+            # Retrieve Physics Context
+            mode = projection.manifold_context.get("constraint_mode")
+            target_hint = projection.manifold_context.get("target_shape_hint")
+
+            # Get Test Input Shape
+            task_data = projection.manifold_context.get("arc_task")
+            test_input_shape = None
+            if task_data and "test" in task_data:
+                t_in = task_data["test"][0]["input"]
+                test_input_shape = (len(t_in), len(t_in[0]))
+
+            # Apply Differential Constraints
+            if mode == "ISOMETRIC":
+                if test_input_shape and candidate_shape != test_input_shape:
+                    red_violations.append(
+                        f"Constraint Violation (ISOMETRIC): Expected output shape {test_input_shape}, got {candidate_shape}."
+                    )
+
+            elif mode == "FIXED":
+                if target_hint and candidate_shape != target_hint:
+                    red_violations.append(
+                        f"Constraint Violation (FIXED): Expected output shape {target_hint}, got {candidate_shape}."
+                    )
+
+            elif mode == "DYNAMIC":
+                # For extraction tasks, output is usually smaller than input.
+                # If LLM returns input size, it's likely lazy/failed.
+                if test_input_shape and candidate_shape == test_input_shape:
+                    red_violations.append(
+                        "Constraint Violation (DYNAMIC): Puzzle implies object extraction. Output should likely be smaller than input."
+                    )
+
+        outcome = "SUCCESS" if not red_violations else "REJECTED"
+        if outcome == "SUCCESS":
+            blue_score = 1.0
+
+        repair = None
+        if outcome == "REJECTED":
+            repair = {
+                "needed": True,
+                "hints": red_violations[:2],
+                "next_projection_delta": "Ensure grid dimensions match the task physics.",
+                "tactic": "constraint_injection",
+            }
 
         return ValidationResult(
-            outcome="SUCCESS",
-            metrics={"red_violations": [], "blue_score": 1.0},
-            final_artifact=grid,
-            repair={"needed": False},
+            outcome=outcome,
+            metrics={"red_violations": red_violations, "blue_score": blue_score},
+            final_artifact=grid if grid else raw,
+            repair=repair,
         )
-
-    @staticmethod
-    def _extract_first_json_block(text: str) -> Optional[Any]:
-        """
-        Heuristic: find the first parseable JSON object/array in the text.
-        """
-        for start_char in ["{", "["]:
-            start = text.find(start_char)
-            while start != -1:
-                for end in range(len(text), start, -1):
-                    chunk = text[start:end]
-                    try:
-                        return json.loads(chunk)
-                    except Exception:
-                        continue
-                start = text.find(start_char, start + 1)
-        return None
