@@ -16,11 +16,17 @@ class ArcAttachManifold(BaseManifold):
     def triage(self, raw_query: str, context: str = "") -> TriageResult:
         grid_bundle: Optional[Dict[str, Any]] = None
         confidence = 0.0
+        target_shape: Optional[tuple[int, int]] = None
         try:
             parsed = json.loads(raw_query)
             if isinstance(parsed, dict) and "train" in parsed and "test" in parsed:
                 grid_bundle = parsed
                 confidence = 1.0
+                if parsed.get("test"):
+                    test_in = parsed["test"][0].get("input", [])
+                    rows = len(test_in)
+                    cols = len(test_in[0]) if rows > 0 else 0
+                    target_shape = (rows, cols)
         except json.JSONDecodeError:
             confidence = 0.0
 
@@ -35,7 +41,7 @@ class ArcAttachManifold(BaseManifold):
             ],
             hard_blue=["Match ARC output grid for the given test input."],
             soft_blue=[],
-            manifold_meta={"grid_bundle": grid_bundle} if grid_bundle else {},
+            manifold_meta={"grid_bundle": grid_bundle, "target_shape": target_shape} if grid_bundle else {},
         )
 
     # --- PROJECTION ---
@@ -76,7 +82,7 @@ class ArcAttachManifold(BaseManifold):
 
         return ProjectionSpec(
             system_instruction=system_instruction,
-            manifold_context={"domain": self.name},
+            manifold_context={"domain": self.name, "target_shape": triage.manifold_meta.get("target_shape")},
             invariants=[
                 "Output must be valid JSON.",
                 "Output must be a 2D grid (list of lists).",
@@ -117,6 +123,12 @@ class ArcAttachManifold(BaseManifold):
                             break
                     if violations:
                         break
+            target_shape = projection.manifold_context.get("target_shape")
+            if target_shape and not violations:
+                rows = len(grid)
+                cols = len(grid[0]) if rows > 0 else 0
+                if (rows, cols) != target_shape:
+                    violations.append(f"Dimension mismatch: expected {target_shape}, got {(rows, cols)}.")
         else:
             violations.append("Output did not contain a parsable grid.")
 
