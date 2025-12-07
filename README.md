@@ -62,3 +62,12 @@ Sign / Raw Input -> parse -> Interpretant Manager (posterior over manifolds)
 Clinical and puzzle examples:
 - Puzzle: strict_set vs phonetic_variant manifolds (Jailing/Jingall) with ruin on missing hidden letters; silent-U and I/J transforms optional.
 - Clinical: radicular_spasm (blue) vs cauda_equina (red) manifolds with red-flag ruin seeds and follow-up transforms; interpretant likelihood favors cauda when saddle/bladder flags appear.
+
+CLI
+---
+Install deps (ensure `pyyaml` is present) and run:
+- Puzzle: `nepsiscgn --json puzzle --letters JAIILUNG --candidate JAILING`
+- Safety red/blue: `nepsiscgn --json safety --critical-signal`
+- Clinical red/blue: `nepsiscgn clinical --radicular-pain --spasm-present --notes "L5 paresthesias"`
+
+The CLI loads `data/manifests/manifest_definitions.yaml`, instantiates interpretants/manifolds, runs navigation with tension-aware governor, and emits a trace (manifold, decision, tension/velocity, cause, posterior). Add `--manifest /path/to/manifest_definitions.yaml` to use a custom manifest.
