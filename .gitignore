@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 src/nepsis_ra/data/
 .claude/
+*.egg-info/
