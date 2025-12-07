@@ -1,0 +1,11 @@
+version: 0.1
+
+manifolds:
+  - id: substitution
+    description: "Pure color remapping; geometry preserved."
+    dsl_module: "nepsis_cgn.arc.dsl.substitution"
+    gate:
+      same_shape: true
+    search:
+      max_depth: 1
+      beam_width: 10

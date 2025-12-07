@@ -5,3 +5,5 @@ __pycache__/
 src/nepsis_ra/data/
 .claude/
 *.egg-info/
+data/
+submission.json
