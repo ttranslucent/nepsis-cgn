@@ -71,3 +71,22 @@ Install deps (ensure `pyyaml` is present) and run:
 - Clinical red/blue: `nepsiscgn clinical --radicular-pain --spasm-present --notes "L5 paresthesias"`
 
 The CLI loads `data/manifests/manifest_definitions.yaml`, instantiates interpretants/manifolds, runs navigation with tension-aware governor, and emits a trace (manifold, decision, tension/velocity, cause, posterior). Add `--manifest /path/to/manifest_definitions.yaml` to use a custom manifest.
+
+What Is a Manifold?
+-------------------
+A manifold is a semantic world with its own constraints, ruin conditions, tension parameters, and transformation rules. The interpretant selects the manifold; the governor evaluates tension inside it. If evidence no longer fits, the system collapses or vectors to a new manifold.
+
+Example Run
+-----------
+- Puzzle (strict-set ruin):
+  - `$ nepsiscgn --json puzzle --letters JAIILUNG --candidate JAILING`
+  - `{"manifold":"strict_set","decision":"ruin","cause":"RUIN_NODE",...}`
+- Clinical (benign radicular):
+  - `$ nepsiscgn clinical --json --radicular-pain --spasm-present --notes "L5 paresthesias"`
+  - `manifold=radicular_spasm decision=continue tension=0.0 posterior={'clinical_radicular_spasm': 0.75, 'clinical_cauda_equina': 0.25}`
+- Clinical (cauda red flags):
+  - `$ nepsiscgn clinical --json --radicular-pain --saddle-anesthesia --bladder-dysfunction`
+  - `{"manifold":"cauda_equina","decision":"continue","tension":0.0,"posterior":{"clinical_radicular_spasm":0.27,"clinical_cauda_equina":0.73}}`
+- Safety (red-channel escalation):
+  - `$ nepsiscgn --json safety --critical-signal`
+  - `{"manifold":"red_channel","decision":"warn","cause":"ABS_TENSION",...}`

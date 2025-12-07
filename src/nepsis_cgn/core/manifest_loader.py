@@ -91,11 +91,23 @@ def _keyword_likelihood(keywords: Sequence[str], boost: float) -> Callable[[Any]
     lowered = [k.lower() for k in keywords]
 
     def _fn(sign: Any) -> float:
+        # Attribute-aware keyword check (flags or text).
+        attrs: Dict[str, Any] = {}
+        if hasattr(sign, "__dict__"):
+            attrs = dict(vars(sign))
+        for key, val in attrs.items():
+            key_l = key.lower()
+            for kw in lowered:
+                if kw in key_l and bool(val):
+                    return boost
+
         # Coarse text surface for matching keyword hints.
         if hasattr(sign, "text"):
             text = str(getattr(sign, "text"))
         elif hasattr(sign, "letters"):
             text = str(getattr(sign, "letters"))
+        elif attrs:
+            text = ""
         else:
             text = str(sign)
         haystack = text.lower()
