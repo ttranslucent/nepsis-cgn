@@ -15,6 +15,8 @@ Key Components
 - Geometry: additive-weighted Voronoi engine for seed-based partitioning.
 - Meta: DevianceMonitor adjusts tau_R based on SAFE / NEAR_MISS / CRASH history.
 - LLM Providers: simulated stub and OpenAI provider (defaults to gpt-4o; map “openai” alias).
+ - Interpretant layer: Bayesian selector that binds signs to manifolds (semantic worlds) and instantiates constraint geometry, transforms, and ruin seeds.
+ - Manifold Governor: tension-aware collapse gate with history/velocity to catch acute spikes vs slow drift; emits trace metadata for UI.
 
 CLI Usage
 ---------
@@ -39,3 +41,24 @@ Notes
 - OPENAI_API_KEY must be set for real model calls.
 - ZeroBack adds `next_projection_delta` on validation failure to tighten subsequent prompts.
 - GravityRoomManifold treats IDs on the bottom row as static terrain; only mobile objects fall. Blue score is graded by error density.
+
+Architecture Overview
+---------------------
+- Signs (input) → Interpretant layer → manifold selection/construction → constraint solving → collapse governor → output.
+- Interpretant = manifold selector: chooses manifold family and fills seeds, transformation rules, ruin nodes, success signatures; updates posteriors via Bayesian weights.
+- Manifold = instantiated interpretant: defines constraint geometry and transforms; evaluated by CGNSolver.
+- Manifold Governor = temporal vitals: tracks tension history/velocity/accel, triggers warn/collapse/ruin, and logs causes for traceability.
+- Manifest loader: YAML-driven interpretant/manifold registry (`data/manifests/manifest_definitions.yaml`) with per-manifold governor thresholds.
+
+Flow (semantic locking before solving):
+```
+Sign / Raw Input -> parse -> Interpretant Manager (posterior over manifolds)
+    -> select Manifold (family + seeds + transforms + ruin)
+    -> Manifold.run(sign) -> CGNSolver
+    -> ManifoldGovernor (tension history + velocity/accel)
+    -> decision (continue/warn/collapse/ruin) + trace
+```
+
+Clinical and puzzle examples:
+- Puzzle: strict_set vs phonetic_variant manifolds (Jailing/Jingall) with ruin on missing hidden letters; silent-U and I/J transforms optional.
+- Clinical: radicular_spasm (blue) vs cauda_equina (red) manifolds with red-flag ruin seeds and follow-up transforms; interpretant likelihood favors cauda when saddle/bladder flags appear.

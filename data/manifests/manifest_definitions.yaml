@@ -1,0 +1,84 @@
+families:
+  puzzle:
+    manifolds:
+      - id: strict_set
+        class: strict_set
+        description: "Letter-for-letter manifold; hidden U required."
+        governor:
+          tension_warn: 1.0
+          tension_ruin: 2.0
+          velocity_shock: 4.0
+      - id: phonetic_variant
+        class: phonetic_variant
+        description: "Phonetic manifold; I/J interchangeable; silent U allowed."
+        governor:
+          tension_warn: 1.0
+          tension_ruin: 2.0
+          velocity_shock: 5.0
+  clinical:
+    manifolds:
+      - id: radicular_spasm
+        class: radicular_spasm
+        description: "Blue-channel radicular pain with spasm; red flags are ruin."
+        governor:
+          tension_warn: 1.0
+          tension_ruin: 2.0
+          velocity_shock: 3.0
+      - id: cauda_equina
+        class: cauda_equina
+        description: "Red-channel cauda equina manifold; red flags expected."
+        governor:
+          tension_warn: 0.5
+          tension_ruin: 1.5
+          velocity_shock: 2.5
+  safety:
+    manifolds:
+      - id: blue_channel
+        class: blue_channel
+        description: "Routine blue channel; no critical signals."
+        governor:
+          tension_warn: 1.0
+          tension_ruin: 2.0
+          velocity_shock: 4.0
+      - id: red_channel
+        class: red_channel
+        description: "Red channel for critical signals; policy violation is ruin."
+        governor:
+          tension_warn: 0.5
+          tension_ruin: 1.0
+          velocity_shock: 2.0
+
+interpretants:
+  - id: puzzle_strict
+    description: "Letter-for-letter interpretation; hidden U is mandatory."
+    manifold_id: strict_set
+    prior: 0.55
+  - id: puzzle_phonetic
+    description: "Phonetic variant allows I/J swap and silent U."
+    manifold_id: phonetic_variant
+    prior: 0.45
+    likelihood:
+      keyword: phonetic
+      boost: 1.5
+  - id: clinical_radicular_spasm
+    description: "Radicular pain with spasm, no red flags."
+    manifold_id: radicular_spasm
+    prior: 0.6
+  - id: clinical_cauda_equina
+    description: "Red-channel cauda equina manifold when red flags appear."
+    manifold_id: cauda_equina
+    prior: 0.4
+    likelihood:
+      keyword: saddle
+      boost: 2.0
+  - id: safety_blue
+    description: "Routine blue-channel handling; no critical signal expected."
+    manifold_id: blue_channel
+    prior: 0.6
+  - id: safety_red
+    description: "Red-channel handling for critical signals; escalates policy violations."
+    manifold_id: red_channel
+    prior: 0.4
+    likelihood:
+      keyword: urgent
+      boost: 2.0
