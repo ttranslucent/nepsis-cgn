@@ -9,6 +9,7 @@ description = "Nepsis Constraint Geometry Navigation (NepsisCGN) – interpretan
 authors = [{ name = "Trent Thorn" }]
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = ["pyyaml"]
 
 [project.optional-dependencies]
 dev = [
@@ -20,3 +21,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.scripts]
+nepsiscgn = "nepsis_cgn.cli.main:entrypoint"

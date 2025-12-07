@@ -136,6 +136,7 @@ def build_interpretants_from_spec(
     *,
     registry: Optional[Dict[str, Callable[[Any], Any]]] = None,
     strict: bool = False,
+    families: Optional[List[str]] = None,
 ) -> List[InterpretantHypothesis[Any, Any]]:
     reg = dict(DEFAULT_MANIFOLD_REGISTRY)
     if registry:
@@ -143,6 +144,10 @@ def build_interpretants_from_spec(
 
     hypotheses: List[InterpretantHypothesis[Any, Any]] = []
     for interpretant in spec.interpretants:
+        manifold_entry = spec.manifolds.get(interpretant.manifold_id)
+        if families and manifold_entry and manifold_entry.family not in families:
+            continue
+
         factory = reg.get(interpretant.manifold_id)
         if factory is None:
             if strict:
@@ -169,10 +174,13 @@ def build_interpretants_from_spec(
 def build_governor_configs(
     spec: ManifestSpec,
     defaults: Optional[GovernorConfig] = None,
+    families: Optional[List[str]] = None,
 ) -> Dict[str, GovernorConfig]:
     base = defaults or GovernorConfig()
     configs: Dict[str, GovernorConfig] = {}
     for mid, entry in spec.manifolds.items():
+        if families and entry.family not in families:
+            continue
         if not entry.governor_overrides:
             continue
         cfg_dict = {
