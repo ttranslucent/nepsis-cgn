@@ -67,10 +67,10 @@ interpretants:
   - id: clinical_cauda_equina
     description: "Red-channel cauda equina manifold when red flags appear."
     manifold_id: cauda_equina
-    prior: 0.4
+    prior: 0.1
     likelihood:
-      keyword: saddle
-      boost: 2.0
+      keywords: ["saddle", "anesthesia", "bladder", "retention", "incontinence"]
+      boost: 5.0
   - id: safety_blue
     description: "Routine blue-channel handling; no critical signal expected."
     manifold_id: blue_channel

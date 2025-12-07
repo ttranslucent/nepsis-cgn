@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .governor import GovernorConfig
 from .interpretant import (
@@ -17,7 +17,8 @@ class InterpretantSpec:
     description: str
     manifold_id: str
     prior: float = 1.0
-    likelihood_keyword: Optional[str] = None
+    likelihood_keyword: Optional[str] = None  # legacy single keyword support
+    likelihood_keywords: Optional[List[str]] = None
     likelihood_boost: float = 1.0
 
 
@@ -63,6 +64,11 @@ def load_manifest_spec(path: str) -> ManifestSpec:
                     if item.get("likelihood")
                     else None
                 ),
+                likelihood_keywords=(
+                    list(item["likelihood"].get("keywords"))
+                    if item.get("likelihood") and item["likelihood"].get("keywords")
+                    else None
+                ),
                 likelihood_boost=float(item.get("likelihood", {}).get("boost", 1.0)),
             )
         )
@@ -81,18 +87,19 @@ def load_manifest_spec(path: str) -> ManifestSpec:
     return ManifestSpec(interpretants=interpretants, manifolds=manifolds)
 
 
-def _keyword_likelihood(keyword: str, boost: float) -> Callable[[Any], float]:
-    lowered = keyword.lower()
+def _keyword_likelihood(keywords: Sequence[str], boost: float) -> Callable[[Any], float]:
+    lowered = [k.lower() for k in keywords]
 
     def _fn(sign: Any) -> float:
-        text = ""
+        # Coarse text surface for matching keyword hints.
         if hasattr(sign, "text"):
             text = str(getattr(sign, "text"))
         elif hasattr(sign, "letters"):
             text = str(getattr(sign, "letters"))
         else:
             text = str(sign)
-        return boost if lowered in text.lower() else 1.0
+        haystack = text.lower()
+        return boost if any(k in haystack for k in lowered) else 1.0
 
     return _fn
 
@@ -154,9 +161,14 @@ def build_interpretants_from_spec(
                 raise ValueError(f"No manifold factory registered for '{interpretant.manifold_id}'.")
             continue
         likelihood_fn = None
+        keywords: List[str] = []
         if interpretant.likelihood_keyword:
+            keywords.append(interpretant.likelihood_keyword)
+        if interpretant.likelihood_keywords:
+            keywords.extend(interpretant.likelihood_keywords)
+        if keywords:
             likelihood_fn = _keyword_likelihood(
-                interpretant.likelihood_keyword,
+                keywords,
                 interpretant.likelihood_boost,
             )
         hypotheses.append(
