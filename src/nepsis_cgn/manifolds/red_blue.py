@@ -177,6 +177,7 @@ def build_red_blue_hypotheses() -> List[InterpretantHypothesis[SafetySign, Safet
             description="Routine/blue channel; no critical signals.",
             manifold_factory=lambda _: BlueChannelManifold(),
             prior=0.6,
+            catastrophic=False,
         ),
         InterpretantHypothesis(
             id="red_channel",
@@ -184,6 +185,7 @@ def build_red_blue_hypotheses() -> List[InterpretantHypothesis[SafetySign, Safet
             manifold_factory=lambda _: RedChannelManifold(),
             prior=0.4,
             likelihood_fn=lambda sign: 2.0 if getattr(sign, "critical_signal", False) else 1.0,
+            catastrophic=True,
         ),
     ]
 

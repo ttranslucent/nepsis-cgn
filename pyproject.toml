@@ -18,9 +18,16 @@ dev = [
     "ruff",
     "mypy",
 ]
+api = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.30.0",
+    "cryptography>=42.0.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [project.scripts]
 nepsiscgn = "nepsis_cgn.cli.main:entrypoint"
+nepsiscgn-api = "nepsis_cgn.api.server:entrypoint"
+nepsiscgn-api-asgi = "nepsis_cgn.api.asgi:entrypoint"

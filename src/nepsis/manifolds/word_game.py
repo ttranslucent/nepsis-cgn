@@ -1,6 +1,6 @@
 import collections
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .base import BaseManifold, ProjectionSpec, TriageResult, ValidationResult
 
@@ -12,7 +12,7 @@ class WordGameManifold(BaseManifold):
 
     name = "word_game.letter_multiset"
 
-    def __init__(self, dictionary: List[str] | None = None):
+    def __init__(self, dictionary: Optional[List[str]] = None):
         # Tiny prototype dictionary; swap with a real lexicon in production.
         self.dictionary = set(dictionary or ["JINGALL", "JINGLE", "GILL", "NAIL", "GALL", "LAG", "JAILING"])
 

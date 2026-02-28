@@ -264,6 +264,7 @@ def build_clinical_hypotheses() -> List[InterpretantHypothesis[ClinicalSign, Cli
             description="Radicular pain with spasm, no red flags.",
             manifold_factory=lambda _: RadicularSpasmManifold(),
             prior=0.6,
+            catastrophic=False,
         ),
         InterpretantHypothesis(
             id="cauda_equina",
@@ -273,6 +274,7 @@ def build_clinical_hypotheses() -> List[InterpretantHypothesis[ClinicalSign, Cli
             likelihood_fn=lambda sign: 2.0
             if getattr(sign, "saddle_anesthesia", False) or getattr(sign, "bladder_dysfunction", False)
             else 1.0,
+            catastrophic=True,
         ),
     ]
 

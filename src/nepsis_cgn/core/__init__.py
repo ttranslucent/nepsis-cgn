@@ -24,6 +24,41 @@ from .navigation import (
     NavigationController,
     NavigationTraceEntry,
 )
+from .convergence import (
+    ConvergenceReason,
+    explain_trigger_codes,
+)
+from .frame import (
+    FrameVersion,
+    ObjectiveType,
+    infer_frame_from_sign,
+)
+from .packet import (
+    build_iteration_packet,
+)
+from .runtime import (
+    build_navigation_controller,
+    default_manifest_path,
+)
+from .governance import (
+    Event,
+    GovernanceCalibration,
+    GovernanceContext,
+    GovernanceCosts,
+    GovernanceDecision,
+    GovernanceMetrics,
+    GovernanceThresholds,
+    IterationStateMachine,
+    Posture,
+    Stage,
+    WarningLevel,
+    compute_theta,
+    evaluate_governance_policy,
+    expected_losses,
+    posterior_from_lr,
+    posterior_from_score,
+    sigmoid,
+)
 from .interpretant import (
     InterpretantHypothesis,
     InterpretantManager,
@@ -109,4 +144,29 @@ __all__ = [
     "build_red_blue_hypotheses",
     "build_red_constraint_set",
     "demo_red_blue",
+    "Event",
+    "GovernanceCalibration",
+    "GovernanceContext",
+    "GovernanceCosts",
+    "GovernanceDecision",
+    "GovernanceMetrics",
+    "GovernanceThresholds",
+    "IterationStateMachine",
+    "Posture",
+    "Stage",
+    "WarningLevel",
+    "compute_theta",
+    "evaluate_governance_policy",
+    "expected_losses",
+    "posterior_from_lr",
+    "posterior_from_score",
+    "sigmoid",
+    "ConvergenceReason",
+    "explain_trigger_codes",
+    "FrameVersion",
+    "ObjectiveType",
+    "infer_frame_from_sign",
+    "build_iteration_packet",
+    "build_navigation_controller",
+    "default_manifest_path",
 ]

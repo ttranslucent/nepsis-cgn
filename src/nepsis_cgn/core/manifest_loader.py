@@ -20,6 +20,7 @@ class InterpretantSpec:
     likelihood_keyword: Optional[str] = None  # legacy single keyword support
     likelihood_keywords: Optional[List[str]] = None
     likelihood_boost: float = 1.0
+    catastrophic: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ def load_manifest_spec(path: str) -> ManifestSpec:
                     else None
                 ),
                 likelihood_boost=float(item.get("likelihood", {}).get("boost", 1.0)),
+                catastrophic=bool(item.get("catastrophic", False)),
             )
         )
 
@@ -190,6 +192,7 @@ def build_interpretants_from_spec(
                 manifold_factory=factory,
                 prior=interpretant.prior,
                 likelihood_fn=likelihood_fn,
+                catastrophic=interpretant.catastrophic,
             )
         )
     return hypotheses

@@ -17,6 +17,12 @@ export default function HomePage() {
           Open Playground
         </a>
         <a
+          href="/engine"
+          className="rounded-full border border-nepsis-border px-5 py-2 text-sm hover:border-nepsis-accent"
+        >
+          Open Engine Console
+        </a>
+        <a
           href="/settings"
           className="rounded-full border border-nepsis-border px-5 py-2 text-sm hover:border-nepsis-accent"
         >

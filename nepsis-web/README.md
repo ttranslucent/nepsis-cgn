@@ -2,7 +2,13 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+Start the Nepsis backend API first (from repo root):
+
+```bash
+nepsiscgn-api --host 127.0.0.1 --port 8787
+```
+
+Then run the web development server:
 
 ```bash
 npm run dev
@@ -15,6 +21,34 @@ bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+## Engine API Proxy
+
+The web app now exposes backend proxy routes under `/api/engine/*`:
+
+- `GET /api/engine/health`
+- `GET /api/engine/routes`
+- `POST /api/engine/sessions`
+- `GET /api/engine/sessions`
+- `GET /api/engine/sessions/:sessionId`
+- `DELETE /api/engine/sessions/:sessionId`
+- `POST /api/engine/sessions/:sessionId/step`
+- `POST /api/engine/sessions/:sessionId/reframe`
+- `GET /api/engine/sessions/:sessionId/packets`
+
+By default these proxy to `http://127.0.0.1:8787`.
+
+Override target with:
+
+```bash
+NEPSIS_API_BASE_URL=http://127.0.0.1:8787 npm run dev
+```
+
+Frontend helpers for these routes:
+
+- Typed browser client: `src/lib/engineClient.ts`
+- Hook/state wrapper: `src/lib/useEngineSession.ts`
+- Live console page: `/engine` (`src/app/engine/page.tsx`)
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

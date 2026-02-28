@@ -53,6 +53,7 @@ class InterpretantHypothesis(Generic[SignT, StateT]):
     manifold_factory: Callable[[SignT], "Manifold[StateT]"]
     prior: float = 1.0
     likelihood_fn: Optional[Callable[[SignT], float]] = None
+    catastrophic: bool = False
 
     def likelihood(self, sign: SignT) -> float:
         if self.likelihood_fn is None:
@@ -126,6 +127,7 @@ class Manifold(Generic[StateT]):
                 "seeds": self.seeds,
                 "success_signatures": self.success_signatures,
                 "constraint_set": self.constraint_set.name,
+                "constraint_count": len(self.constraint_set.constraints),
             },
         )
 
@@ -146,7 +148,9 @@ class InterpretantManager(Generic[SignT, StateT]):
     def update(self, sign: SignT) -> Dict[str, float]:
         weights: Dict[str, float] = {}
         for hyp in self._hypotheses.values():
-            weights[hyp.id] = max(hyp.prior, 1e-9) * hyp.likelihood(sign)
+            # Sequential Bayes: previous posterior becomes the next prior.
+            prior_weight = self._posterior.get(hyp.id, hyp.prior)
+            weights[hyp.id] = max(float(prior_weight), 1e-9) * hyp.likelihood(sign)
         normalizer = sum(weights.values())
         if normalizer == 0.0:
             count = float(len(weights))
@@ -163,6 +167,16 @@ class InterpretantManager(Generic[SignT, StateT]):
 
     def posterior(self) -> Dict[str, float]:
         return dict(self._posterior)
+
+    def ruin_mass(self, posterior: Optional[Dict[str, float]] = None) -> float:
+        if posterior is None:
+            posterior = self._posterior
+        total = 0.0
+        for hid, weight in posterior.items():
+            hypothesis = self._hypotheses.get(hid)
+            if hypothesis is not None and hypothesis.catastrophic:
+                total += float(weight)
+        return min(max(total, 0.0), 1.0)
 
 
 # --- Example: Jailing vs. Jingall word puzzle --------------------------------
