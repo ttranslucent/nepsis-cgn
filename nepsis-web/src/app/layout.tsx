@@ -1,9 +1,13 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import Image from "next/image";
 
 export const metadata: Metadata = {
   title: "NepsisCGN",
   description: "Constraint Geometry Navigation for LLMs",
+  icons: {
+    icon: "/nepsis-logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -17,7 +21,14 @@ export default function RootLayout({
         <div className="flex min-h-screen flex-col">
           <header className="flex items-center justify-between border-b border-nepsis-border px-6 py-3">
             <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-full bg-gradient-to-tr from-nepsis-accent to-nepsis-accentSoft" />
+              <Image
+                src="/nepsis-logo.png"
+                alt="Nepsis logo"
+                width={32}
+                height={32}
+                className="h-8 w-8 rounded-sm object-cover"
+                priority
+              />
               <span className="text-xs font-semibold tracking-[0.18em] text-nepsis-muted">
                 NEPSISCGN
               </span>
