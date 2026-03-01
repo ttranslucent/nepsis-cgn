@@ -64,6 +64,33 @@ export type EngineReframePayload = {
   };
 };
 
+export type EngineConvergenceReason = {
+  code: string;
+  title: string;
+  message: string;
+  next_discriminator: string;
+  severity: string;
+};
+
+export type EngineGovernance = {
+  posture: string;
+  warning_level: string;
+  recommended_action: string;
+  trigger_codes: string[];
+  theta: number;
+  loss_treat: number;
+  loss_notreat: number;
+  p_bad: number;
+  ruin_mass: number;
+  contradiction_density: number;
+  posterior_entropy_norm: number;
+  top_margin: number;
+  top_p: number | null;
+  user_decision: string | null;
+  override_reason: string | null;
+  why_not_converging?: EngineConvergenceReason[];
+};
+
 export type EngineStepResponse = {
   manifold: string;
   family: string;
@@ -81,7 +108,7 @@ export type EngineStepResponse = {
   stage_events: string[];
   frame_id: string | null;
   frame_version: number | null;
-  governance?: Record<string, unknown>;
+  governance?: EngineGovernance;
   iteration_packet?: Record<string, unknown>;
   session: EngineSessionSummary;
 };
