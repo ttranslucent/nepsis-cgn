@@ -2,14 +2,14 @@ import { proxyEngineRequest, proxyJsonResponse, requireEngineControlAuth } from 
 
 export const runtime = "nodejs";
 
-type RouteParams = { params: { sessionId: string } };
+type RouteParams = { params: Promise<{ sessionId: string }> };
 
 export async function GET(req: Request, { params }: RouteParams) {
   const unauthorized = requireEngineControlAuth(req);
   if (unauthorized) {
     return unauthorized;
   }
-  const { sessionId } = params;
+  const { sessionId } = await params;
   try {
     const upstream = await proxyEngineRequest(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
       method: "GET",
@@ -31,7 +31,7 @@ export async function DELETE(req: Request, { params }: RouteParams) {
   if (unauthorized) {
     return unauthorized;
   }
-  const { sessionId } = params;
+  const { sessionId } = await params;
   try {
     const upstream = await proxyEngineRequest(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",

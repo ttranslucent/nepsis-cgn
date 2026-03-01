@@ -2,14 +2,14 @@ import { proxyEngineRequest, proxyJsonResponse, requireEngineControlAuth } from 
 
 export const runtime = "nodejs";
 
-type RouteParams = { params: { sessionId: string } };
+type RouteParams = { params: Promise<{ sessionId: string }> };
 
 export async function POST(req: Request, { params }: RouteParams) {
   const unauthorized = requireEngineControlAuth(req);
   if (unauthorized) {
     return unauthorized;
   }
-  const { sessionId } = params;
+  const { sessionId } = await params;
   const body = await req.text();
   try {
     const upstream = await proxyEngineRequest(`/v1/sessions/${encodeURIComponent(sessionId)}/step`, {
