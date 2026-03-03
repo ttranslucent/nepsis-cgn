@@ -1,8 +1,10 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [apiKey, setApiKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -18,11 +20,15 @@ export default function SettingsPage() {
     }
   }, []);
 
-  function saveKey() {
+  function connectLlm() {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("nepsis_openai_key", apiKey);
+    const trimmed = apiKey.trim();
+    if (!trimmed) return;
+    window.localStorage.setItem("nepsis_openai_key", trimmed);
+    setApiKey(trimmed);
     setHasKey(true);
-    setMessage("API key saved locally in this browser.");
+    setMessage("Connected. Redirecting to workspace...");
+    router.push("/");
   }
 
   return (
@@ -53,17 +59,17 @@ export default function SettingsPage() {
         autoComplete="new-password"
         value={apiKey}
         onChange={(e) => {
-          setApiKey(e.target.value.trim());
+          setApiKey(e.target.value);
           setMessage(null);
         }}
       />
 
       <button
-        onClick={saveKey}
-        disabled={!apiKey}
+        onClick={connectLlm}
+        disabled={!apiKey.trim()}
         className="rounded-full bg-nepsis-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
       >
-        Save key
+        Connect LLM
       </button>
 
       {message && <p className="mt-3 text-xs text-nepsis-muted">{message}</p>}

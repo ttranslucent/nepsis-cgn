@@ -34,12 +34,6 @@ export default function RootLayout({
               </span>
             </div>
             <div className="flex items-center gap-4 text-sm">
-              <a href="/playground" className="hover:text-nepsis-accent">
-                Playground
-              </a>
-              <a href="/proto-puzzle" className="hover:text-nepsis-accent">
-                Proto Puzzle
-              </a>
               <a href="/settings" className="hover:text-nepsis-accent">
                 Settings
               </a>
