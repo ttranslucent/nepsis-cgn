@@ -11,12 +11,23 @@ import {
 import { useEngineSession } from "@/lib/useEngineSession";
 
 type ChatRole = "human" | "nepsis";
+type DetachedRole = "human" | "assistant";
+type DetachedModel = "gpt-4.1" | "o3" | "claude-sonnet" | "gemini";
 
 type ChatMessage = {
   id: string;
   role: ChatRole;
   text: string;
   at: string;
+};
+
+type DetachedMessage = {
+  id: string;
+  role: DetachedRole;
+  text: string;
+  at: string;
+  model: DetachedModel;
+  source: string | null;
 };
 
 type RiskPosture = "red_first" | "balanced" | "blue_first";
@@ -43,13 +54,26 @@ type NextFrameDraft = {
   constraints_soft_text: string;
 };
 
-type TimelineEntry = {
+type FrameTimelineEntry = {
   key: string;
   sessionId: string;
   frameVersion: number;
   text: string;
   note: string;
   at: string;
+};
+
+type PacketEvent = {
+  id: string;
+  label: string;
+  raw: string;
+  packetId: string;
+  packetIndex: number;
+  eventIndex: number;
+  iteration: number | null;
+  stage: string | null;
+  frameVersion: number | null;
+  at: string | null;
 };
 
 type SignBuildResult = {
@@ -120,7 +144,7 @@ const DEFAULT_NEXT_FRAME_DRAFT: NextFrameDraft = {
 const FRAME_STARTER_MESSAGE: ChatMessage = {
   id: "frame-start",
   role: "nepsis",
-  text: "Start by describing the real question, risk asymmetry, and the constraints you do not want violated.",
+  text: "Start by describing the real question, risk asymmetry, and constraints that must hold.",
   at: new Date().toISOString(),
 };
 
@@ -134,8 +158,17 @@ const REPORT_STARTER_MESSAGE: ChatMessage = {
 const POSTERIOR_STARTER_MESSAGE: ChatMessage = {
   id: "posterior-start",
   role: "nepsis",
-  text: "Review posterior mix and governance signal. Draft what should carry forward into the next prior frame.",
+  text: "Review posterior mix, ruin flags, and threshold gate. Then draft what carries forward.",
   at: new Date().toISOString(),
+};
+
+const DETACHED_STARTER: DetachedMessage = {
+  id: "detached-start",
+  role: "assistant",
+  text: "Detached chat rail is separate from Nepsis packets. Use it for side discussions or model comparisons.",
+  at: new Date().toISOString(),
+  model: "gpt-4.1",
+  source: null,
 };
 
 function createMessage(role: ChatRole, text: string): ChatMessage {
@@ -144,6 +177,22 @@ function createMessage(role: ChatRole, text: string): ChatMessage {
     role,
     text,
     at: new Date().toISOString(),
+  };
+}
+
+function createDetachedMessage(
+  role: DetachedRole,
+  text: string,
+  model: DetachedModel,
+  source: string | null,
+): DetachedMessage {
+  return {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    text,
+    at: new Date().toISOString(),
+    model,
+    source,
   };
 }
 
@@ -186,6 +235,69 @@ function parseBoolTag(text: string, tag: string): boolean | undefined {
 
 function containsAny(haystack: string, terms: readonly string[]): boolean {
   return terms.some((term) => haystack.includes(term));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function stageEventLabel(event: string): string {
+  if (event === "ITERATE") {
+    return "RESET";
+  }
+  return event;
+}
+
+function buildPacketEvents(packets: Record<string, unknown>[]): PacketEvent[] {
+  const events: PacketEvent[] = [];
+  packets.forEach((packet, packetIndex) => {
+    const p = asRecord(packet);
+    if (!p) {
+      return;
+    }
+    const meta = asRecord(p.meta);
+    const stageEvents = readStringArray(p.stage_events);
+    const packetId = readString(meta?.packet_id) ?? `packet-${packetIndex}`;
+    const iteration = readNumber(meta?.iteration);
+    const stage = readString(p.stage);
+    const at = readString(meta?.created_at);
+    const frameVersionRecord = asRecord(p.frame_version);
+    const frameVersion = readNumber(frameVersionRecord?.frame_version);
+
+    stageEvents.forEach((event, eventIndex) => {
+      events.push({
+        id: `${packetId}:${eventIndex}`,
+        label: stageEventLabel(event),
+        raw: event,
+        packetId,
+        packetIndex,
+        eventIndex,
+        iteration,
+        stage,
+        frameVersion,
+        at,
+      });
+    });
+  });
+  return events;
 }
 
 function deriveSafetySign(text: string): SignBuildResult {
@@ -450,9 +562,19 @@ export default function EnginePage() {
 
   const [frameLocked, setFrameLocked] = useState(false);
   const [reportLocked, setReportLocked] = useState(false);
+  const [frameCollapsed, setFrameCollapsed] = useState(false);
 
   const [reportResult, setReportResult] = useState<EngineStepResponse | null>(null);
-  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [frameTimeline, setFrameTimeline] = useState<FrameTimelineEntry[]>([]);
+
+  const [detachedModel, setDetachedModel] = useState<DetachedModel>("gpt-4.1");
+  const [detachedCompare, setDetachedCompare] = useState(false);
+  const [detachedSource, setDetachedSource] = useState("");
+  const [detachedInput, setDetachedInput] = useState("");
+  const [detachedChat, setDetachedChat] = useState<DetachedMessage[]>([DETACHED_STARTER]);
+
+  const packetEvents = useMemo(() => buildPacketEvents(packets), [packets]);
+  const [selectedPacketEventId, setSelectedPacketEventId] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -466,17 +588,27 @@ export default function EnginePage() {
     }
   }, [sessions, sessionToOpen]);
 
+  useEffect(() => {
+    if (packetEvents.length === 0) {
+      setSelectedPacketEventId(null);
+      return;
+    }
+    if (!selectedPacketEventId || !packetEvents.some((event) => event.id === selectedPacketEventId)) {
+      setSelectedPacketEventId(packetEvents[packetEvents.length - 1].id);
+    }
+  }, [packetEvents, selectedPacketEventId]);
+
   function clearAllErrors() {
     clearError();
     setLocalError(null);
   }
 
-  function appendTimeline(sessionId: string, frame: EngineFrame | null | undefined, note: string) {
+  function appendFrameTimeline(sessionId: string, frame: EngineFrame | null | undefined, note: string) {
     if (!frame) {
       return;
     }
     const key = `${sessionId}:${frame.frame_version}`;
-    setTimeline((prev) => {
+    setFrameTimeline((prev) => {
       if (prev.some((entry) => entry.key === key)) {
         return prev;
       }
@@ -531,6 +663,7 @@ export default function EnginePage() {
     setNextFrameDraft(hydrateNextFrameDraft(opened.frame));
     setFrameLocked(opened.stage !== "draft");
     setReportLocked(false);
+    setFrameCollapsed(opened.stage !== "draft");
     setReportResult(null);
     setFrameChat([
       FRAME_STARTER_MESSAGE,
@@ -540,18 +673,19 @@ export default function EnginePage() {
     setPosteriorChat([POSTERIOR_STARTER_MESSAGE]);
     setReportCorpus("");
     setReportInput("");
-    appendTimeline(opened.session_id, opened.frame, "Session opened");
+    appendFrameTimeline(opened.session_id, opened.frame, "Session opened");
     await refreshPackets(opened.session_id);
   }
 
   async function handleNewWorkspace() {
     clearAllErrors();
     setFrameLocked(false);
+    setFrameCollapsed(false);
     resetDownstreamStages();
     setFrameDraft(DEFAULT_FRAME_DRAFT);
     setNextFrameDraft(DEFAULT_NEXT_FRAME_DRAFT);
     setFrameChat([FRAME_STARTER_MESSAGE]);
-    setTimeline([]);
+    setFrameTimeline([]);
     await refreshSessions();
   }
 
@@ -585,11 +719,30 @@ export default function EnginePage() {
       return;
     }
     pushPosteriorMessage("human", text);
-    pushPosteriorMessage(
-      "nepsis",
-      "Captured. Convert that into the next-frame fields, then commit when ready.",
-    );
+    pushPosteriorMessage("nepsis", "Captured. Convert that into the next-frame fields, then commit.");
     setPosteriorInput("");
+  }
+
+  function handleSendDetachedMessage() {
+    clearAllErrors();
+    const text = optionalText(detachedInput);
+    if (!text) {
+      return;
+    }
+    const source = optionalText(detachedSource) ?? null;
+    setDetachedChat((prev) => [
+      ...prev,
+      createDetachedMessage("human", text, detachedModel, source),
+      createDetachedMessage(
+        "assistant",
+        detachedCompare
+          ? `Comparison mode enabled. Treat this rail as a side-by-side model workspace (selected: ${detachedModel}).`
+          : `Captured in detached chat (${detachedModel}). This does not alter Nepsis stage state until manually copied.`,
+        detachedModel,
+        source,
+      ),
+    ]);
+    setDetachedInput("");
   }
 
   async function handleLockFrame() {
@@ -632,9 +785,10 @@ export default function EnginePage() {
     }
 
     setFrameLocked(true);
+    setFrameCollapsed(true);
     resetDownstreamStages();
     if (resultingFrame) {
-      appendTimeline(sessionId, resultingFrame, "Frame locked");
+      appendFrameTimeline(sessionId, resultingFrame, "Frame locked");
       setNextFrameDraft(hydrateNextFrameDraft(resultingFrame));
     }
     await refreshSessions();
@@ -643,6 +797,7 @@ export default function EnginePage() {
   function handleUnlockFrame() {
     clearAllErrors();
     setFrameLocked(false);
+    setFrameCollapsed(false);
     resetDownstreamStages();
     pushFrameMessage("nepsis", "Frame unlocked for edits. Downstream stages were reset.");
   }
@@ -677,7 +832,7 @@ export default function EnginePage() {
       setReportInput("");
     }
     pushReportMessage("nepsis", reportCoachReply(result));
-    pushPosteriorMessage("nepsis", "Posterior updated. Review governance and decide carry-forward edits.");
+    pushPosteriorMessage("nepsis", "Posterior updated. Review trust indicators and choose carry-forward edits.");
     await refreshPackets(result.session.session_id);
     await refreshSessions();
   }
@@ -727,7 +882,7 @@ export default function EnginePage() {
       return;
     }
 
-    appendTimeline(activeSession.session_id, updated, "Committed to next priors");
+    appendFrameTimeline(activeSession.session_id, updated, "Committed to next priors");
     setFrameDraft((prev) => ({
       ...prev,
       text: updated.text,
@@ -740,6 +895,7 @@ export default function EnginePage() {
     }));
     setNextFrameDraft(hydrateNextFrameDraft(updated));
     setFrameLocked(false);
+    setFrameCollapsed(false);
     resetDownstreamStages();
     pushPosteriorMessage("nepsis", "Iteration committed. Priors stage reopened for the next cycle.");
     pushFrameMessage("nepsis", `Frame v${updated.frame_version} is now the working prior.`);
@@ -758,16 +914,31 @@ export default function EnginePage() {
   const activeStage = activeSession?.stage ?? "none";
   const whyNotConverging = governance?.why_not_converging ?? [];
 
+  const topInterpretation = posteriorRows[0] ?? null;
+  const secondInterpretation = posteriorRows[1] ?? null;
+  const topMargin =
+    topInterpretation && secondInterpretation ? Math.max(0, topInterpretation[1] - secondInterpretation[1]) : null;
+  const gateCrossed =
+    governance?.p_bad != null && governance?.theta != null ? governance.p_bad >= governance.theta : null;
+
+  const selectedPacketEvent = packetEvents.find((event) => event.id === selectedPacketEventId) ?? null;
+  const selectedPacketRecord = selectedPacketEvent
+    ? asRecord(packets[selectedPacketEvent.packetIndex])
+    : null;
+  const selectedPacketResult = asRecord(selectedPacketRecord?.result);
+  const selectedPacketState = asRecord(selectedPacketRecord?.state);
+  const selectedPacketCarry = asRecord(selectedPacketRecord?.carry_forward);
+
   return (
-    <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 px-4 py-6">
+    <div className="mx-auto flex w-full max-w-[1850px] flex-col gap-4 px-4 py-6">
       <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">Nepsis Co-Reasoning Workspace</h1>
             <p className="mt-1 max-w-3xl text-sm text-nepsis-muted">
-              Three independent chats, gated in sequence: <span className="font-medium text-nepsis-text">Frame</span>{" "}
-              → <span className="font-medium text-nepsis-text">Report</span> →{" "}
-              <span className="font-medium text-nepsis-text">Posterior</span>. Lock each stage when satisfied.
+              Gated sequence with independent chats: <span className="font-medium text-nepsis-text">Frame</span> →{" "}
+              <span className="font-medium text-nepsis-text">Call &amp; Report</span> →{" "}
+              <span className="font-medium text-nepsis-text">Posterior / Next Priors</span>.
             </p>
           </div>
           <div className="text-xs text-nepsis-muted">
@@ -844,534 +1015,747 @@ export default function EnginePage() {
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <section className="flex min-h-[740px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold">1) Priors / Frame</h2>
-              <p className="text-xs text-nepsis-muted">Define the question, constraints, red triggers, and blue goals.</p>
-            </div>
-            <span
-              className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                frameLocked
-                  ? "border-green-500/40 bg-green-500/15 text-green-200"
-                  : "border-nepsis-border bg-black/20 text-nepsis-muted"
-              }`}
-            >
-              {frameLocked ? "Locked" : "Open"}
-            </span>
+      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="rounded-2xl border border-dashed border-nepsis-accent/50 bg-nepsis-panel p-4">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold">Detached Chat UX</h2>
+            <p className="text-xs text-nepsis-muted">
+              Sidecar chat rail with model selection and optional source. Detached from Nepsis stage transitions.
+            </p>
           </div>
 
-          <div className="flex-1 space-y-3">
-            <div className="h-48 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
-              {frameChat.map((message) => (
-                <div key={message.id} className="mb-2">
-                  <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
-                    {message.role === "human" ? "You" : "Nepsis"}
-                  </span>
-                  <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
-                  <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <textarea
-                value={frameInput}
-                onChange={(event) => setFrameInput(event.target.value)}
-                rows={2}
-                placeholder="Discuss frame assumptions with Nepsis..."
-                className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-              />
-              <button
-                onClick={handleSendFrameMessage}
-                className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
-              >
-                Send
-              </button>
-            </div>
-
-            <label className="block text-xs text-nepsis-muted">
-              Frame question
-              <textarea
-                value={frameDraft.text}
-                onChange={(event) => setFrameDraft((prev) => ({ ...prev, text: event.target.value }))}
-                rows={3}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block text-xs text-nepsis-muted">
-                Objective
-                <select
-                  value={frameDraft.objective_type}
-                  onChange={(event) =>
-                    setFrameDraft((prev) => ({ ...prev, objective_type: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
-                >
-                  {OBJECTIVE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs text-nepsis-muted">
-                Time horizon
-                <select
-                  value={frameDraft.time_horizon}
-                  onChange={(event) =>
-                    setFrameDraft((prev) => ({ ...prev, time_horizon: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
-                >
-                  {HORIZON_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <label className="block text-xs text-nepsis-muted">
-              Domain
-              <input
-                value={frameDraft.domain}
-                onChange={(event) => setFrameDraft((prev) => ({ ...prev, domain: event.target.value }))}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block text-xs text-nepsis-muted">
-                Hard constraints (1/line)
-                <textarea
-                  value={frameDraft.constraints_hard_text}
-                  onChange={(event) =>
-                    setFrameDraft((prev) => ({
-                      ...prev,
-                      constraints_hard_text: event.target.value,
-                    }))
-                  }
-                  rows={4}
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-                />
-              </label>
-              <label className="block text-xs text-nepsis-muted">
-                Soft constraints (1/line)
-                <textarea
-                  value={frameDraft.constraints_soft_text}
-                  onChange={(event) =>
-                    setFrameDraft((prev) => ({
-                      ...prev,
-                      constraints_soft_text: event.target.value,
-                    }))
-                  }
-                  rows={4}
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-                />
-              </label>
-            </div>
-
-            <label className="block text-xs text-nepsis-muted">
-              Red channel definition
-              <textarea
-                value={frameDraft.red_definition}
-                onChange={(event) => setFrameDraft((prev) => ({ ...prev, red_definition: event.target.value }))}
-                rows={2}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-              />
-            </label>
-            <label className="block text-xs text-nepsis-muted">
-              Blue channel goals
-              <textarea
-                value={frameDraft.blue_goals}
-                onChange={(event) => setFrameDraft((prev) => ({ ...prev, blue_goals: event.target.value }))}
-                rows={2}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-              />
-            </label>
-
-            <label className="block text-xs text-nepsis-muted">
-              Risk posture
+          <div className="space-y-3 text-xs">
+            <label className="block text-nepsis-muted">
+              Model
               <select
-                value={frameDraft.risk_posture}
-                onChange={(event) =>
-                  setFrameDraft((prev) => ({
-                    ...prev,
-                    risk_posture: event.target.value as RiskPosture,
-                  }))
-                }
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
+                value={detachedModel}
+                onChange={(event) => setDetachedModel(event.target.value as DetachedModel)}
+                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
               >
-                <option value="red_first">{RISK_POSTURES.red_first.label}</option>
-                <option value="balanced">{RISK_POSTURES.balanced.label}</option>
-                <option value="blue_first">{RISK_POSTURES.blue_first.label}</option>
+                <option value="gpt-4.1">gpt-4.1</option>
+                <option value="o3">o3</option>
+                <option value="claude-sonnet">claude-sonnet</option>
+                <option value="gemini">gemini</option>
               </select>
-              <span className="mt-1 block text-[11px]">{RISK_POSTURES[frameDraft.risk_posture].summary}</span>
             </label>
+
+            <label className="flex items-center gap-2 text-nepsis-muted">
+              <input
+                type="checkbox"
+                checked={detachedCompare}
+                onChange={(event) => setDetachedCompare(event.target.checked)}
+              />
+              Multi-model comparison view
+            </label>
+
+            <label className="block text-nepsis-muted">
+              Optional input source
+              <input
+                value={detachedSource}
+                onChange={(event) => setDetachedSource(event.target.value)}
+                placeholder="file://, URL, or note"
+                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
+              />
+            </label>
+          </div>
+
+          <div className="mt-3 h-80 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
+            {detachedChat.map((message) => (
+              <div key={message.id} className="mb-2">
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
+                    {message.role === "human" ? "You" : "Assistant"}
+                  </span>
+                  <span className="text-nepsis-muted">{message.model}</span>
+                </div>
+                <div className="text-[11px] text-nepsis-muted">
+                  {new Date(message.at).toLocaleTimeString()}
+                  {message.source ? ` · src: ${message.source}` : ""}
+                </div>
+                <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
+              </div>
+            ))}
           </div>
 
           <div className="mt-3 flex gap-2">
-            {!frameLocked ? (
-              <button
-                onClick={() => void handleLockFrame()}
-                disabled={loading}
-                className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
-              >
-                Lock Frame
-              </button>
-            ) : (
-              <button
-                onClick={handleUnlockFrame}
-                className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
-              >
-                Unlock Frame
-              </button>
-            )}
-          </div>
-        </section>
-
-        <section
-          className={`flex min-h-[740px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
-            !frameLocked ? "pointer-events-none opacity-50" : ""
-          }`}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold">2) Call & Report</h2>
-              <p className="text-xs text-nepsis-muted">Capture evidence, run model call, and inspect contradiction pressure.</p>
-            </div>
-            <span
-              className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                reportLocked
-                  ? "border-green-500/40 bg-green-500/15 text-green-200"
-                  : "border-nepsis-border bg-black/20 text-nepsis-muted"
-              }`}
+            <textarea
+              value={detachedInput}
+              onChange={(event) => setDetachedInput(event.target.value)}
+              rows={3}
+              placeholder="Detached discussion..."
+              className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+            />
+            <button
+              onClick={handleSendDetachedMessage}
+              className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
             >
-              {reportLocked ? "Locked" : "Open"}
-            </span>
+              Send
+            </button>
           </div>
+        </aside>
 
-          <div className="flex-1 space-y-3">
-            <div className="h-48 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
-              {reportChat.map((message) => (
-                <div key={message.id} className="mb-2">
-                  <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
-                    {message.role === "human" ? "You" : "Nepsis"}
-                  </span>
-                  <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
-                  <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
+        <div className="space-y-4">
+          <div className="grid gap-4 2xl:grid-cols-3">
+            <section className="flex min-h-[760px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">1) Priors / Frame</h2>
+                  <p className="text-xs text-nepsis-muted">Define frame, constraints, red triggers, and blue goals.</p>
                 </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <textarea
-                value={reportInput}
-                onChange={(event) => setReportInput(event.target.value)}
-                rows={3}
-                placeholder="Observations, test outcomes, contradictions..."
-                className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-              />
-              <button
-                onClick={handleSendReportMessage}
-                className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
-              >
-                Send
-              </button>
-            </div>
-
-            <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
-              <div className="mb-1 text-nepsis-muted">CALL payload preview</div>
-              <pre className="max-h-40 overflow-auto text-[11px] text-nepsis-muted">
-                {JSON.stringify(
-                  deriveSignFromNarrative(activeSession?.family ?? family, reportCorpus || reportInput).sign,
-                  null,
-                  2,
-                )}
-              </pre>
-            </div>
-
-            {reportResult && (
-              <div className="space-y-2 rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-nepsis-border px-2 py-0.5">
-                    decision: {reportResult.decision}
-                  </span>
-                  <span className="rounded-full border border-nepsis-border px-2 py-0.5">
-                    stage: {reportResult.stage}
-                  </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setFrameCollapsed((prev) => !prev)}
+                    className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] hover:border-nepsis-accent"
+                  >
+                    {frameCollapsed ? "Expand" : "Collapse"}
+                  </button>
                   <span
-                    className={`rounded-full border px-2 py-0.5 ${
-                      warningBadgeClass(reportResult.governance?.warning_level)
+                    className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                      frameLocked
+                        ? "border-green-500/40 bg-green-500/15 text-green-200"
+                        : "border-nepsis-border bg-black/20 text-nepsis-muted"
                     }`}
                   >
-                    warning: {reportResult.governance?.warning_level ?? "n/a"}
+                    {frameLocked ? "Locked" : "Open"}
                   </span>
-                </div>
-                <div className="text-nepsis-muted">
-                  cause: {reportResult.cause ?? "none"} · violations: {reportResult.violation_count} · ruin:{" "}
-                  {reportResult.is_ruin ? "yes" : "no"}
-                </div>
-                <div className="text-nepsis-muted">
-                  recommended action: {reportResult.governance?.recommended_action ?? reportResult.decision}
                 </div>
               </div>
-            )}
-          </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              onClick={() => void handleRunReport()}
-              disabled={loading}
-              className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
-            >
-              Run CALL + REPORT
-            </button>
-            {!reportLocked ? (
-              <button
-                onClick={handleLockReport}
-                className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
-              >
-                Lock Report
-              </button>
-            ) : (
-              <button
-                onClick={handleUnlockReport}
-                className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
-              >
-                Unlock Report
-              </button>
-            )}
-          </div>
-        </section>
-
-        <section
-          className={`flex min-h-[740px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
-            !reportLocked ? "pointer-events-none opacity-50" : ""
-          }`}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold">3) Posterior → Next Priors</h2>
-              <p className="text-xs text-nepsis-muted">Keep mixture visible, then commit a refined frame for next iteration.</p>
-            </div>
-            <span className="rounded-full border border-nepsis-border bg-black/20 px-2 py-0.5 text-[11px] text-nepsis-muted">
-              {reportLocked ? "Ready to commit" : "Locked"}
-            </span>
-          </div>
-
-          <div className="flex-1 space-y-3">
-            <div className="h-32 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
-              {posteriorChat.map((message) => (
-                <div key={message.id} className="mb-2">
-                  <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
-                    {message.role === "human" ? "You" : "Nepsis"}
-                  </span>
-                  <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
-                  <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
+              {frameCollapsed ? (
+                <div className="flex-1 space-y-3">
+                  <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                    <div className="text-nepsis-muted">Frame summary</div>
+                    <div className="mt-1 text-nepsis-text">{frameDraft.text || "(no frame text yet)"}</div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-nepsis-muted">
+                      <div>objective: {frameDraft.objective_type || "n/a"}</div>
+                      <div>domain: {frameDraft.domain || "n/a"}</div>
+                      <div>hard: {parseLineList(frameDraft.constraints_hard_text).length}</div>
+                      <div>soft: {parseLineList(frameDraft.constraints_soft_text).length}</div>
+                    </div>
+                    <div className="mt-2 text-nepsis-muted">
+                      posture: {RISK_POSTURES[frameDraft.risk_posture].label}
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div className="flex-1 space-y-3">
+                  <div className="h-44 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
+                    {frameChat.map((message) => (
+                      <div key={message.id} className="mb-2">
+                        <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
+                          {message.role === "human" ? "You" : "Nepsis"}
+                        </span>
+                        <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
+                        <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
+                      </div>
+                    ))}
+                  </div>
 
-            <div className="flex gap-2">
-              <textarea
-                value={posteriorInput}
-                onChange={(event) => setPosteriorInput(event.target.value)}
-                rows={2}
-                placeholder="Discuss carry-forward and reframe intent..."
-                className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
-              />
-              <button
-                onClick={handleSendPosteriorMessage}
-                className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
-              >
-                Send
-              </button>
-            </div>
+                  <div className="flex gap-2">
+                    <textarea
+                      value={frameInput}
+                      onChange={(event) => setFrameInput(event.target.value)}
+                      rows={2}
+                      placeholder="Discuss frame assumptions..."
+                      className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                    />
+                    <button
+                      onClick={handleSendFrameMessage}
+                      className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
+                    >
+                      Send
+                    </button>
+                  </div>
 
-            <div className="rounded-lg border border-nepsis-border bg-black/20 p-3">
-              <div className="mb-2 text-xs text-nepsis-muted">Posterior distribution</div>
-              <div className="space-y-2">
-                {posteriorRows.length === 0 && <div className="text-xs text-nepsis-muted">No posterior yet.</div>}
-                {posteriorRows.map(([name, value]) => (
-                  <div key={name} className="space-y-1 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-nepsis-text">{name}</span>
-                      <span className="text-nepsis-muted">{formatPct(value)}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-nepsis-border">
-                      <div
-                        className="h-2 rounded-full bg-gradient-to-r from-nepsis-accent to-nepsis-accentSoft"
-                        style={{ width: `${Math.max(2, Math.round(value * 100))}%` }}
+                  <label className="block text-xs text-nepsis-muted">
+                    Frame question
+                    <textarea
+                      value={frameDraft.text}
+                      onChange={(event) => setFrameDraft((prev) => ({ ...prev, text: event.target.value }))}
+                      rows={3}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-xs text-nepsis-muted">
+                      Objective
+                      <select
+                        value={frameDraft.objective_type}
+                        onChange={(event) =>
+                          setFrameDraft((prev) => ({ ...prev, objective_type: event.target.value }))
+                        }
+                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
+                      >
+                        {OBJECTIVE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block text-xs text-nepsis-muted">
+                      Time horizon
+                      <select
+                        value={frameDraft.time_horizon}
+                        onChange={(event) =>
+                          setFrameDraft((prev) => ({ ...prev, time_horizon: event.target.value }))
+                        }
+                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
+                      >
+                        {HORIZON_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <label className="block text-xs text-nepsis-muted">
+                    Domain
+                    <input
+                      value={frameDraft.domain}
+                      onChange={(event) => setFrameDraft((prev) => ({ ...prev, domain: event.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-xs text-nepsis-muted">
+                      Hard constraints (1/line)
+                      <textarea
+                        value={frameDraft.constraints_hard_text}
+                        onChange={(event) =>
+                          setFrameDraft((prev) => ({
+                            ...prev,
+                            constraints_hard_text: event.target.value,
+                          }))
+                        }
+                        rows={4}
+                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                       />
+                    </label>
+                    <label className="block text-xs text-nepsis-muted">
+                      Soft constraints (1/line)
+                      <textarea
+                        value={frameDraft.constraints_soft_text}
+                        onChange={(event) =>
+                          setFrameDraft((prev) => ({
+                            ...prev,
+                            constraints_soft_text: event.target.value,
+                          }))
+                        }
+                        rows={4}
+                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block text-xs text-nepsis-muted">
+                    Red channel definition
+                    <textarea
+                      value={frameDraft.red_definition}
+                      onChange={(event) => setFrameDraft((prev) => ({ ...prev, red_definition: event.target.value }))}
+                      rows={2}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                    />
+                  </label>
+                  <label className="block text-xs text-nepsis-muted">
+                    Blue channel goals
+                    <textarea
+                      value={frameDraft.blue_goals}
+                      onChange={(event) => setFrameDraft((prev) => ({ ...prev, blue_goals: event.target.value }))}
+                      rows={2}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                    />
+                  </label>
+
+                  <label className="block text-xs text-nepsis-muted">
+                    Risk posture
+                    <select
+                      value={frameDraft.risk_posture}
+                      onChange={(event) =>
+                        setFrameDraft((prev) => ({
+                          ...prev,
+                          risk_posture: event.target.value as RiskPosture,
+                        }))
+                      }
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
+                    >
+                      <option value="red_first">{RISK_POSTURES.red_first.label}</option>
+                      <option value="balanced">{RISK_POSTURES.balanced.label}</option>
+                      <option value="blue_first">{RISK_POSTURES.blue_first.label}</option>
+                    </select>
+                    <span className="mt-1 block text-[11px]">{RISK_POSTURES[frameDraft.risk_posture].summary}</span>
+                  </label>
+                </div>
+              )}
+
+              <div className="mt-3 flex gap-2">
+                {!frameLocked ? (
+                  <button
+                    onClick={() => void handleLockFrame()}
+                    disabled={loading}
+                    className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+                  >
+                    Lock Frame
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleUnlockFrame}
+                    className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
+                  >
+                    Unlock Frame
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section
+              className={`flex min-h-[760px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
+                !frameLocked ? "pointer-events-none opacity-50" : ""
+              }`}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold">2) Call &amp; Report</h2>
+                  <p className="text-xs text-nepsis-muted">
+                    Capture observations, run call/report, and keep Bayesian weighting visible.
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                    reportLocked
+                      ? "border-green-500/40 bg-green-500/15 text-green-200"
+                      : "border-nepsis-border bg-black/20 text-nepsis-muted"
+                  }`}
+                >
+                  {reportLocked ? "Locked" : "Open"}
+                </span>
+              </div>
+
+              <div className="flex-1 space-y-3">
+                <div className="h-48 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
+                  {reportChat.map((message) => (
+                    <div key={message.id} className="mb-2">
+                      <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
+                        {message.role === "human" ? "You" : "Nepsis"}
+                      </span>
+                      <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
+                      <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
                     </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <textarea
+                    value={reportInput}
+                    onChange={(event) => setReportInput(event.target.value)}
+                    rows={3}
+                    placeholder="Observations, tests, contradictions..."
+                    className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                  />
+                  <button
+                    onClick={handleSendReportMessage}
+                    className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
+                  >
+                    Send
+                  </button>
+                </div>
+
+                <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                  <div className="mb-1 text-nepsis-muted">CALL payload preview</div>
+                  <pre className="max-h-40 overflow-auto text-[11px] text-nepsis-muted">
+                    {JSON.stringify(
+                      deriveSignFromNarrative(activeSession?.family ?? family, reportCorpus || reportInput).sign,
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </div>
+
+                {reportResult && (
+                  <div className="space-y-2 rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-nepsis-border px-2 py-0.5">
+                        decision: {reportResult.decision}
+                      </span>
+                      <span className="rounded-full border border-nepsis-border px-2 py-0.5">
+                        stage: {reportResult.stage}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 ${
+                          warningBadgeClass(reportResult.governance?.warning_level)
+                        }`}
+                      >
+                        warning: {reportResult.governance?.warning_level ?? "n/a"}
+                      </span>
+                    </div>
+                    <div className="text-nepsis-muted">
+                      cause: {reportResult.cause ?? "none"} · violations: {reportResult.violation_count} · ruin:{" "}
+                      {reportResult.is_ruin ? "yes" : "no"}
+                    </div>
+                    <div className="text-nepsis-muted">
+                      recommended action: {reportResult.governance?.recommended_action ?? reportResult.decision}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => void handleRunReport()}
+                  disabled={loading}
+                  className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+                >
+                  Run CALL + REPORT
+                </button>
+                {!reportLocked ? (
+                  <button
+                    onClick={handleLockReport}
+                    className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
+                  >
+                    Lock Report
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleUnlockReport}
+                    className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
+                  >
+                    Unlock Report
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section
+              className={`flex min-h-[760px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
+                !reportLocked ? "pointer-events-none opacity-50" : ""
+              }`}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold">3) Posterior / Thresholds / New Priors</h2>
+                  <p className="text-xs text-nepsis-muted">Use trust indicators, then commit carry-forward frame updates.</p>
+                </div>
+                <span className="rounded-full border border-nepsis-border bg-black/20 px-2 py-0.5 text-[11px] text-nepsis-muted">
+                  {reportLocked ? "Ready to commit" : "Locked"}
+                </span>
+              </div>
+
+              <div className="flex-1 space-y-3">
+                <div className="h-24 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
+                  {posteriorChat.map((message) => (
+                    <div key={message.id} className="mb-2">
+                      <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
+                        {message.role === "human" ? "You" : "Nepsis"}
+                      </span>
+                      <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
+                      <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <textarea
+                    value={posteriorInput}
+                    onChange={(event) => setPosteriorInput(event.target.value)}
+                    rows={2}
+                    placeholder="Carry-forward discussion..."
+                    className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                  />
+                  <button
+                    onClick={handleSendPosteriorMessage}
+                    className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
+                  >
+                    Send
+                  </button>
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                    <div className="text-nepsis-muted">Most likely interpretation</div>
+                    <div className="mt-1 font-mono text-nepsis-text">{topInterpretation?.[0] ?? "n/a"}</div>
+                    <div className="mt-1 text-nepsis-muted">weight: {formatPct(topInterpretation?.[1])}</div>
+                    <div className="text-nepsis-muted">margin: {formatPct(topMargin)}</div>
+                  </div>
+                  <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                    <div className="text-nepsis-muted">Ruin flags</div>
+                    <div className="mt-1 text-nepsis-text">
+                      {reportResult?.ruin_hits?.length ? reportResult.ruin_hits.join(", ") : "none"}
+                    </div>
+                    <div className="mt-1 text-nepsis-muted">ruin_mass: {formatPct(governance?.ruin_mass)}</div>
+                  </div>
+                  <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                    <div className="text-nepsis-muted">Threshold gate math</div>
+                    <div className="mt-1 text-nepsis-text">
+                      p_bad {formatPct(governance?.p_bad)} vs theta {formatPct(governance?.theta)}
+                    </div>
+                    <div className="mt-1 text-nepsis-muted">
+                      gate: {gateCrossed == null ? "n/a" : gateCrossed ? "crossed" : "not crossed"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-nepsis-border bg-black/20 p-3">
+                  <div className="mb-2 text-xs text-nepsis-muted">Posterior distribution</div>
+                  <div className="space-y-2">
+                    {posteriorRows.length === 0 && <div className="text-xs text-nepsis-muted">No posterior yet.</div>}
+                    {posteriorRows.map(([name, value]) => (
+                      <div key={name} className="space-y-1 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-nepsis-text">{name}</span>
+                          <span className="text-nepsis-muted">{formatPct(value)}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-nepsis-border">
+                          <div
+                            className="h-2 rounded-full bg-gradient-to-r from-nepsis-accent to-nepsis-accentSoft"
+                            style={{ width: `${Math.max(2, Math.round(value * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {whyNotConverging.length > 0 && (
+                  <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                    <div className="mb-2 text-nepsis-muted">Why not converging?</div>
+                    <div className="space-y-2">
+                      {whyNotConverging.map((reason) => (
+                        <div key={reason.code} className="rounded border border-nepsis-border px-2 py-1.5">
+                          <div className="font-medium text-nepsis-text">{reason.title}</div>
+                          <div className="text-nepsis-muted">{reason.message}</div>
+                          <div className="mt-0.5 text-[11px] text-nepsis-accent">
+                            Next discriminator: {reason.next_discriminator}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <label className="block text-xs text-nepsis-muted">
+                  Next frame text
+                  <textarea
+                    value={nextFrameDraft.text}
+                    onChange={(event) => setNextFrameDraft((prev) => ({ ...prev, text: event.target.value }))}
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                  />
+                </label>
+
+                <label className="block text-xs text-nepsis-muted">
+                  Rationale for change
+                  <textarea
+                    value={nextFrameDraft.rationale_for_change}
+                    onChange={(event) =>
+                      setNextFrameDraft((prev) => ({ ...prev, rationale_for_change: event.target.value }))
+                    }
+                    rows={2}
+                    className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                  />
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-xs text-nepsis-muted">
+                    Objective (optional)
+                    <select
+                      value={nextFrameDraft.objective_type}
+                      onChange={(event) =>
+                        setNextFrameDraft((prev) => ({ ...prev, objective_type: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                    >
+                      <option value="">no change</option>
+                      {OBJECTIVE_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-nepsis-muted">
+                    Time horizon (optional)
+                    <select
+                      value={nextFrameDraft.time_horizon}
+                      onChange={(event) =>
+                        setNextFrameDraft((prev) => ({ ...prev, time_horizon: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                    >
+                      <option value="">no change</option>
+                      {HORIZON_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <label className="block text-xs text-nepsis-muted">
+                  Domain (optional)
+                  <input
+                    value={nextFrameDraft.domain}
+                    onChange={(event) => setNextFrameDraft((prev) => ({ ...prev, domain: event.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                  />
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-xs text-nepsis-muted">
+                    Hard constraints (1/line)
+                    <textarea
+                      value={nextFrameDraft.constraints_hard_text}
+                      onChange={(event) =>
+                        setNextFrameDraft((prev) => ({
+                          ...prev,
+                          constraints_hard_text: event.target.value,
+                        }))
+                      }
+                      rows={3}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                    />
+                  </label>
+                  <label className="block text-xs text-nepsis-muted">
+                    Soft constraints (1/line)
+                    <textarea
+                      value={nextFrameDraft.constraints_soft_text}
+                      onChange={(event) =>
+                        setNextFrameDraft((prev) => ({
+                          ...prev,
+                          constraints_soft_text: event.target.value,
+                        }))
+                      }
+                      rows={3}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => void handleCommitIteration()}
+                  disabled={loading}
+                  className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+                >
+                  Commit Iteration
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Packet Event Timeline</h3>
+              <div className="text-xs text-nepsis-muted">{packetEvents.length} events</div>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-nepsis-border bg-black/20 p-2">
+              <div className="flex min-w-max items-center gap-2 text-xs">
+                {packetEvents.length === 0 && <div className="text-nepsis-muted">No packet events yet.</div>}
+                {packetEvents.map((event, index) => (
+                  <div key={event.id} className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSelectedPacketEventId(event.id)}
+                      className={`rounded-full border px-3 py-1 ${
+                        selectedPacketEventId === event.id
+                          ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
+                          : "border-nepsis-border text-nepsis-muted"
+                      }`}
+                    >
+                      {event.label}
+                    </button>
+                    {index < packetEvents.length - 1 && <span className="text-nepsis-muted">—</span>}
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
-              <div className="mb-2 text-nepsis-muted">Governance snapshot</div>
-              <div className="grid grid-cols-2 gap-2 text-nepsis-text">
-                <div>p_bad: {formatPct(governance?.p_bad)}</div>
-                <div>theta: {formatPct(governance?.theta)}</div>
-                <div>ruin_mass: {formatPct(governance?.ruin_mass)}</div>
-                <div>entropy: {formatPct(governance?.posterior_entropy_norm)}</div>
-                <div>top_margin: {formatPct(governance?.top_margin)}</div>
-                <div>action: {governance?.recommended_action ?? "n/a"}</div>
-              </div>
-              {whyNotConverging.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  <div className="text-nepsis-muted">Why not converging?</div>
-                  {whyNotConverging.map((reason) => (
-                    <div key={reason.code} className="rounded border border-nepsis-border px-2 py-1.5">
-                      <div className="font-medium text-nepsis-text">{reason.title}</div>
-                      <div className="text-nepsis-muted">{reason.message}</div>
-                      <div className="mt-0.5 text-[11px] text-nepsis-accent">
-                        Next discriminator: {reason.next_discriminator}
-                      </div>
+            {selectedPacketEvent && (
+              <div className="mt-3 rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div>
+                    <div className="text-nepsis-muted">Event</div>
+                    <div className="font-medium text-nepsis-text">
+                      {selectedPacketEvent.label} ({selectedPacketEvent.raw})
                     </div>
-                  ))}
+                  </div>
+                  <div>
+                    <div className="text-nepsis-muted">Packet</div>
+                    <div className="font-mono text-nepsis-text">{selectedPacketEvent.packetId.slice(0, 12)}...</div>
+                  </div>
+                  <div>
+                    <div className="text-nepsis-muted">Iteration</div>
+                    <div className="text-nepsis-text">{selectedPacketEvent.iteration ?? "n/a"}</div>
+                  </div>
+                  <div>
+                    <div className="text-nepsis-muted">Stage</div>
+                    <div className="text-nepsis-text">{selectedPacketEvent.stage ?? "n/a"}</div>
+                  </div>
+                  <div>
+                    <div className="text-nepsis-muted">Frame version</div>
+                    <div className="text-nepsis-text">{selectedPacketEvent.frameVersion ?? "n/a"}</div>
+                  </div>
+                  <div>
+                    <div className="text-nepsis-muted">At</div>
+                    <div className="text-nepsis-text">
+                      {selectedPacketEvent.at ? new Date(selectedPacketEvent.at).toLocaleString() : "n/a"}
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  <div className="rounded border border-nepsis-border px-2 py-1.5">
+                    <div className="text-nepsis-muted">Decision</div>
+                    <div className="text-nepsis-text">{readString(selectedPacketResult?.decision) ?? "n/a"}</div>
+                  </div>
+                  <div className="rounded border border-nepsis-border px-2 py-1.5">
+                    <div className="text-nepsis-muted">Cause</div>
+                    <div className="text-nepsis-text">{readString(selectedPacketResult?.cause) ?? "n/a"}</div>
+                  </div>
+                  <div className="rounded border border-nepsis-border px-2 py-1.5">
+                    <div className="text-nepsis-muted">State</div>
+                    <div className="text-nepsis-text">{readString(selectedPacketState?.description) ?? "n/a"}</div>
+                  </div>
+                </div>
+
+                {selectedPacketCarry && (
+                  <div className="mt-3">
+                    <div className="mb-1 text-nepsis-muted">Carry-forward policy</div>
+                    <pre className="max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[11px] text-nepsis-muted">
+                      {JSON.stringify(selectedPacketCarry, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Frame Version Timeline</h3>
+              <div className="text-xs text-nepsis-muted">{frameTimeline.length} versions</div>
             </div>
-
-            <label className="block text-xs text-nepsis-muted">
-              Next frame text
-              <textarea
-                value={nextFrameDraft.text}
-                onChange={(event) => setNextFrameDraft((prev) => ({ ...prev, text: event.target.value }))}
-                rows={3}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
-              />
-            </label>
-
-            <label className="block text-xs text-nepsis-muted">
-              Rationale for change
-              <textarea
-                value={nextFrameDraft.rationale_for_change}
-                onChange={(event) =>
-                  setNextFrameDraft((prev) => ({ ...prev, rationale_for_change: event.target.value }))
-                }
-                rows={2}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block text-xs text-nepsis-muted">
-                Objective (optional)
-                <select
-                  value={nextFrameDraft.objective_type}
-                  onChange={(event) =>
-                    setNextFrameDraft((prev) => ({ ...prev, objective_type: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
+            <div className="flex flex-wrap gap-2">
+              {frameTimeline.length === 0 && <div className="text-xs text-nepsis-muted">No committed frames yet.</div>}
+              {frameTimeline.map((entry) => (
+                <div
+                  key={entry.key}
+                  className="min-w-[220px] rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-xs"
                 >
-                  <option value="">no change</option>
-                  {OBJECTIVE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs text-nepsis-muted">
-                Time horizon (optional)
-                <select
-                  value={nextFrameDraft.time_horizon}
-                  onChange={(event) =>
-                    setNextFrameDraft((prev) => ({ ...prev, time_horizon: event.target.value }))
-                  }
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
-                >
-                  <option value="">no change</option>
-                  {HORIZON_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <div className="font-mono text-nepsis-accent">v{entry.frameVersion}</div>
+                  <div className="mt-1 line-clamp-2 text-nepsis-text">{entry.text}</div>
+                  <div className="mt-1 text-nepsis-muted">{entry.note}</div>
+                </div>
+              ))}
             </div>
-
-            <label className="block text-xs text-nepsis-muted">
-              Domain (optional)
-              <input
-                value={nextFrameDraft.domain}
-                onChange={(event) => setNextFrameDraft((prev) => ({ ...prev, domain: event.target.value }))}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block text-xs text-nepsis-muted">
-                Hard constraints (1/line)
-                <textarea
-                  value={nextFrameDraft.constraints_hard_text}
-                  onChange={(event) =>
-                    setNextFrameDraft((prev) => ({
-                      ...prev,
-                      constraints_hard_text: event.target.value,
-                    }))
-                  }
-                  rows={3}
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
-                />
-              </label>
-              <label className="block text-xs text-nepsis-muted">
-                Soft constraints (1/line)
-                <textarea
-                  value={nextFrameDraft.constraints_soft_text}
-                  onChange={(event) =>
-                    setNextFrameDraft((prev) => ({
-                      ...prev,
-                      constraints_soft_text: event.target.value,
-                    }))
-                  }
-                  rows={3}
-                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => void handleCommitIteration()}
-              disabled={loading}
-              className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
-            >
-              Commit Iteration
-            </button>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
-
-      <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Frame Timeline</h3>
-          <div className="text-xs text-nepsis-muted">{timeline.length} versions tracked</div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {timeline.length === 0 && <div className="text-xs text-nepsis-muted">No committed frames yet.</div>}
-          {timeline.map((entry) => (
-            <div
-              key={entry.key}
-              className="min-w-[220px] rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-xs"
-            >
-              <div className="font-mono text-nepsis-accent">v{entry.frameVersion}</div>
-              <div className="mt-1 line-clamp-2 text-nepsis-text">{entry.text}</div>
-              <div className="mt-1 text-nepsis-muted">{entry.note}</div>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
