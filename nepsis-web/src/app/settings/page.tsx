@@ -1,7 +1,9 @@
 "use client";
 
-import { startTransition, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
+import { LLM_CONNECTED_NOTICE_KEY, OPENAI_KEY_STORAGE_KEY } from "@/lib/clientStorage";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -11,12 +13,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem("nepsis_openai_key");
-    if (stored) {
-      startTransition(() => {
+    try {
+      const stored = window.localStorage.getItem(OPENAI_KEY_STORAGE_KEY);
+      if (stored) {
         setApiKey(stored);
         setHasKey(true);
-      });
+      }
+    } catch {
+      setHasKey(false);
     }
   }, []);
 
@@ -24,17 +28,23 @@ export default function SettingsPage() {
     if (typeof window === "undefined") return;
     const trimmed = apiKey.trim();
     if (!trimmed) return;
-    window.localStorage.setItem("nepsis_openai_key", trimmed);
+    try {
+      window.localStorage.setItem(OPENAI_KEY_STORAGE_KEY, trimmed);
+      window.localStorage.setItem(LLM_CONNECTED_NOTICE_KEY, "1");
+    } catch {
+      setMessage("Could not store key in this browser context.");
+      return;
+    }
     setApiKey(trimmed);
     setHasKey(true);
-    setMessage("Connected. Redirecting to workspace...");
-    router.push("/");
+    setMessage("Connected. Redirecting to Engine workspace...");
+    router.push("/engine?connected=1");
   }
 
   return (
-    <div className="mx-auto max-w-xl px-4 py-12">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">LLM Connection</h1>
+    <div className="mx-auto max-w-xl px-4 py-10">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Connect Your LLM</h1>
         <span
           className={`rounded-full px-3 py-1 text-xs ${
             hasKey
@@ -46,9 +56,11 @@ export default function SettingsPage() {
         </span>
       </div>
 
-      <p className="mb-6 text-sm text-nepsis-muted">
-        For now, NepsisCGN uses your own OpenAI API key. It is stored locally in your browser for
-        this MVP.
+      <p className="mb-2 text-sm text-nepsis-muted">
+        Paste an OpenAI API key to enable live model calls in Playground and Engine.
+      </p>
+      <p className="mb-6 text-xs text-nepsis-muted">
+        This key is stored only in your browser for this MVP.
       </p>
 
       <label className="mb-1 block text-xs">OpenAI API Key</label>
@@ -71,6 +83,14 @@ export default function SettingsPage() {
       >
         Connect LLM
       </button>
+      {hasKey && (
+        <button
+          onClick={() => router.push("/engine")}
+          className="ml-2 rounded-full border border-nepsis-border px-4 py-2 text-sm hover:border-nepsis-accent"
+        >
+          Open Engine
+        </button>
+      )}
 
       {message && <p className="mt-3 text-xs text-nepsis-muted">{message}</p>}
     </div>

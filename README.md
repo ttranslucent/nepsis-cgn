@@ -88,6 +88,8 @@ Endpoints:
 - `DELETE /v1/sessions/{session_id}` delete session and in-memory state
 - `POST /v1/sessions/{session_id}/step` run one iteration (`sign`, optional `commit`, `user_decision`, `override_reason`)
 - `POST /v1/sessions/{session_id}/reframe` update frame version
+- `GET /v1/sessions/{session_id}/stage-audit` evaluate stage gates from canonical session state
+- `POST /v1/sessions/{session_id}/stage-audit` evaluate stage gates with optional context overrides
 - `GET /v1/sessions/{session_id}/packets` replay packets
 - `GET /v1/routes` route manifest for API discoverability
 - `GET /v1/health` health check

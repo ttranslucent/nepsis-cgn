@@ -23,6 +23,13 @@ export type EngineFrame = {
   };
 };
 
+export type EngineLineage = {
+  branch_id: string | null;
+  lineage_version: number | null;
+  parent_frame_id: string | null;
+  frame_ref?: string | null;
+};
+
 export type EngineSessionSummary = {
   session_id: string;
   family: EngineFamily;
@@ -31,6 +38,10 @@ export type EngineSessionSummary = {
   steps: number;
   packet_count: number;
   frame: EngineFrame | null;
+  branch_id: string | null;
+  lineage_version: number | null;
+  parent_frame_id: string | null;
+  frame_ref?: string | null;
 };
 
 export type EngineCreateSessionPayload = {
@@ -62,6 +73,8 @@ export type EngineReframePayload = {
     constraints_hard?: string[];
     constraints_soft?: string[];
   };
+  branch_id?: string;
+  parent_frame_id?: string | null;
 };
 
 export type EngineConvergenceReason = {
@@ -111,6 +124,60 @@ export type EngineStepResponse = {
   governance?: EngineGovernance;
   iteration_packet?: Record<string, unknown>;
   session: EngineSessionSummary;
+};
+
+export type EngineStageAuditCheckStatus = "pass" | "warn" | "block";
+
+export type EngineStageAuditCheck = {
+  key: string;
+  label: string;
+  status: EngineStageAuditCheckStatus;
+  detail: string;
+};
+
+export type EngineStageAuditCoach = {
+  status: "PASS" | "WARN" | "BLOCK";
+  summary: string;
+  prompts: string[];
+};
+
+export type EngineStageAuditGate<TPacket = Record<string, unknown>> = {
+  status: "PASS" | "WARN" | "BLOCK";
+  checks: EngineStageAuditCheck[];
+  missing: string[];
+  warnings: string[];
+  packet: TPacket;
+  coach: EngineStageAuditCoach;
+};
+
+export type EngineStageAuditContext = {
+  frame?: Record<string, unknown>;
+  interpretation?: Record<string, unknown>;
+  threshold?: Record<string, unknown>;
+};
+
+export type EngineStageAuditPayload = {
+  context?: EngineStageAuditContext;
+};
+
+export type EngineStageAuditPolicy = {
+  name: string;
+  version: string;
+};
+
+export type EngineStageAuditResponse = {
+  session_id: string;
+  stage: string;
+  policy: EngineStageAuditPolicy;
+  frame: EngineStageAuditGate;
+  interpretation: EngineStageAuditGate;
+  threshold: EngineStageAuditGate;
+  source: {
+    packet_count: number;
+    latest_packet_id: string | null;
+    latest_iteration: number | null;
+    context_applied: boolean;
+  };
 };
 
 export type EnginePacketResponse = {
@@ -216,8 +283,8 @@ export const engineClient = {
   reframeSession(
     sessionId: string,
     payload: EngineReframePayload,
-  ): Promise<{ session_id: string; frame: EngineFrame; stage: string }> {
-    return requestEngine<{ session_id: string; frame: EngineFrame; stage: string }>(
+  ): Promise<{ session_id: string; frame: EngineFrame; stage: string } & EngineLineage> {
+    return requestEngine<{ session_id: string; frame: EngineFrame; stage: string } & EngineLineage>(
       `/sessions/${encodeURIComponent(sessionId)}/reframe`,
       jsonRequest("POST", payload),
     );
@@ -227,5 +294,21 @@ export const engineClient = {
     return requestEngine<EnginePacketResponse>(`/sessions/${encodeURIComponent(sessionId)}/packets`, {
       method: "GET",
     });
+  },
+
+  stageAuditSession(
+    sessionId: string,
+    payload?: EngineStageAuditPayload,
+  ): Promise<EngineStageAuditResponse> {
+    if (payload && payload.context) {
+      return requestEngine<EngineStageAuditResponse>(
+        `/sessions/${encodeURIComponent(sessionId)}/stage-audit`,
+        jsonRequest("POST", payload),
+      );
+    }
+    return requestEngine<EngineStageAuditResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/stage-audit`,
+      { method: "GET" },
+    );
   },
 };

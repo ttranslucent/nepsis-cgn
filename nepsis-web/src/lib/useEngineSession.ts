@@ -9,6 +9,8 @@ import {
   type EnginePacketResponse,
   type EngineReframePayload,
   type EngineRoute,
+  type EngineStageAuditPayload,
+  type EngineStageAuditResponse,
   type EngineSessionSummary,
   type EngineStepPayload,
   type EngineStepResponse,
@@ -24,6 +26,7 @@ type EngineState = {
   activeSession: EngineSessionSummary | null;
   packets: Record<string, unknown>[];
   lastStep: EngineStepResponse | null;
+  lastAudit: EngineStageAuditResponse | null;
 };
 
 function upsertSession(
@@ -49,6 +52,7 @@ export function useEngineSession() {
     activeSession: null,
     packets: [],
     lastStep: null,
+    lastAudit: null,
   });
 
   const run = useCallback(async <T,>(op: () => Promise<T>): Promise<T | undefined> => {
@@ -117,6 +121,7 @@ export function useEngineSession() {
         sessions: upsertSession(prev.sessions, session),
         packets: [],
         lastStep: null,
+        lastAudit: null,
       }));
       return session;
     },
@@ -140,6 +145,7 @@ export function useEngineSession() {
         activeSession: loaded.session,
         sessions: upsertSession(prev.sessions, loaded.session),
         packets: loaded.packetResponse.packets,
+        lastAudit: null,
       }));
       return loaded.session;
     },
@@ -166,6 +172,7 @@ export function useEngineSession() {
           stepResult.iteration_packet != null
             ? [...prev.packets, stepResult.iteration_packet]
             : prev.packets,
+        lastAudit: prev.lastAudit,
       }));
       return stepResult;
     },
@@ -187,13 +194,17 @@ export function useEngineSession() {
         ...active,
         frame: result.frame,
         stage: result.stage,
+        branch_id: result.branch_id ?? active.branch_id,
+        lineage_version: result.lineage_version ?? active.lineage_version,
+        parent_frame_id: result.parent_frame_id ?? null,
+        frame_ref: result.frame_ref ?? active.frame_ref,
       };
       setState((prev) => ({
         ...prev,
         activeSession: updated,
         sessions: upsertSession(prev.sessions, updated),
       }));
-      return result.frame;
+      return result;
     },
     [run, state.activeSession],
   );
@@ -239,9 +250,33 @@ export function useEngineSession() {
           activeSession,
           packets: activeSession ? prev.packets : [],
           lastStep: activeSession ? prev.lastStep : null,
+          lastAudit: activeSession ? prev.lastAudit : null,
         };
       });
       return result;
+    },
+    [run, state.activeSession],
+  );
+
+  const stageAudit = useCallback(
+    async (
+      payload?: EngineStageAuditPayload,
+      sessionId?: string,
+    ): Promise<EngineStageAuditResponse | undefined> => {
+      const targetId = sessionId ?? state.activeSession?.session_id;
+      if (!targetId) {
+        setState((prev) => ({ ...prev, error: "No session selected for stage audit." }));
+        return undefined;
+      }
+      const audit = await run(() => engineClient.stageAuditSession(targetId, payload));
+      if (!audit) {
+        return undefined;
+      }
+      setState((prev) => ({
+        ...prev,
+        lastAudit: audit,
+      }));
+      return audit;
     },
     [run, state.activeSession],
   );
@@ -258,6 +293,7 @@ export function useEngineSession() {
     reframe,
     refreshPackets,
     deleteSession,
+    stageAudit,
   };
 }
 

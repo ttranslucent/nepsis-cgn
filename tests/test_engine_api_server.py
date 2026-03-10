@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import http.client
+import json
+import threading
+
 import pytest
 
+import nepsis_cgn.api.server as api_server
+from nepsis_cgn.api.service import EngineApiService
 from nepsis_cgn.api.server import (
     _assert_runtime_auth_configuration,
     _auth_required,
@@ -34,6 +40,8 @@ def test_route_manifest_contains_routes_endpoint() -> None:
     assert any(r["path"] == "/v1/routes" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/openapi.json" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/step" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/sessions/{session_id}/stage-audit" and r["method"] == "GET" for r in routes)
+    assert any(r["path"] == "/v1/sessions/{session_id}/stage-audit" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}" and r["method"] == "DELETE" for r in routes)
     assert any(r["path"] == "/v1/sessions" and r["method"] == "DELETE" for r in routes)
 
@@ -136,3 +144,148 @@ def test_openapi_spec_contains_route_paths() -> None:
     assert spec["openapi"] == "3.1.0"
     assert "/v1/sessions" in spec["paths"]
     assert "get" in spec["paths"]["/v1/sessions"]
+    assert "/v1/sessions/{session_id}/stage-audit" in spec["paths"]
+    assert "get" in spec["paths"]["/v1/sessions/{session_id}/stage-audit"]
+    assert "post" in spec["paths"]["/v1/sessions/{session_id}/stage-audit"]
+
+
+def test_stage_audit_post_handler_accepts_context_payload(monkeypatch) -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={"text": "Decide escalation."},
+    )
+    sid = created["session_id"]
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+    monkeypatch.setattr(api_server, "API", svc)
+
+    result = api_server.EngineApiHandler._stage_audit_session(
+        object(),
+        sid,
+        {
+            "context": {
+                "frame": {
+                    "problem_statement": "Decide escalation now.",
+                    "catastrophic_outcome": "Miss critical incident.",
+                    "optimization_goal": "Protect users and reduce disruption.",
+                    "decision_horizon": "short",
+                    "key_uncertainty": "Signal quality from first report.",
+                    "hard_constraints": ["No policy breach"],
+                    "soft_constraints": ["Minimize disruption"],
+                },
+                "interpretation": {
+                    "report_text": "obs: critical signal present\nobs: no policy violation",
+                    "evidence_count": 2,
+                    "report_synced": True,
+                    "contradictions_status": "none_identified",
+                    "contradictions_note": "",
+                },
+                "threshold": {
+                    "loss_treat": 1.0,
+                    "loss_not_treat": 9.0,
+                    "warning_level": "red",
+                    "gate_crossed": True,
+                    "recommendation": "escalate",
+                    "decision": "hold",
+                    "hold_reason": "Need one more discriminator before recommendation.",
+                },
+            }
+        },
+    )
+    assert result["policy"]["name"] == "nepsis_cgn.stage_audit"
+    assert result["frame"]["status"] == "PASS"
+    assert result["interpretation"]["status"] == "PASS"
+    assert result["threshold"]["status"] == "PASS"
+    assert result["source"]["context_applied"] is True
+
+
+def test_stage_audit_post_handler_rejects_non_object_context(monkeypatch) -> None:
+    svc = EngineApiService()
+    created = svc.create_session(family="safety")
+    sid = created["session_id"]
+    monkeypatch.setattr(api_server, "API", svc)
+
+    with pytest.raises(ValueError):
+        api_server.EngineApiHandler._stage_audit_session(
+            object(),
+            sid,
+            {"context": "invalid"},
+        )
+
+
+def test_stage_audit_http_post_route_accepts_context_payload(monkeypatch) -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={"text": "Decide escalation."},
+    )
+    sid = created["session_id"]
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+    monkeypatch.setattr(api_server, "API", svc)
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+
+    try:
+        httpd = api_server.ThreadingHTTPServer(("127.0.0.1", 0), api_server.EngineApiHandler)
+    except OSError as exc:
+        pytest.skip(f"local bind unavailable in this environment: {exc}")
+
+    thread: threading.Thread | None = None
+    try:
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        port = int(httpd.server_address[1])
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        payload = {
+            "context": {
+                "frame": {
+                    "problem_statement": "Decide escalation now.",
+                    "catastrophic_outcome": "Miss critical incident.",
+                    "optimization_goal": "Protect users and reduce disruption.",
+                    "decision_horizon": "short",
+                    "key_uncertainty": "Signal quality from first report.",
+                    "hard_constraints": ["No policy breach"],
+                    "soft_constraints": ["Minimize disruption"],
+                },
+                "interpretation": {
+                    "report_text": "obs: critical signal present\nobs: no policy violation",
+                    "evidence_count": 2,
+                    "report_synced": True,
+                    "contradictions_status": "none_identified",
+                    "contradictions_note": "",
+                },
+                "threshold": {
+                    "loss_treat": 1.0,
+                    "loss_not_treat": 9.0,
+                    "warning_level": "red",
+                    "gate_crossed": True,
+                    "recommendation": "escalate",
+                    "decision": "hold",
+                    "hold_reason": "Need one more discriminator before recommendation.",
+                },
+            }
+        }
+        conn.request(
+            "POST",
+            f"/v1/sessions/{sid}/stage-audit",
+            body=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        body = response.read()
+        conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        if thread is not None:
+            thread.join(timeout=2)
+
+    assert response.status == 200
+    parsed = json.loads(body.decode("utf-8"))
+    assert parsed["policy"]["name"] == "nepsis_cgn.stage_audit"
+    assert parsed["frame"]["status"] == "PASS"
+    assert parsed["interpretation"]["status"] == "PASS"
+    assert parsed["threshold"]["status"] == "PASS"
+    assert parsed["source"]["context_applied"] is True

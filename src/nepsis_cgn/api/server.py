@@ -48,6 +48,8 @@ ROUTES = (
     {"method": "DELETE", "path": "/v1/sessions/{session_id}", "description": "Delete session"},
     {"method": "POST", "path": "/v1/sessions/{session_id}/step", "description": "Run one step"},
     {"method": "POST", "path": "/v1/sessions/{session_id}/reframe", "description": "Update frame version"},
+    {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
+    {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
     {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
 )
 
@@ -101,6 +103,12 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             self._safe(lambda: self._get_packets(session_id, query))
             return
 
+        m_stage_audit = re.fullmatch(r"/v1/sessions/([^/]+)/stage-audit", path)
+        if m_stage_audit:
+            session_id = m_stage_audit.group(1)
+            self._safe(lambda: API.stage_audit_session(session_id))
+            return
+
         self._send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -129,6 +137,12 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if m_reframe:
             session_id = m_reframe.group(1)
             self._safe(lambda: self._reframe_session(session_id, body))
+            return
+
+        m_stage_audit = re.fullmatch(r"/v1/sessions/([^/]+)/stage-audit", path)
+        if m_stage_audit:
+            session_id = m_stage_audit.group(1)
+            self._safe(lambda: self._stage_audit_session(session_id, body))
             return
 
         self._send_json(404, {"error": "Not found"})
@@ -187,7 +201,28 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         frame = body.get("frame")
         if not isinstance(frame, dict):
             raise ValueError("reframe payload requires object field 'frame'")
-        return API.reframe_session(session_id, frame=frame)
+        branch_id = body.get("branch_id")
+        if branch_id is not None and (not isinstance(branch_id, str) or not branch_id.strip()):
+            raise ValueError("branch_id must be a non-empty string when provided")
+        parent_frame_id = body.get("parent_frame_id")
+        if parent_frame_id is not None and (not isinstance(parent_frame_id, str)):
+            raise ValueError("parent_frame_id must be a string when provided")
+        return API.reframe_session(
+            session_id,
+            frame=frame,
+            branch_id=branch_id.strip() if isinstance(branch_id, str) else None,
+            parent_frame_id=parent_frame_id.strip() if isinstance(parent_frame_id, str) else None,
+        )
+
+    def _stage_audit_session(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        raw_context = body.get("context", body)
+        if raw_context is None:
+            context = None
+        else:
+            if not isinstance(raw_context, dict):
+                raise ValueError("stage-audit payload 'context' must be an object when provided")
+            context = raw_context
+        return API.stage_audit_session(session_id, context=context)
 
     def _list_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=50)

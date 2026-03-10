@@ -1,13 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   type EngineFamily,
   type EngineFrame,
   type EngineReframePayload,
+  type EngineStageAuditResponse,
   type EngineStepResponse,
 } from "@/lib/engineClient";
+import {
+  type StageCoach,
+  type GateResult,
+  type GateStatus,
+  type InterpretationContradictionsStatus,
+  type ThresholdDecision,
+  buildFrameCoach,
+  buildInterpretationCoach,
+  buildThresholdCoach,
+  evaluateFrameGate,
+  evaluateInterpretationGate,
+  evaluateThresholdGate,
+} from "@/lib/nepsisGates";
+import { consumeConnectedNotice, hasStoredOpenAiKey } from "@/lib/clientStorage";
 import { useEngineSession } from "@/lib/useEngineSession";
 
 type ChatRole = "human" | "nepsis";
@@ -37,6 +53,7 @@ type FrameDraft = {
   objective_type: string;
   domain: string;
   time_horizon: string;
+  key_uncertainty: string;
   constraints_hard_text: string;
   constraints_soft_text: string;
   red_definition: string;
@@ -58,9 +75,36 @@ type FrameTimelineEntry = {
   key: string;
   sessionId: string;
   frameVersion: number;
+  lineageVersion: number;
+  branchId: string;
+  parentFrameId: string | null;
+  gateFrameStatus: GateStatus;
+  gateInterpretationStatus: GateStatus;
+  gateThresholdStatus: GateStatus;
   text: string;
   note: string;
   at: string;
+  audit: FrameTimelineAuditSnapshot | null;
+};
+
+type FrameTimelineAuditSnapshot = {
+  stage: string;
+  policyName: string;
+  policyVersion: string;
+  sourcePacketCount: number;
+  sourceLatestPacketId: string | null;
+  sourceLatestIteration: number | null;
+  contextApplied: boolean;
+  frameCoachSummary: string;
+  interpretationCoachSummary: string;
+  thresholdCoachSummary: string;
+};
+
+type FrameTimelineMeta = {
+  branchId?: string;
+  parentFrameId?: string | null;
+  lineageVersion?: number;
+  audit?: EngineStageAuditResponse | null;
 };
 
 type PacketEvent = {
@@ -90,6 +134,43 @@ type SignBuildResult = {
   sign: Record<string, unknown> | null;
   error: string | null;
 };
+
+type AudienceMode = "public" | "research";
+
+type ModelComparisonSnapshot = {
+  id: string;
+  model: DetachedModel;
+  at: string;
+  source: string | null;
+  note: string | null;
+  framePacket: ReturnType<typeof evaluateFrameGate>["packet"];
+  interpretationPacket: ReturnType<typeof evaluateInterpretationGate>["packet"];
+  thresholdPacket: ReturnType<typeof evaluateThresholdGate>["packet"];
+  gateFrameStatus: GateStatus;
+  gateInterpretationStatus: GateStatus;
+  gateThresholdStatus: GateStatus;
+  recommendation: string | null;
+  warningLevel: string | null;
+};
+
+type GateStageId = "frame" | "interpretation" | "threshold";
+
+type UnresolvedGateItem = {
+  key: string;
+  stageId: GateStageId;
+  stage: string;
+  label: string;
+  detail: string;
+  targetId: string;
+};
+
+type StageAuditContextOverrides = {
+  frame?: Record<string, unknown>;
+  interpretation?: Record<string, unknown>;
+  threshold?: Record<string, unknown>;
+};
+
+const MODEL_SNAPSHOT_STORAGE_PREFIX = "nepsis_engine_model_snapshots";
 
 const OBJECTIVE_OPTIONS = ["explain", "decide", "predict", "debug", "design", "sensemake"] as const;
 const HORIZON_OPTIONS = ["immediate", "short", "medium", "long", "indefinite"] as const;
@@ -135,6 +216,7 @@ const DEFAULT_FRAME_DRAFT: FrameDraft = {
   objective_type: "sensemake",
   domain: "general",
   time_horizon: "short",
+  key_uncertainty: "",
   constraints_hard_text: "",
   constraints_soft_text: "",
   red_definition: "",
@@ -413,11 +495,13 @@ function buildFramePayloadFromDraft(draft: FrameDraft): EngineReframePayload["fr
   const objectiveType = optionalText(draft.objective_type);
   const domain = optionalText(draft.domain);
   const horizon = optionalText(draft.time_horizon);
+  const uncertainty = optionalText(draft.key_uncertainty);
   const hard = parseLineList(draft.constraints_hard_text);
   const soft = parseLineList(draft.constraints_soft_text);
   const rationaleParts = [
     optionalText(draft.red_definition) ? `Red channel: ${draft.red_definition.trim()}` : null,
     optionalText(draft.blue_goals) ? `Blue channel: ${draft.blue_goals.trim()}` : null,
+    uncertainty ? `Uncertainty: ${uncertainty}` : null,
   ].filter((item): item is string => item !== null);
 
   if (text) {
@@ -442,6 +526,15 @@ function buildFramePayloadFromDraft(draft: FrameDraft): EngineReframePayload["fr
     payload.rationale_for_change = rationaleParts.join(" | ");
   }
   return payload;
+}
+
+function readRationaleSegment(rationale: string | null | undefined, label: string): string {
+  if (!rationale) {
+    return "";
+  }
+  const regex = new RegExp(`${label}:\\s*([^|]+)`, "i");
+  const match = rationale.match(regex);
+  return match ? match[1].trim() : "";
 }
 
 function buildNextFramePayload(draft: NextFrameDraft): EngineReframePayload["frame"] {
@@ -482,15 +575,17 @@ function hydrateFrameDraft(frame: EngineFrame | null): FrameDraft {
   if (!frame) {
     return DEFAULT_FRAME_DRAFT;
   }
+  const rationale = frame.rationale_for_change ?? "";
   return {
     text: frame.text ?? "",
     objective_type: frame.objective_type ?? "sensemake",
     domain: frame.domain ?? "",
     time_horizon: frame.time_horizon ?? "short",
+    key_uncertainty: readRationaleSegment(rationale, "Uncertainty"),
     constraints_hard_text: lineListToText(frame.constraints_hard),
     constraints_soft_text: lineListToText(frame.constraints_soft),
-    red_definition: frame.rationale_for_change ?? "",
-    blue_goals: "",
+    red_definition: readRationaleSegment(rationale, "Red channel"),
+    blue_goals: readRationaleSegment(rationale, "Blue channel"),
     risk_posture: "balanced",
   };
 }
@@ -510,31 +605,6 @@ function hydrateNextFrameDraft(frame: EngineFrame | null): NextFrameDraft {
   };
 }
 
-function frameCoachReply(draft: FrameDraft): string {
-  const missing: string[] = [];
-  if (!optionalText(draft.text)) {
-    missing.push("core question");
-  }
-  if (!optionalText(draft.red_definition)) {
-    missing.push("red channel trigger definition");
-  }
-  if (!optionalText(draft.blue_goals)) {
-    missing.push("blue channel optimization goal");
-  }
-  if (missing.length > 0) {
-    return `Captured. Before lock, clarify: ${missing.join(", ")}.`;
-  }
-  const hardCount = parseLineList(draft.constraints_hard_text).length;
-  const softCount = parseLineList(draft.constraints_soft_text).length;
-  return `Frame looks lock-ready. Constraints in play: hard=${hardCount}, soft=${softCount}.`;
-}
-
-function reportCoachReply(result: EngineStepResponse): string {
-  const action = result.governance?.recommended_action ?? result.decision;
-  const warning = result.governance?.warning_level ?? "green";
-  return `Report updated. Warning=${warning}. Recommended next action: ${action}.`;
-}
-
 function warningBadgeClass(level: string | undefined): string {
   if (level === "red") {
     return "bg-red-500/20 text-red-200 border-red-500/40";
@@ -545,7 +615,254 @@ function warningBadgeClass(level: string | undefined): string {
   return "bg-emerald-500/20 text-emerald-100 border-emerald-500/40";
 }
 
+function gateBadgeClass(status: GateStatus): string {
+  if (status === "PASS") {
+    return "border-emerald-500/40 bg-emerald-500/15 text-emerald-200";
+  }
+  if (status === "WARN") {
+    return "border-amber-500/40 bg-amber-500/15 text-amber-100";
+  }
+  return "border-red-500/40 bg-red-500/15 text-red-200";
+}
+
+function gateTextClass(status: GateStatus): string {
+  if (status === "PASS") {
+    return "text-emerald-300";
+  }
+  if (status === "WARN") {
+    return "text-amber-200";
+  }
+  return "text-red-200";
+}
+
+function gateMissingText<TPacket>(gate: GateResult<TPacket>): string {
+  if (gate.missing.length > 0) {
+    return gate.missing.join(", ");
+  }
+  if (gate.warnings.length > 0) {
+    return gate.warnings.join(", ");
+  }
+  return "All required checks passed.";
+}
+
+function coachMessage(coach: StageCoach): string {
+  if (coach.prompts.length === 0) {
+    return coach.summary;
+  }
+  return `${coach.summary}\nNext: ${coach.prompts.join(" ")}`;
+}
+
+function normalizeGateStatus(value: unknown): GateStatus | null {
+  if (value === "PASS" || value === "WARN" || value === "BLOCK") {
+    return value;
+  }
+  return null;
+}
+
+function gateMissingTextForStage(
+  stage: GateStageId,
+  fallbackGate: GateResult<unknown>,
+  audit: EngineStageAuditResponse | null | undefined,
+): string {
+  const gate = audit?.[stage];
+  if (gate && gate.missing.length > 0) {
+    return gate.missing.join(", ");
+  }
+  if (gate && gate.warnings.length > 0) {
+    return gate.warnings.join(", ");
+  }
+  return gateMissingText(fallbackGate);
+}
+
+function selectCoach(
+  stage: GateStageId,
+  fallback: StageCoach,
+  audit: EngineStageAuditResponse | null | undefined,
+): StageCoach {
+  if (!audit) {
+    return fallback;
+  }
+  const gate = audit[stage];
+  if (!gate || typeof gate !== "object") {
+    return fallback;
+  }
+  const coach = (gate as { coach?: unknown }).coach;
+  if (!coach || typeof coach !== "object") {
+    return fallback;
+  }
+  const maybeSummary = (coach as { summary?: unknown }).summary;
+  const maybePrompts = (coach as { prompts?: unknown }).prompts;
+  const maybeStatus = (coach as { status?: unknown }).status;
+  if (typeof maybeSummary !== "string" || !Array.isArray(maybePrompts)) {
+    return fallback;
+  }
+  const prompts = maybePrompts.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const status = maybeStatus === "PASS" || maybeStatus === "WARN" || maybeStatus === "BLOCK" ? maybeStatus : fallback.status;
+  return {
+    status,
+    summary: maybeSummary,
+    prompts,
+  };
+}
+
+function frameTimelineAuditSnapshot(
+  audit: EngineStageAuditResponse | null | undefined,
+): FrameTimelineAuditSnapshot | null {
+  if (!audit) {
+    return null;
+  }
+  const policyName =
+    typeof audit.policy?.name === "string" && audit.policy.name.trim().length > 0
+      ? audit.policy.name
+      : "unknown_policy";
+  const policyVersion =
+    typeof audit.policy?.version === "string" && audit.policy.version.trim().length > 0
+      ? audit.policy.version
+      : "unknown_version";
+  return {
+    stage: audit.stage,
+    policyName,
+    policyVersion,
+    sourcePacketCount: audit.source.packet_count,
+    sourceLatestPacketId: audit.source.latest_packet_id,
+    sourceLatestIteration: audit.source.latest_iteration,
+    contextApplied: audit.source.context_applied,
+    frameCoachSummary: audit.frame.coach.summary,
+    interpretationCoachSummary: audit.interpretation.coach.summary,
+    thresholdCoachSummary: audit.threshold.coach.summary,
+  };
+}
+
+function pipelineStateClass(state: "pass" | "warn" | "block" | "pending"): string {
+  if (state === "pass") {
+    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+  }
+  if (state === "warn") {
+    return "border-amber-500/40 bg-amber-500/10 text-amber-100";
+  }
+  if (state === "block") {
+    return "border-red-500/40 bg-red-500/10 text-red-200";
+  }
+  return "border-nepsis-border bg-black/20 text-nepsis-muted";
+}
+
+function sessionBranchContext(sessionId: string): string {
+  return sessionId.slice(0, 6) || "ws";
+}
+
+function frameRefFromFrame(frame: EngineFrame | null | undefined): string | null {
+  if (!frame) {
+    return null;
+  }
+  return `${frame.frame_id}:v${frame.frame_version}`;
+}
+
+function parseBranchCounter(branchId: string | null | undefined): number {
+  if (!branchId) {
+    return 1;
+  }
+  const match = branchId.match(/-b(\d+)$/i);
+  if (!match) {
+    return 1;
+  }
+  const parsed = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
+}
+
+function deltaMarker(changed: boolean): string {
+  return changed ? "delta" : "same";
+}
+
+function gateTargetId(stageId: GateStageId, checkKey: string): string {
+  if (stageId === "frame") {
+    if (checkKey === "problem_statement") {
+      return "frame-problem-statement";
+    }
+    if (checkKey === "catastrophic_outcome") {
+      return "frame-catastrophic-outcome";
+    }
+    if (checkKey === "optimization_goal") {
+      return "frame-optimization-goal";
+    }
+    if (checkKey === "decision_horizon") {
+      return "frame-decision-horizon";
+    }
+    if (checkKey === "key_uncertainty") {
+      return "frame-key-uncertainty";
+    }
+    if (checkKey === "constraint_structure") {
+      return "frame-constraints-hard";
+    }
+    return "stage-frame";
+  }
+  if (stageId === "interpretation") {
+    if (checkKey === "report_text") {
+      return "report-input";
+    }
+    if (checkKey === "hypothesis_count" || checkKey === "evidence_count" || checkKey === "evaluation_freshness") {
+      return "report-run-button";
+    }
+    if (checkKey === "contradictions_declared") {
+      return "report-contradictions-status";
+    }
+    if (checkKey === "contradiction_density") {
+      return "report-contradictions-note";
+    }
+    return "stage-interpretation";
+  }
+  if (checkKey === "posterior_available") {
+    return "threshold-posterior";
+  }
+  if (checkKey === "loss_asymmetry" || checkKey === "red_override_metadata") {
+    return "threshold-gate-metrics";
+  }
+  if (checkKey === "decision_declared" || checkKey === "red_override_enforced") {
+    return "threshold-decision-select";
+  }
+  if (checkKey === "hold_reason") {
+    return "threshold-hold-reason";
+  }
+  return "stage-threshold";
+}
+
+function isModelSnapshot(value: unknown): value is ModelComparisonSnapshot {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Partial<ModelComparisonSnapshot>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.model === "string" &&
+    typeof candidate.at === "string" &&
+    typeof candidate.gateFrameStatus === "string" &&
+    typeof candidate.gateInterpretationStatus === "string" &&
+    typeof candidate.gateThresholdStatus === "string" &&
+    typeof candidate.framePacket === "object" &&
+    candidate.framePacket !== null &&
+    typeof candidate.interpretationPacket === "object" &&
+    candidate.interpretationPacket !== null &&
+    typeof candidate.thresholdPacket === "object" &&
+    candidate.thresholdPacket !== null
+  );
+}
+
+function pulseJumpTarget(target: HTMLElement): void {
+  const previousOutline = target.style.outline;
+  const previousOutlineOffset = target.style.outlineOffset;
+  target.style.outline = "2px solid rgba(255, 206, 92, 0.95)";
+  target.style.outlineOffset = "2px";
+  window.setTimeout(() => {
+    target.style.outline = previousOutline;
+    target.style.outlineOffset = previousOutlineOffset;
+  }, 1400);
+}
+
 export default function EnginePage() {
+  const router = useRouter();
+
   const {
     loading,
     error,
@@ -561,12 +878,18 @@ export default function EnginePage() {
     step,
     reframe,
     refreshPackets,
+    stageAudit,
+    lastAudit,
   } = useEngineSession();
 
   const [localError, setLocalError] = useState<string | null>(null);
+  const [audienceMode, setAudienceMode] = useState<AudienceMode>("public");
   const [developerToolsEnabled, setDeveloperToolsEnabled] = useState(false);
   const [systemStatusOpen, setSystemStatusOpen] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
+  const [hasConnectedKey, setHasConnectedKey] = useState<boolean | null>(null);
+  const [showConnectedNotice, setShowConnectedNotice] = useState(false);
+  const [connectedFromQuery, setConnectedFromQuery] = useState(false);
 
   const [family, setFamily] = useState<EngineFamily>("safety");
   const [sessionToOpen, setSessionToOpen] = useState<string>("");
@@ -582,6 +905,12 @@ export default function EnginePage() {
   const [reportInput, setReportInput] = useState("");
   const [posteriorInput, setPosteriorInput] = useState("");
   const [reportCorpus, setReportCorpus] = useState("");
+  const [lastEvaluatedReportText, setLastEvaluatedReportText] = useState("");
+  const [contradictionsStatus, setContradictionsStatus] =
+    useState<InterpretationContradictionsStatus>("unreviewed");
+  const [contradictionsNote, setContradictionsNote] = useState("");
+  const [thresholdDecision, setThresholdDecision] = useState<ThresholdDecision>("undecided");
+  const [thresholdHoldReason, setThresholdHoldReason] = useState("");
 
   const [frameLocked, setFrameLocked] = useState(false);
   const [reportLocked, setReportLocked] = useState(false);
@@ -589,6 +918,11 @@ export default function EnginePage() {
 
   const [reportResult, setReportResult] = useState<EngineStepResponse | null>(null);
   const [frameTimeline, setFrameTimeline] = useState<FrameTimelineEntry[]>([]);
+  const [activeBranchId, setActiveBranchId] = useState("ws-b1");
+  const [branchCounter, setBranchCounter] = useState(1);
+  const [pendingBranchParentFrameId, setPendingBranchParentFrameId] = useState<string | null>(null);
+  const [modelSnapshots, setModelSnapshots] = useState<ModelComparisonSnapshot[]>([]);
+  const [loadedSnapshotStorageKey, setLoadedSnapshotStorageKey] = useState<string | null>(null);
 
   const [detachedModel, setDetachedModel] = useState<DetachedModel>("gpt-4.1");
   const [detachedCompare, setDetachedCompare] = useState(false);
@@ -596,12 +930,16 @@ export default function EnginePage() {
   const [detachedInput, setDetachedInput] = useState("");
   const [detachedChat, setDetachedChat] = useState<DetachedMessage[]>([DETACHED_STARTER]);
 
+  const snapshotStorageKey = useMemo(
+    () => `${MODEL_SNAPSHOT_STORAGE_PREFIX}:${activeSession?.session_id ?? "workspace"}`,
+    [activeSession?.session_id],
+  );
   const packetEvents = useMemo(() => buildPacketEvents(packets), [packets]);
   const compactTimeline = useMemo<CompactTimelineItem[]>(() => {
     const frameItems: CompactTimelineItem[] = frameTimeline.map((entry, idx) => ({
       id: `frame:${entry.key}`,
       kind: "frame",
-      label: `Frame v${entry.frameVersion}`,
+      label: `L${entry.lineageVersion} · ${entry.branchId} · v${entry.frameVersion}`,
       at: entry.at,
       order: idx,
       frame: entry,
@@ -648,6 +986,45 @@ export default function EnginePage() {
   }, [sessions, sessionToOpen]);
 
   useEffect(() => {
+    if (!activeSession) {
+      return;
+    }
+    const resolvedBranchId = activeSession.branch_id ?? `${sessionBranchContext(activeSession.session_id)}-b1`;
+    setActiveBranchId(resolvedBranchId);
+    setBranchCounter(parseBranchCounter(resolvedBranchId));
+    setPendingBranchParentFrameId(activeSession.parent_frame_id ?? null);
+  }, [
+    activeSession?.session_id,
+    activeSession?.branch_id,
+    activeSession?.parent_frame_id,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setConnectedFromQuery(new URLSearchParams(window.location.search).get("connected") === "1");
+  }, []);
+
+  useEffect(() => {
+    let connected = connectedFromQuery;
+    try {
+      connected = connected || consumeConnectedNotice();
+      setHasConnectedKey(hasStoredOpenAiKey());
+    } catch {
+      setHasConnectedKey(false);
+    }
+    setShowConnectedNotice(connected);
+  }, [connectedFromQuery]);
+
+  useEffect(() => {
+    if (!connectedFromQuery) {
+      return;
+    }
+    router.replace("/engine");
+  }, [connectedFromQuery, router]);
+
+  useEffect(() => {
     try {
       const stored = window.localStorage.getItem(DEVTOOLS_STORAGE_KEY);
       if (stored === "1") {
@@ -682,16 +1059,424 @@ export default function EnginePage() {
     }
   }, [compactTimeline, selectedTimelineId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(snapshotStorageKey);
+      if (!raw) {
+        setModelSnapshots([]);
+      } else {
+        const parsed = JSON.parse(raw);
+        const next = Array.isArray(parsed) ? parsed.filter(isModelSnapshot) : [];
+        setModelSnapshots(next);
+      }
+    } catch {
+      setModelSnapshots([]);
+    } finally {
+      setLoadedSnapshotStorageKey(snapshotStorageKey);
+    }
+  }, [snapshotStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (loadedSnapshotStorageKey !== snapshotStorageKey) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(snapshotStorageKey, JSON.stringify(modelSnapshots));
+    } catch {
+      // Ignore localStorage persistence errors.
+    }
+  }, [snapshotStorageKey, loadedSnapshotStorageKey, modelSnapshots]);
+
   const currentStageStep = !frameLocked ? 1 : !reportLocked ? 2 : 3;
   const userMode = !developerToolsEnabled;
   const showOperatorControls = developerToolsEnabled;
+  const panelHeightClass = userMode ? "min-h-[640px]" : "min-h-[760px]";
+  const frameHardConstraints = useMemo(
+    () => parseLineList(frameDraft.constraints_hard_text),
+    [frameDraft.constraints_hard_text],
+  );
+  const frameSoftConstraints = useMemo(
+    () => parseLineList(frameDraft.constraints_soft_text),
+    [frameDraft.constraints_soft_text],
+  );
+  const reportDraftText = useMemo(
+    () => [reportCorpus, optionalText(reportInput) ?? ""].filter(Boolean).join("\n"),
+    [reportCorpus, reportInput],
+  );
+  const evidenceLineCount = useMemo(() => parseLineList(reportDraftText).length, [reportDraftText]);
+  const governance = reportResult?.governance;
+  const posteriorRows = useMemo(
+    () =>
+      Object.entries(reportResult?.posterior ?? {}).sort((a, b) => {
+        return b[1] - a[1];
+      }),
+    [reportResult?.posterior],
+  );
+  const posteriorHypotheses = useMemo(() => posteriorRows.map(([name]) => name), [posteriorRows]);
+  const gateCrossed =
+    governance?.p_bad != null && governance?.theta != null ? governance.p_bad >= governance.theta : null;
+
+  const frameGate = useMemo(
+    () =>
+      evaluateFrameGate({
+        problemStatement: frameDraft.text,
+        catastrophicOutcome: frameDraft.red_definition,
+        optimizationGoal: frameDraft.blue_goals,
+        decisionHorizon: frameDraft.time_horizon,
+        keyUncertainty: frameDraft.key_uncertainty,
+        hardConstraints: frameHardConstraints,
+        softConstraints: frameSoftConstraints,
+      }),
+    [frameDraft, frameHardConstraints, frameSoftConstraints],
+  );
+  const interpretationGate = useMemo(
+    () =>
+      evaluateInterpretationGate({
+        reportText: reportDraftText,
+        posteriorHypotheses,
+        evidenceCount: evidenceLineCount,
+        reportSynced: reportDraftText.trim() === lastEvaluatedReportText.trim(),
+        contradictionsStatus,
+        contradictionsNote,
+        contradictionDensity: governance?.contradiction_density ?? null,
+      }),
+    [
+      reportDraftText,
+      posteriorHypotheses,
+      evidenceLineCount,
+      lastEvaluatedReportText,
+      contradictionsStatus,
+      contradictionsNote,
+      governance?.contradiction_density,
+    ],
+  );
+  const thresholdGate = useMemo(
+    () =>
+      evaluateThresholdGate({
+        posteriorHypotheses,
+        lossTreat: governance?.loss_treat,
+        lossNotTreat: governance?.loss_notreat,
+        warningLevel: governance?.warning_level,
+        gateCrossed,
+        recommendation: governance?.recommended_action ?? reportResult?.decision ?? null,
+        decision: thresholdDecision,
+        holdReason: thresholdHoldReason,
+      }),
+    [
+      posteriorHypotheses,
+      governance?.loss_treat,
+      governance?.loss_notreat,
+      governance?.warning_level,
+      gateCrossed,
+      governance?.recommended_action,
+      reportResult?.decision,
+      thresholdDecision,
+      thresholdHoldReason,
+    ],
+  );
+  const frameGateView = useMemo<GateResult<unknown>>(() => {
+    const status = normalizeGateStatus(lastAudit?.frame?.status);
+    if (!lastAudit?.frame || status == null) {
+      return frameGate as unknown as GateResult<unknown>;
+    }
+    return {
+      status,
+      checks: lastAudit.frame.checks,
+      missing: lastAudit.frame.missing,
+      warnings: lastAudit.frame.warnings,
+      packet: lastAudit.frame.packet,
+    };
+  }, [lastAudit, frameGate]);
+  const interpretationGateView = useMemo<GateResult<unknown>>(() => {
+    const status = normalizeGateStatus(lastAudit?.interpretation?.status);
+    if (!lastAudit?.interpretation || status == null) {
+      return interpretationGate as unknown as GateResult<unknown>;
+    }
+    return {
+      status,
+      checks: lastAudit.interpretation.checks,
+      missing: lastAudit.interpretation.missing,
+      warnings: lastAudit.interpretation.warnings,
+      packet: lastAudit.interpretation.packet,
+    };
+  }, [lastAudit, interpretationGate]);
+  const thresholdGateView = useMemo<GateResult<unknown>>(() => {
+    const status = normalizeGateStatus(lastAudit?.threshold?.status);
+    if (!lastAudit?.threshold || status == null) {
+      return thresholdGate as unknown as GateResult<unknown>;
+    }
+    return {
+      status,
+      checks: lastAudit.threshold.checks,
+      missing: lastAudit.threshold.missing,
+      warnings: lastAudit.threshold.warnings,
+      packet: lastAudit.threshold.packet,
+    };
+  }, [lastAudit, thresholdGate]);
+  const displayFrameGateStatus = frameGateView.status;
+  const displayInterpretationGateStatus = interpretationGateView.status;
+  const displayThresholdGateStatus = thresholdGateView.status;
+  const frameCoach = useMemo(() => buildFrameCoach(frameGate), [frameGate]);
+  const interpretationCoach = useMemo(
+    () => buildInterpretationCoach(interpretationGate),
+    [interpretationGate],
+  );
+  const thresholdCoach = useMemo(() => buildThresholdCoach(thresholdGate), [thresholdGate]);
+  const displayFrameCoach = useMemo(
+    () => selectCoach("frame", frameCoach, lastAudit),
+    [frameCoach, lastAudit],
+  );
+  const displayInterpretationCoach = useMemo(
+    () => selectCoach("interpretation", interpretationCoach, lastAudit),
+    [interpretationCoach, lastAudit],
+  );
+  const displayThresholdCoach = useMemo(
+    () => selectCoach("threshold", thresholdCoach, lastAudit),
+    [thresholdCoach, lastAudit],
+  );
+  const latestSessionFrameEntry = useMemo(() => {
+    if (!activeSession) {
+      return null;
+    }
+    return (
+      [...frameTimeline]
+        .filter((entry) => entry.sessionId === activeSession.session_id)
+        .sort((a, b) => a.lineageVersion - b.lineageVersion)
+        .at(-1) ?? null
+    );
+  }, [frameTimeline, activeSession]);
+  const audienceLabels = useMemo(() => {
+    if (audienceMode === "research") {
+      return {
+        stage1: "Priors / Frame",
+        stage2: "Interpretation Engine",
+        stage3: "Posterior / Thresholds",
+        stage1Subtitle: "Objective, horizon, domain, constraints, and risk posture.",
+        stage2Subtitle: "Interpretants, evidence linkage, contradiction discipline, and report state.",
+        stage3Subtitle: "Posterior confidence, thresholds, and carry-forward update policy.",
+        history: "Reasoning Lineage",
+      };
+    }
+    return {
+      stage1: "Context",
+      stage2: "Reasoning",
+      stage3: "Decision",
+      stage1Subtitle: "Define the question, constraints, and key risks before running evidence.",
+      stage2Subtitle: "Gather evidence, compare explanations, and log contradictions.",
+      stage3Subtitle: "Decide whether to act or hold, then draft the next revision.",
+      history: "Reasoning History",
+    };
+  }, [audienceMode]);
+  const baselineSnapshot = useMemo(
+    () => modelSnapshots.find((snapshot) => snapshot.model === "gpt-4.1") ?? modelSnapshots[0] ?? null,
+    [modelSnapshots],
+  );
+  const modelDeltaRows = useMemo(() => {
+    if (!baselineSnapshot) {
+      return [];
+    }
+    return modelSnapshots
+      .filter((snapshot) => snapshot.id !== baselineSnapshot.id)
+      .map((snapshot) => {
+        const frameDeltaCount = [
+          snapshot.framePacket.problem_statement !== baselineSnapshot.framePacket.problem_statement,
+          snapshot.framePacket.catastrophic_outcome !== baselineSnapshot.framePacket.catastrophic_outcome,
+          snapshot.framePacket.optimization_goal !== baselineSnapshot.framePacket.optimization_goal,
+          snapshot.framePacket.key_uncertainty !== baselineSnapshot.framePacket.key_uncertainty,
+        ].filter(Boolean).length;
+        const interpretationDeltaCount = [
+          snapshot.interpretationPacket.hypothesis_count !== baselineSnapshot.interpretationPacket.hypothesis_count,
+          snapshot.interpretationPacket.evidence_count !== baselineSnapshot.interpretationPacket.evidence_count,
+          snapshot.interpretationPacket.contradictions_status !==
+            baselineSnapshot.interpretationPacket.contradictions_status,
+        ].filter(Boolean).length;
+        const thresholdDeltaCount = [
+          snapshot.thresholdPacket.decision !== baselineSnapshot.thresholdPacket.decision,
+          snapshot.thresholdPacket.gate_crossed !== baselineSnapshot.thresholdPacket.gate_crossed,
+          snapshot.thresholdPacket.recommendation !== baselineSnapshot.thresholdPacket.recommendation,
+        ].filter(Boolean).length;
+        return {
+          snapshot,
+          frameDeltaCount,
+          interpretationDeltaCount,
+          thresholdDeltaCount,
+          gateStatusDelta:
+            snapshot.gateFrameStatus !== baselineSnapshot.gateFrameStatus ||
+            snapshot.gateInterpretationStatus !== baselineSnapshot.gateInterpretationStatus ||
+            snapshot.gateThresholdStatus !== baselineSnapshot.gateThresholdStatus,
+        };
+      });
+  }, [modelSnapshots, baselineSnapshot]);
+  const processSteps = useMemo(
+    () => [
+      {
+        label: "Extract frame",
+        state:
+          displayFrameGateStatus === "PASS"
+            ? "pass"
+            : displayFrameGateStatus === "WARN"
+              ? "warn"
+              : "block",
+      },
+      {
+        label: "Validate completeness",
+        state:
+          displayFrameGateStatus === "PASS"
+            ? "pass"
+            : displayFrameGateStatus === "WARN"
+              ? "warn"
+              : "block",
+      },
+      {
+        label: "Run interpretation",
+        state: reportResult ? "pass" : frameLocked ? "warn" : "pending",
+      },
+      {
+        label: "Compute posterior",
+        state: posteriorRows.length > 0 ? "pass" : reportResult ? "warn" : "pending",
+      },
+      {
+        label: "Apply thresholds",
+        state:
+          reportResult == null
+            ? "pending"
+            : displayThresholdGateStatus === "PASS"
+              ? "pass"
+              : displayThresholdGateStatus === "WARN"
+                ? "warn"
+                : "block",
+      },
+    ] as const,
+    [
+      displayFrameGateStatus,
+      reportResult,
+      frameLocked,
+      posteriorRows.length,
+      displayThresholdGateStatus,
+    ],
+  );
+  const unresolvedBlocks = useMemo<UnresolvedGateItem[]>(() => {
+    const stages: Array<{ stageId: GateStageId; stage: string; gate: GateResult<unknown> }> = [
+      { stageId: "frame", stage: audienceLabels.stage1, gate: frameGateView },
+      {
+        stageId: "interpretation",
+        stage: audienceLabels.stage2,
+        gate: interpretationGateView,
+      },
+      { stageId: "threshold", stage: audienceLabels.stage3, gate: thresholdGateView },
+    ];
+    return stages.flatMap((entry) =>
+      entry.gate.checks
+        .filter((check) => check.status === "block")
+        .map((check) => ({
+          key: `${entry.stageId}:${check.key}`,
+          stageId: entry.stageId,
+          stage: entry.stage,
+          label: check.label,
+          detail: check.detail,
+          targetId: gateTargetId(entry.stageId, check.key),
+        })),
+    );
+  }, [
+    audienceLabels.stage1,
+    audienceLabels.stage2,
+    audienceLabels.stage3,
+    frameGateView,
+    interpretationGateView,
+    thresholdGateView,
+  ]);
+  const unresolvedWarnings = useMemo<UnresolvedGateItem[]>(() => {
+    const stages: Array<{ stageId: GateStageId; stage: string; gate: GateResult<unknown> }> = [
+      { stageId: "frame", stage: audienceLabels.stage1, gate: frameGateView },
+      {
+        stageId: "interpretation",
+        stage: audienceLabels.stage2,
+        gate: interpretationGateView,
+      },
+      { stageId: "threshold", stage: audienceLabels.stage3, gate: thresholdGateView },
+    ];
+    return stages.flatMap((entry) =>
+      entry.gate.checks
+        .filter((check) => check.status === "warn")
+        .map((check) => ({
+          key: `${entry.stageId}:${check.key}`,
+          stageId: entry.stageId,
+          stage: entry.stage,
+          label: check.label,
+          detail: check.detail,
+          targetId: gateTargetId(entry.stageId, check.key),
+        })),
+    );
+  }, [
+    audienceLabels.stage1,
+    audienceLabels.stage2,
+    audienceLabels.stage3,
+    frameGateView,
+    interpretationGateView,
+    thresholdGateView,
+  ]);
 
   function clearAllErrors() {
     clearError();
     setLocalError(null);
   }
 
-  function appendFrameTimeline(sessionId: string, frame: EngineFrame | null | undefined, note: string) {
+  function jumpToUnresolvedCheck(item: UnresolvedGateItem) {
+    clearAllErrors();
+    if (!showOperatorControls) {
+      if (item.stageId === "frame") {
+        setFrameCollapsed(false);
+      }
+      if (item.stageId === "interpretation" && !frameLocked) {
+        setLocalError(`Complete ${audienceLabels.stage1} first to access this check.`);
+        return;
+      }
+      if (item.stageId === "threshold" && !reportLocked) {
+        setLocalError(`Complete ${audienceLabels.stage2} first to access this check.`);
+        return;
+      }
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      const target =
+        document.getElementById(item.targetId) ??
+        document.getElementById(
+          item.stageId === "frame"
+            ? "stage-frame"
+            : item.stageId === "interpretation"
+              ? "stage-interpretation"
+              : "stage-threshold",
+        );
+      if (!target) {
+        return;
+      }
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement ||
+        target instanceof HTMLButtonElement
+      ) {
+        target.focus();
+      }
+      pulseJumpTarget(target as HTMLElement);
+    });
+  }
+
+  function appendFrameTimeline(
+    sessionId: string,
+    frame: EngineFrame | null | undefined,
+    note: string,
+    meta: FrameTimelineMeta = {},
+  ) {
     if (!frame) {
       return;
     }
@@ -700,18 +1485,30 @@ export default function EnginePage() {
       if (prev.some((entry) => entry.key === key)) {
         return prev;
       }
+      const sessionEntries = [...prev]
+        .filter((entry) => entry.sessionId === sessionId)
+        .sort((a, b) => a.lineageVersion - b.lineageVersion);
+      const latestSessionEntry = sessionEntries.at(-1) ?? null;
+      const lineageVersion = meta.lineageVersion ?? (latestSessionEntry?.lineageVersion ?? 0) + 1;
       const next = [
         ...prev,
         {
           key,
           sessionId,
           frameVersion: frame.frame_version,
+          lineageVersion,
+          branchId: meta.branchId ?? activeBranchId,
+          parentFrameId: meta.parentFrameId ?? latestSessionEntry?.key ?? null,
+          gateFrameStatus: displayFrameGateStatus,
+          gateInterpretationStatus: displayInterpretationGateStatus,
+          gateThresholdStatus: displayThresholdGateStatus,
           text: frame.text,
           note,
           at: new Date().toISOString(),
+          audit: frameTimelineAuditSnapshot(meta.audit),
         },
       ];
-      return next.sort((a, b) => a.frameVersion - b.frameVersion);
+      return next.sort((a, b) => a.lineageVersion - b.lineageVersion);
     });
   }
 
@@ -720,6 +1517,11 @@ export default function EnginePage() {
     setReportResult(null);
     setReportCorpus("");
     setReportInput("");
+    setLastEvaluatedReportText("");
+    setContradictionsStatus("unreviewed");
+    setContradictionsNote("");
+    setThresholdDecision("undecided");
+    setThresholdHoldReason("");
     setReportChat([REPORT_STARTER_MESSAGE]);
     setPosteriorChat([POSTERIOR_STARTER_MESSAGE]);
   }
@@ -735,6 +1537,92 @@ export default function EnginePage() {
   function pushPosteriorMessage(role: ChatRole, text: string) {
     setPosteriorChat((prev) => [...prev, createMessage(role, text)]);
   }
+
+  function captureModelSnapshot(note: string | null = null) {
+    const source = optionalText(detachedSource) ?? null;
+    const snapshot: ModelComparisonSnapshot = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      model: detachedModel,
+      at: new Date().toISOString(),
+      source,
+      note,
+      framePacket: frameGate.packet,
+      interpretationPacket: interpretationGate.packet,
+      thresholdPacket: thresholdGate.packet,
+      gateFrameStatus: displayFrameGateStatus,
+      gateInterpretationStatus: displayInterpretationGateStatus,
+      gateThresholdStatus: displayThresholdGateStatus,
+      recommendation: governance?.recommended_action ?? reportResult?.decision ?? null,
+      warningLevel: governance?.warning_level ?? null,
+    };
+    setModelSnapshots((prev) => {
+      const withoutExisting = prev.filter(
+        (entry) => !(entry.model === snapshot.model && entry.source === snapshot.source),
+      );
+      return [...withoutExisting, snapshot].sort((a, b) => a.model.localeCompare(b.model));
+    });
+  }
+
+  function clearModelSnapshots() {
+    setModelSnapshots([]);
+  }
+
+  const requestBackendStageAudit = useCallback(
+    async (
+      sessionId?: string,
+      overrides?: StageAuditContextOverrides,
+    ) => {
+      const targetId = sessionId ?? activeSession?.session_id;
+      if (!targetId) {
+        return undefined;
+      }
+      const frameContext = {
+        ...(frameGate.packet as unknown as Record<string, unknown>),
+        ...(overrides?.frame ?? {}),
+      };
+      const interpretationContext = {
+        ...(interpretationGate.packet as unknown as Record<string, unknown>),
+        ...(overrides?.interpretation ?? {}),
+      };
+      const thresholdContext = {
+        ...(thresholdGate.packet as unknown as Record<string, unknown>),
+        decision: thresholdDecision,
+        hold_reason: thresholdHoldReason,
+        ...(overrides?.threshold ?? {}),
+      };
+      return stageAudit(
+        {
+          context: {
+            frame: frameContext,
+            interpretation: interpretationContext,
+            threshold: thresholdContext,
+          },
+        },
+        targetId,
+      );
+    },
+    [
+      activeSession?.session_id,
+      frameGate.packet,
+      interpretationGate.packet,
+      thresholdGate.packet,
+      thresholdDecision,
+      thresholdHoldReason,
+      stageAudit,
+    ],
+  );
+
+  useEffect(() => {
+    if (!activeSession?.session_id || typeof window === "undefined") {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void requestBackendStageAudit(activeSession.session_id);
+    }, 450);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [activeSession?.session_id, requestBackendStageAudit]);
 
   async function handleOpenSession() {
     clearAllErrors();
@@ -761,8 +1649,23 @@ export default function EnginePage() {
     setPosteriorChat([POSTERIOR_STARTER_MESSAGE]);
     setReportCorpus("");
     setReportInput("");
-    appendFrameTimeline(opened.session_id, opened.frame, "Session opened");
+    setLastEvaluatedReportText("");
+    setContradictionsStatus("unreviewed");
+    setContradictionsNote("");
+    setThresholdDecision("undecided");
+    setThresholdHoldReason("");
+    const initialBranchId = opened.branch_id ?? `${sessionBranchContext(opened.session_id)}-b1`;
+    setActiveBranchId(initialBranchId);
+    setBranchCounter(parseBranchCounter(initialBranchId));
+    setPendingBranchParentFrameId(opened.parent_frame_id ?? null);
     await refreshPackets(opened.session_id);
+    const audit = await requestBackendStageAudit(opened.session_id);
+    appendFrameTimeline(opened.session_id, opened.frame, "Session opened", {
+      branchId: initialBranchId,
+      parentFrameId: opened.parent_frame_id ?? null,
+      lineageVersion: opened.lineage_version ?? undefined,
+      audit,
+    });
   }
 
   async function handleNewWorkspace() {
@@ -774,40 +1677,67 @@ export default function EnginePage() {
     setNextFrameDraft(DEFAULT_NEXT_FRAME_DRAFT);
     setFrameChat([FRAME_STARTER_MESSAGE]);
     setFrameTimeline([]);
+    setActiveBranchId("ws-b1");
+    setBranchCounter(1);
+    setPendingBranchParentFrameId(null);
+    setModelSnapshots([]);
     await refreshSessions();
   }
 
-  function handleSendFrameMessage() {
+  async function handleSendFrameMessage() {
     clearAllErrors();
     const text = optionalText(frameInput);
     if (!text) {
       return;
     }
     pushFrameMessage("human", text);
-    pushFrameMessage("nepsis", frameCoachReply(frameDraft));
+    const audit = await requestBackendStageAudit();
+    pushFrameMessage("nepsis", coachMessage(selectCoach("frame", frameCoach, audit ?? lastAudit)));
     setFrameInput("");
   }
 
-  function handleSendReportMessage() {
+  async function handleSendReportMessage() {
     clearAllErrors();
     const text = optionalText(reportInput);
     if (!text) {
       return;
     }
+    const previewReportText = [reportCorpus, text].filter(Boolean).join("\n");
+    const previewInterpretationGate = evaluateInterpretationGate({
+      reportText: previewReportText,
+      posteriorHypotheses,
+      evidenceCount: parseLineList(previewReportText).length,
+      reportSynced: previewReportText.trim() === lastEvaluatedReportText.trim(),
+      contradictionsStatus,
+      contradictionsNote,
+      contradictionDensity: governance?.contradiction_density ?? null,
+    });
+    const previewCoach = buildInterpretationCoach(previewInterpretationGate);
+    const audit = await requestBackendStageAudit(undefined, {
+      interpretation: {
+        ...previewInterpretationGate.packet,
+      },
+    });
     pushReportMessage("human", text);
-    pushReportMessage("nepsis", "Noted. Add more evidence or run CALL + REPORT.");
+    pushReportMessage("nepsis", coachMessage(selectCoach("interpretation", previewCoach, audit ?? lastAudit)));
     setReportCorpus((prev) => (prev ? `${prev}\n${text}` : text));
     setReportInput("");
   }
 
-  function handleSendPosteriorMessage() {
+  async function handleSendPosteriorMessage() {
     clearAllErrors();
     const text = optionalText(posteriorInput);
     if (!text) {
       return;
     }
+    const audit = await requestBackendStageAudit(undefined, {
+      threshold: {
+        decision: thresholdDecision,
+        hold_reason: thresholdHoldReason,
+      },
+    });
     pushPosteriorMessage("human", text);
-    pushPosteriorMessage("nepsis", "Captured. Convert that into the next-frame fields, then commit.");
+    pushPosteriorMessage("nepsis", coachMessage(selectCoach("threshold", thresholdCoach, audit ?? lastAudit)));
     setPosteriorInput("");
   }
 
@@ -830,11 +1760,26 @@ export default function EnginePage() {
         source,
       ),
     ]);
+    if (detachedCompare) {
+      captureModelSnapshot(text);
+    }
     setDetachedInput("");
   }
 
   async function handleLockFrame() {
     clearAllErrors();
+    let auditForAction: EngineStageAuditResponse | undefined;
+    let frameActionStatus = displayFrameGateStatus;
+    if (activeSession) {
+      auditForAction = await requestBackendStageAudit(activeSession.session_id);
+      frameActionStatus = normalizeGateStatus(auditForAction?.frame?.status) ?? frameActionStatus;
+    }
+    if (frameActionStatus !== "PASS") {
+      setLocalError(`Frame gate blocked: ${gateMissingTextForStage("frame", frameGateView, auditForAction ?? lastAudit)}`);
+      pushFrameMessage("nepsis", coachMessage(selectCoach("frame", frameCoach, auditForAction ?? lastAudit)));
+      return;
+    }
+
     const text = optionalText(frameDraft.text);
     if (!text) {
       setLocalError("Frame text is required before lock.");
@@ -847,6 +1792,10 @@ export default function EnginePage() {
 
     let sessionId = activeSession?.session_id ?? "";
     let resultingFrame: EngineFrame | null = null;
+    let timelineMeta: FrameTimelineMeta = {
+      branchId: activeBranchId,
+      parentFrameId: pendingBranchParentFrameId,
+    };
 
     if (!activeSession || activeSession.family !== family) {
       const created = await createSession({
@@ -860,38 +1809,85 @@ export default function EnginePage() {
       }
       sessionId = created.session_id;
       resultingFrame = created.frame;
+      const initialBranchId = created.branch_id ?? `${sessionBranchContext(created.session_id)}-b1`;
+      setActiveBranchId(initialBranchId);
+      setBranchCounter(parseBranchCounter(initialBranchId));
+      setPendingBranchParentFrameId(created.parent_frame_id ?? null);
+      timelineMeta = {
+        branchId: initialBranchId,
+        parentFrameId: created.parent_frame_id ?? null,
+        lineageVersion: created.lineage_version ?? undefined,
+      };
       pushFrameMessage("nepsis", `Frame locked and new session created (${shortSession(created.session_id)}).`);
       await refreshPackets(created.session_id);
     } else {
-      const updated = await reframe({ frame: framePayload });
+      const updated = await reframe({
+        frame: framePayload,
+        branch_id: activeBranchId,
+        parent_frame_id: pendingBranchParentFrameId,
+      });
       if (!updated) {
         return;
       }
       sessionId = activeSession.session_id;
-      resultingFrame = updated;
+      resultingFrame = updated.frame;
+      const resolvedBranchId = updated.branch_id ?? activeBranchId;
+      timelineMeta = {
+        branchId: resolvedBranchId,
+        parentFrameId: updated.parent_frame_id ?? pendingBranchParentFrameId,
+        lineageVersion: updated.lineage_version ?? undefined,
+      };
+      setActiveBranchId(resolvedBranchId);
+      setBranchCounter(parseBranchCounter(resolvedBranchId));
       pushFrameMessage("nepsis", `Frame locked on session ${shortSession(activeSession.session_id)}.`);
     }
 
     setFrameLocked(true);
     setFrameCollapsed(true);
     resetDownstreamStages();
+    setPendingBranchParentFrameId(null);
+    await refreshSessions();
+    const auditAfterLock = await requestBackendStageAudit(sessionId);
     if (resultingFrame) {
-      appendFrameTimeline(sessionId, resultingFrame, "Frame locked");
+      appendFrameTimeline(sessionId, resultingFrame, "Frame locked", {
+        ...timelineMeta,
+        audit: auditAfterLock ?? auditForAction ?? lastAudit,
+      });
       setNextFrameDraft(hydrateNextFrameDraft(resultingFrame));
     }
-    await refreshSessions();
   }
 
   function handleUnlockFrame() {
     clearAllErrors();
+    if (activeSession) {
+      const nextBranchCounter = branchCounter + 1;
+      const nextBranchId = `${sessionBranchContext(activeSession.session_id)}-b${nextBranchCounter}`;
+      const parentFrameId =
+        activeSession.frame_ref ?? frameRefFromFrame(activeSession.frame) ?? latestSessionFrameEntry?.key ?? null;
+      setBranchCounter(nextBranchCounter);
+      setActiveBranchId(nextBranchId);
+      setPendingBranchParentFrameId(parentFrameId);
+      pushFrameMessage(
+        "nepsis",
+        `Frame unlocked for edits. Downstream stages were reset. Branch ${nextBranchId} created from ${parentFrameId ?? "root"}.`,
+      );
+    } else {
+      pushFrameMessage(
+        "nepsis",
+        "Frame unlocked for edits. Downstream stages were reset. Next lock creates a new frame version.",
+      );
+    }
     setFrameLocked(false);
     setFrameCollapsed(false);
     resetDownstreamStages();
-    pushFrameMessage("nepsis", "Frame unlocked for edits. Downstream stages were reset.");
   }
 
   async function handleRunReport() {
     clearAllErrors();
+    if (reportLocked) {
+      setLocalError("Unlock Report before running a new evaluation.");
+      return;
+    }
     if (!frameLocked) {
       setLocalError("Lock Frame first.");
       return;
@@ -901,8 +1897,7 @@ export default function EnginePage() {
       return;
     }
 
-    const reportText = [reportCorpus, optionalText(reportInput) ?? ""].filter(Boolean).join("\n");
-    const signResult = deriveSignFromNarrative(activeSession.family, reportText);
+    const signResult = deriveSignFromNarrative(activeSession.family, reportDraftText);
     if (!signResult.sign) {
       setLocalError(signResult.error ?? "Could not build report sign payload.");
       return;
@@ -912,23 +1907,84 @@ export default function EnginePage() {
     if (!result) {
       return;
     }
+    const evaluatedReportText = reportDraftText.trim();
+    const evaluatedInterpretationGate = evaluateInterpretationGate({
+      reportText: evaluatedReportText,
+      posteriorHypotheses: Object.keys(result.posterior ?? {}),
+      evidenceCount: parseLineList(evaluatedReportText).length,
+      reportSynced: true,
+      contradictionsStatus,
+      contradictionsNote,
+      contradictionDensity: result.governance?.contradiction_density ?? null,
+    });
+    const evaluatedThresholdGate = evaluateThresholdGate({
+      posteriorHypotheses: Object.keys(result.posterior ?? {}),
+      lossTreat: result.governance?.loss_treat,
+      lossNotTreat: result.governance?.loss_notreat,
+      warningLevel: result.governance?.warning_level ?? null,
+      gateCrossed:
+        result.governance?.p_bad != null && result.governance?.theta != null
+          ? result.governance.p_bad >= result.governance.theta
+          : null,
+      recommendation: result.governance?.recommended_action ?? result.decision,
+      decision: thresholdDecision,
+      holdReason: thresholdHoldReason,
+    });
+    const interpretationCoachAfterEval = buildInterpretationCoach(evaluatedInterpretationGate);
+    const thresholdCoachAfterEval = buildThresholdCoach(evaluatedThresholdGate);
+    const audit = await requestBackendStageAudit(result.session.session_id, {
+      interpretation: {
+        ...evaluatedInterpretationGate.packet,
+      },
+      threshold: {
+        ...evaluatedThresholdGate.packet,
+        decision: thresholdDecision,
+        hold_reason: thresholdHoldReason,
+      },
+    });
 
     setReportResult(result);
+    setLastEvaluatedReportText(evaluatedReportText);
+    setThresholdDecision("undecided");
+    setThresholdHoldReason("");
     if (optionalText(reportInput)) {
       pushReportMessage("human", reportInput.trim());
       setReportCorpus((prev) => (prev ? `${prev}\n${reportInput.trim()}` : reportInput.trim()));
       setReportInput("");
     }
-    pushReportMessage("nepsis", reportCoachReply(result));
-    pushPosteriorMessage("nepsis", "Posterior updated. Review trust indicators and choose carry-forward edits.");
+    pushReportMessage(
+      "nepsis",
+      coachMessage(selectCoach("interpretation", interpretationCoachAfterEval, audit ?? lastAudit)),
+    );
+    pushPosteriorMessage(
+      "nepsis",
+      coachMessage(selectCoach("threshold", thresholdCoachAfterEval, audit ?? lastAudit)),
+    );
     await refreshPackets(result.session.session_id);
     await refreshSessions();
   }
 
-  function handleLockReport() {
+  async function handleLockReport() {
     clearAllErrors();
+    const auditForAction = await requestBackendStageAudit();
+    const interpretationActionStatus =
+      normalizeGateStatus(auditForAction?.interpretation?.status) ?? displayInterpretationGateStatus;
     if (!reportResult) {
       setLocalError("Run CALL + REPORT before locking this stage.");
+      pushReportMessage(
+        "nepsis",
+        coachMessage(selectCoach("interpretation", interpretationCoach, auditForAction ?? lastAudit)),
+      );
+      return;
+    }
+    if (interpretationActionStatus !== "PASS") {
+      setLocalError(
+        `Interpretation gate blocked: ${gateMissingTextForStage("interpretation", interpretationGateView, auditForAction ?? lastAudit)}`,
+      );
+      pushReportMessage(
+        "nepsis",
+        coachMessage(selectCoach("interpretation", interpretationCoach, auditForAction ?? lastAudit)),
+      );
       return;
     }
     setReportLocked(true);
@@ -946,7 +2002,7 @@ export default function EnginePage() {
   function handleUnlockReport() {
     clearAllErrors();
     setReportLocked(false);
-    pushReportMessage("nepsis", "Report unlocked for more testing.");
+    pushReportMessage("nepsis", "Report unlocked for more testing. Threshold stage will require a new pass.");
   }
 
   async function handleCommitIteration() {
@@ -959,45 +2015,68 @@ export default function EnginePage() {
       setLocalError("No active session.");
       return;
     }
+    const auditForAction = await requestBackendStageAudit();
+    const thresholdActionStatus =
+      normalizeGateStatus(auditForAction?.threshold?.status) ?? displayThresholdGateStatus;
+    if (thresholdActionStatus !== "PASS") {
+      setLocalError(
+        `Threshold gate blocked: ${gateMissingTextForStage("threshold", thresholdGateView, auditForAction ?? lastAudit)}`,
+      );
+      pushPosteriorMessage(
+        "nepsis",
+        coachMessage(selectCoach("threshold", thresholdCoach, auditForAction ?? lastAudit)),
+      );
+      return;
+    }
     const payload = buildNextFramePayload(nextFrameDraft);
     if (!payload.text) {
       setLocalError("Next-frame text is required to commit.");
       return;
     }
 
-    const updated = await reframe({ frame: payload });
+    const updated = await reframe({
+      frame: payload,
+      branch_id: activeBranchId,
+      parent_frame_id: pendingBranchParentFrameId,
+    });
     if (!updated) {
       return;
     }
 
-    appendFrameTimeline(activeSession.session_id, updated, "Committed to next priors");
+    const updatedFrame = updated.frame;
+    const resolvedBranchId = updated.branch_id ?? activeBranchId;
+    appendFrameTimeline(activeSession.session_id, updatedFrame, "Committed to next priors", {
+      branchId: resolvedBranchId,
+      parentFrameId: updated.parent_frame_id ?? pendingBranchParentFrameId,
+      lineageVersion: updated.lineage_version ?? undefined,
+      audit: auditForAction ?? lastAudit,
+    });
+    setActiveBranchId(resolvedBranchId);
+    setBranchCounter(parseBranchCounter(resolvedBranchId));
     setFrameDraft((prev) => ({
       ...prev,
-      text: updated.text,
-      objective_type: updated.objective_type,
-      domain: updated.domain ?? "",
-      time_horizon: updated.time_horizon ?? "",
-      constraints_hard_text: lineListToText(updated.constraints_hard),
-      constraints_soft_text: lineListToText(updated.constraints_soft),
-      red_definition: updated.rationale_for_change ?? prev.red_definition,
+      text: updatedFrame.text,
+      objective_type: updatedFrame.objective_type,
+      domain: updatedFrame.domain ?? "",
+      time_horizon: updatedFrame.time_horizon ?? "",
+      key_uncertainty:
+        readRationaleSegment(updatedFrame.rationale_for_change, "Uncertainty") || prev.key_uncertainty,
+      constraints_hard_text: lineListToText(updatedFrame.constraints_hard),
+      constraints_soft_text: lineListToText(updatedFrame.constraints_soft),
+      red_definition: readRationaleSegment(updatedFrame.rationale_for_change, "Red channel") || prev.red_definition,
+      blue_goals: readRationaleSegment(updatedFrame.rationale_for_change, "Blue channel") || prev.blue_goals,
     }));
-    setNextFrameDraft(hydrateNextFrameDraft(updated));
+    setNextFrameDraft(hydrateNextFrameDraft(updatedFrame));
     setFrameLocked(false);
     setFrameCollapsed(false);
     resetDownstreamStages();
+    setPendingBranchParentFrameId(null);
     pushPosteriorMessage("nepsis", "Iteration committed. Priors stage reopened for the next cycle.");
-    pushFrameMessage("nepsis", `Frame v${updated.frame_version} is now the working prior.`);
+    pushFrameMessage("nepsis", `Frame v${updatedFrame.frame_version} is now the working prior.`);
     await refreshSessions();
+    await requestBackendStageAudit(activeSession.session_id);
   }
 
-  const governance = reportResult?.governance;
-  const posteriorRows = useMemo(
-    () =>
-      Object.entries(reportResult?.posterior ?? {}).sort((a, b) => {
-        return b[1] - a[1];
-      }),
-    [reportResult?.posterior],
-  );
   const mergedError = localError ?? error;
   const activeStage = activeSession?.stage ?? "none";
   const whyNotConverging = governance?.why_not_converging ?? [];
@@ -1005,8 +2084,6 @@ export default function EnginePage() {
   const secondInterpretation = posteriorRows[1] ?? null;
   const topMargin =
     topInterpretation && secondInterpretation ? Math.max(0, topInterpretation[1] - secondInterpretation[1]) : null;
-  const gateCrossed =
-    governance?.p_bad != null && governance?.theta != null ? governance.p_bad >= governance.theta : null;
   const showReportPanel = showOperatorControls || currentStageStep >= 2;
   const showPosteriorPanel = showOperatorControls || currentStageStep >= 3;
   const showTimeline = showOperatorControls || currentStageStep >= 3;
@@ -1024,11 +2101,11 @@ export default function EnginePage() {
       <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">Nepsis Co-Reasoning Workspace</h1>
+            <h1 className="text-xl font-semibold">Nepsis Engine Workspace</h1>
             <p className="mt-1 max-w-3xl text-sm text-nepsis-muted">
-              Guided progression: <span className="font-medium text-nepsis-text">Frame</span> →{" "}
-              <span className="font-medium text-nepsis-text">Call &amp; Report</span> →{" "}
-              <span className="font-medium text-nepsis-text">Posterior / New Priors</span>.
+              Guided flow: <span className="font-medium text-nepsis-text">{audienceLabels.stage1}</span> →{" "}
+              <span className="font-medium text-nepsis-text">{audienceLabels.stage2}</span> →{" "}
+              <span className="font-medium text-nepsis-text">{audienceLabels.stage3}</span>.
             </p>
           </div>
 
@@ -1041,10 +2118,17 @@ export default function EnginePage() {
             </button>
 
             <button
+              onClick={() => setAudienceMode((prev) => (prev === "public" ? "research" : "public"))}
+              className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
+            >
+              Audience: {audienceMode === "public" ? "Public" : "Research"}
+            </button>
+
+            <button
               onClick={() => setSandboxOpen(true)}
               className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
             >
-              Open Model Sandbox
+              Model Sandbox
             </button>
             {developerToolsEnabled && (
               <button
@@ -1070,6 +2154,15 @@ export default function EnginePage() {
             <div>packets: {packets.length}</div>
             <div>frame locked: {frameLocked ? "yes" : "no"}</div>
             <div>report locked: {reportLocked ? "yes" : "no"}</div>
+            <div>branch: {activeBranchId}</div>
+            <div>lineage: {activeSession?.lineage_version ?? latestSessionFrameEntry?.lineageVersion ?? "n/a"}</div>
+            <div>frame gate: {displayFrameGateStatus}</div>
+            <div>interpretation gate: {displayInterpretationGateStatus}</div>
+            <div>threshold gate: {displayThresholdGateStatus}</div>
+            <div>backend audit frame: {lastAudit?.frame.status ?? "n/a"}</div>
+            <div>backend audit interpretation: {lastAudit?.interpretation.status ?? "n/a"}</div>
+            <div>backend audit threshold: {lastAudit?.threshold.status ?? "n/a"}</div>
+            <div>backend audit policy: {lastAudit ? `${lastAudit.policy.name}@${lastAudit.policy.version}` : "n/a"}</div>
           </div>
         )}
 
@@ -1094,6 +2187,9 @@ export default function EnginePage() {
               <div>active: {activeSession ? shortSession(activeSession.session_id) : "none"}</div>
               <div>stage: {activeStage}</div>
               <div>packets: {packets.length}</div>
+              <div>branch: {activeBranchId}</div>
+              <div>backend audit: {lastAudit ? `${lastAudit.frame.status}/${lastAudit.interpretation.status}/${lastAudit.threshold.status}` : "not run"}</div>
+              <div>audit policy: {lastAudit ? `${lastAudit.policy.name}@${lastAudit.policy.version}` : "n/a"}</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -1114,42 +2210,85 @@ export default function EnginePage() {
               >
                 Refresh
               </button>
+              <button
+                onClick={() => void requestBackendStageAudit()}
+                disabled={loading || !activeSession}
+                className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent disabled:opacity-60"
+              >
+                Backend Audit
+              </button>
             </div>
           </div>
         )}
 
-        {userMode && (
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <span
-              className={`rounded-full border px-3 py-1 ${
-                currentStageStep === 1
-                  ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
-                  : "border-nepsis-border text-nepsis-muted"
-              }`}
+        {showConnectedNotice && (
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-2 text-xs text-green-200">
+            <span>LLM connected. Your workspace is ready for live model calls.</span>
+            <button
+              onClick={() => setShowConnectedNotice(false)}
+              className="rounded-full border border-green-500/50 px-2 py-0.5 text-[11px] hover:border-green-400"
             >
-              1. Frame
-            </span>
-            <span
-              className={`rounded-full border px-3 py-1 ${
-                currentStageStep === 2
-                  ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
-                  : currentStageStep > 2
-                    ? "border-green-500/40 bg-green-500/10 text-green-200"
-                    : "border-nepsis-border text-nepsis-muted"
-              }`}
-            >
-              2. Call &amp; Report
-            </span>
-            <span
-              className={`rounded-full border px-3 py-1 ${
-                currentStageStep === 3
-                  ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
-                  : "border-nepsis-border text-nepsis-muted"
-              }`}
-            >
-              3. Posterior / New Priors
-            </span>
+              Dismiss
+            </button>
           </div>
+        )}
+
+        {userMode && hasConnectedKey === false && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            <span>Connect your OpenAI key to run CALL + REPORT with live model output.</span>
+            <a href="/settings" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
+              Open Connect LLM
+            </a>
+          </div>
+        )}
+
+        {userMode && (
+          <>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span
+                className={`rounded-full border px-3 py-1 ${
+                  currentStageStep === 1
+                    ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
+                    : "border-nepsis-border text-nepsis-muted"
+                }`}
+              >
+                1. {audienceLabels.stage1} · {displayFrameGateStatus}
+              </span>
+              <span
+                className={`rounded-full border px-3 py-1 ${
+                  currentStageStep === 2
+                    ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
+                    : currentStageStep > 2
+                      ? "border-green-500/40 bg-green-500/10 text-green-200"
+                      : "border-nepsis-border text-nepsis-muted"
+                }`}
+              >
+                2. {audienceLabels.stage2} · {displayInterpretationGateStatus}
+              </span>
+              <span
+                className={`rounded-full border px-3 py-1 ${
+                  currentStageStep === 3
+                    ? "border-nepsis-accent bg-nepsis-accent/10 text-nepsis-text"
+                    : "border-nepsis-border text-nepsis-muted"
+                }`}
+              >
+                3. {audienceLabels.stage3} · {displayThresholdGateStatus}
+              </span>
+            </div>
+            <div className="mt-3 rounded-lg border border-nepsis-border bg-black/20 p-2">
+              <div className="mb-2 text-[11px] text-nepsis-muted">Process pipeline</div>
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                {processSteps.map((stepItem) => (
+                  <span
+                    key={stepItem.label}
+                    className={`rounded-full border px-2 py-0.5 ${pipelineStateClass(stepItem.state)}`}
+                  >
+                    {stepItem.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </>
         )}
       </section>
 
@@ -1159,14 +2298,74 @@ export default function EnginePage() {
         </div>
       )}
 
+      {(unresolvedBlocks.length > 0 || unresolvedWarnings.length > 0) && (
+        <section
+          className={`rounded-xl border px-3 py-3 text-xs ${
+            unresolvedBlocks.length > 0
+              ? "border-red-500/40 bg-red-500/10 text-red-100"
+              : "border-amber-500/40 bg-amber-500/10 text-amber-100"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Not Ready</h3>
+            <span className="rounded-full border border-current/40 px-2 py-0.5 text-[11px]">
+              blocks: {unresolvedBlocks.length} · warnings: {unresolvedWarnings.length}
+            </span>
+          </div>
+          {unresolvedBlocks.length > 0 && (
+            <div className="mt-2 space-y-1">
+              <div className="text-red-200">Progression is blocked until these checks pass:</div>
+              {unresolvedBlocks.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => jumpToUnresolvedCheck(item)}
+                  className="w-full rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-left hover:border-red-300"
+                >
+                  <div>
+                    <span className="font-medium">{item.stage}</span>: {item.label}
+                  </div>
+                  <div className="text-[11px] text-red-100">{item.detail}</div>
+                  <div className="mt-1 text-[10px] text-red-200/90 underline">Jump to check</div>
+                </button>
+              ))}
+            </div>
+          )}
+          {unresolvedWarnings.length > 0 && (
+            <div className={`mt-2 space-y-1 ${unresolvedBlocks.length > 0 ? "text-red-100" : "text-amber-100"}`}>
+              <div>Non-blocking warnings:</div>
+              {unresolvedWarnings.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => jumpToUnresolvedCheck(item)}
+                  className="w-full rounded border border-current/20 bg-black/20 px-2 py-1 text-left hover:border-current/50"
+                >
+                  <div>
+                    <span className="font-medium">{item.stage}</span>: {item.label}
+                  </div>
+                  <div className="text-[11px] opacity-90">{item.detail}</div>
+                  <div className="mt-1 text-[10px] underline">Jump to check</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <div className={`grid gap-4 ${userMode ? "grid-cols-1" : "2xl:grid-cols-3"}`}>
-        <section className="flex min-h-[760px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
+        <section
+          id="stage-frame"
+          tabIndex={-1}
+          className={`flex ${panelHeightClass} flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4`}
+        >
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold">1) Priors / Frame</h2>
-              <p className="text-xs text-nepsis-muted">Objective, horizon, domain, constraints, and risk posture.</p>
+              <h2 className="text-sm font-semibold">1) {audienceLabels.stage1}</h2>
+              <p className="text-xs text-nepsis-muted">{audienceLabels.stage1Subtitle}</p>
             </div>
             <div className="flex items-center gap-2">
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${gateBadgeClass(displayFrameGateStatus)}`}>
+                Frame Gate: {displayFrameGateStatus}
+              </span>
               <button
                 onClick={() => setFrameCollapsed((prev) => !prev)}
                 className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] hover:border-nepsis-accent"
@@ -1184,6 +2383,26 @@ export default function EnginePage() {
               </span>
             </div>
           </div>
+          <div className="mb-3 rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-[11px]">
+            <div className="text-nepsis-muted">Gate requirements</div>
+            <div className={`mt-1 ${gateTextClass(displayFrameGateStatus)}`}>{gateMissingText(frameGateView)}</div>
+            <div className="mt-2 rounded border border-nepsis-border bg-black/20 p-2">
+              <div className="text-nepsis-muted">Nepsis stage coach</div>
+                <div className={`mt-1 ${gateTextClass(displayFrameGateStatus)}`}>{displayFrameCoach.summary}</div>
+              {displayFrameCoach.prompts.length > 0 && (
+                <div className="mt-1 space-y-1 text-nepsis-text">
+                  {displayFrameCoach.prompts.map((prompt, idx) => (
+                    <div key={`${idx}-${prompt}`}>- {prompt}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {showOperatorControls && (
+              <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
+                {JSON.stringify(frameGateView.packet, null, 2)}
+              </pre>
+            )}
+          </div>
 
           {userMode && frameLocked && frameCollapsed ? (
             <div className="flex-1 space-y-3">
@@ -1193,8 +2412,9 @@ export default function EnginePage() {
                 <div className="mt-2 grid grid-cols-2 gap-2 text-nepsis-muted">
                   <div>objective: {frameDraft.objective_type || "n/a"}</div>
                   <div>domain: {frameDraft.domain || "n/a"}</div>
-                  <div>hard: {parseLineList(frameDraft.constraints_hard_text).length}</div>
-                  <div>soft: {parseLineList(frameDraft.constraints_soft_text).length}</div>
+                  <div>hard: {frameHardConstraints.length}</div>
+                  <div>soft: {frameSoftConstraints.length}</div>
+                  <div>uncertainty: {frameDraft.key_uncertainty || "n/a"}</div>
                 </div>
               </div>
             </div>
@@ -1217,11 +2437,13 @@ export default function EnginePage() {
                   value={frameInput}
                   onChange={(event) => setFrameInput(event.target.value)}
                   rows={2}
-                  placeholder="Discuss frame assumptions..."
+                  placeholder={
+                    userMode ? "Clarify goal, risks, and constraints before locking..." : "Discuss frame assumptions..."
+                  }
                   className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
                 <button
-                  onClick={handleSendFrameMessage}
+                  onClick={() => void handleSendFrameMessage()}
                   className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
                 >
                   Send
@@ -1245,6 +2467,7 @@ export default function EnginePage() {
               <label className="block text-xs text-nepsis-muted">
                 Frame question
                 <textarea
+                  id="frame-problem-statement"
                   value={frameDraft.text}
                   onChange={(event) => setFrameDraft((prev) => ({ ...prev, text: event.target.value }))}
                   rows={3}
@@ -1272,6 +2495,7 @@ export default function EnginePage() {
                 <label className="block text-xs text-nepsis-muted">
                   Time horizon
                   <select
+                    id="frame-decision-horizon"
                     value={frameDraft.time_horizon}
                     onChange={(event) =>
                       setFrameDraft((prev) => ({ ...prev, time_horizon: event.target.value }))
@@ -1296,10 +2520,23 @@ export default function EnginePage() {
                 />
               </label>
 
+              <label className="block text-xs text-nepsis-muted">
+                Key uncertainty source
+                <textarea
+                  id="frame-key-uncertainty"
+                  value={frameDraft.key_uncertainty}
+                  onChange={(event) => setFrameDraft((prev) => ({ ...prev, key_uncertainty: event.target.value }))}
+                  rows={2}
+                  placeholder="What uncertainty could most change this decision?"
+                  className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                />
+              </label>
+
               <div className="grid grid-cols-2 gap-2">
                 <label className="block text-xs text-nepsis-muted">
                   Hard constraints (1/line)
                   <textarea
+                    id="frame-constraints-hard"
                     value={frameDraft.constraints_hard_text}
                     onChange={(event) =>
                       setFrameDraft((prev) => ({
@@ -1330,6 +2567,7 @@ export default function EnginePage() {
               <label className="block text-xs text-nepsis-muted">
                 Red channel definition
                 <textarea
+                  id="frame-catastrophic-outcome"
                   value={frameDraft.red_definition}
                   onChange={(event) => setFrameDraft((prev) => ({ ...prev, red_definition: event.target.value }))}
                   rows={2}
@@ -1339,6 +2577,7 @@ export default function EnginePage() {
               <label className="block text-xs text-nepsis-muted">
                 Blue channel goals
                 <textarea
+                  id="frame-optimization-goal"
                   value={frameDraft.blue_goals}
                   onChange={(event) => setFrameDraft((prev) => ({ ...prev, blue_goals: event.target.value }))}
                   rows={2}
@@ -1371,7 +2610,7 @@ export default function EnginePage() {
             {!frameLocked ? (
               <button
                 onClick={() => void handleLockFrame()}
-                disabled={loading}
+                disabled={loading || displayFrameGateStatus !== "PASS"}
                 className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
               >
                 Lock Frame →
@@ -1389,24 +2628,51 @@ export default function EnginePage() {
 
         {showReportPanel && (
           <section
-            className={`flex min-h-[760px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
+            id="stage-interpretation"
+            tabIndex={-1}
+            className={`flex ${panelHeightClass} flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
               !frameLocked ? "pointer-events-none opacity-50" : ""
             }`}
           >
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold">2) Call &amp; Report</h2>
-                <p className="text-xs text-nepsis-muted">Observations input, payload preview, and report run.</p>
+                <h2 className="text-sm font-semibold">2) {audienceLabels.stage2}</h2>
+                <p className="text-xs text-nepsis-muted">{audienceLabels.stage2Subtitle}</p>
               </div>
-              <span
-                className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                  reportLocked
-                    ? "border-green-500/40 bg-green-500/15 text-green-200"
-                    : "border-nepsis-border bg-black/20 text-nepsis-muted"
-                }`}
-              >
-                {reportLocked ? "Locked" : "Open"}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-[11px] ${gateBadgeClass(displayInterpretationGateStatus)}`}>
+                  Interpretation Gate: {displayInterpretationGateStatus}
+                </span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                    reportLocked
+                      ? "border-green-500/40 bg-green-500/15 text-green-200"
+                      : "border-nepsis-border bg-black/20 text-nepsis-muted"
+                  }`}
+                >
+                  {reportLocked ? "Locked" : "Open"}
+                </span>
+              </div>
+            </div>
+            <div className="mb-3 rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-[11px]">
+              <div className="text-nepsis-muted">Gate requirements</div>
+              <div className={`mt-1 ${gateTextClass(displayInterpretationGateStatus)}`}>{gateMissingText(interpretationGateView)}</div>
+              <div className="mt-2 rounded border border-nepsis-border bg-black/20 p-2">
+                <div className="text-nepsis-muted">Nepsis stage coach</div>
+                <div className={`mt-1 ${gateTextClass(displayInterpretationGateStatus)}`}>{displayInterpretationCoach.summary}</div>
+                {displayInterpretationCoach.prompts.length > 0 && (
+                  <div className="mt-1 space-y-1 text-nepsis-text">
+                    {displayInterpretationCoach.prompts.map((prompt, idx) => (
+                      <div key={`${idx}-${prompt}`}>- {prompt}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {showOperatorControls && (
+                <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
+                  {JSON.stringify(interpretationGateView.packet, null, 2)}
+                </pre>
+              )}
             </div>
 
             {userMode && reportLocked && currentStageStep > 2 ? (
@@ -1437,25 +2703,57 @@ export default function EnginePage() {
 
                 <div className="flex gap-2">
                   <textarea
+                    id="report-input"
                     value={reportInput}
                     onChange={(event) => setReportInput(event.target.value)}
                     rows={3}
-                    placeholder="Observations, tests, contradictions..."
+                    placeholder={
+                      userMode ? "Add observations, tests, and contradictory evidence..." : "Observations, tests, contradictions..."
+                    }
                     className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                   />
                   <button
-                    onClick={handleSendReportMessage}
+                    onClick={() => void handleSendReportMessage()}
                     className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
                   >
                     Send
                   </button>
                 </div>
 
+                <div className="grid gap-2 md:grid-cols-2">
+                  <label className="block text-xs text-nepsis-muted">
+                    Contradiction status
+                    <select
+                      id="report-contradictions-status"
+                      value={contradictionsStatus}
+                      onChange={(event) =>
+                        setContradictionsStatus(event.target.value as InterpretationContradictionsStatus)
+                      }
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                    >
+                      <option value="unreviewed">unreviewed</option>
+                      <option value="none_identified">none identified</option>
+                      <option value="declared">declared</option>
+                    </select>
+                  </label>
+                  <label className="block text-xs text-nepsis-muted">
+                    Contradiction notes
+                    <textarea
+                      id="report-contradictions-note"
+                      value={contradictionsNote}
+                      onChange={(event) => setContradictionsNote(event.target.value)}
+                      rows={2}
+                      placeholder="Required when contradiction status is declared."
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
+                    />
+                  </label>
+                </div>
+
                 <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
                   <div className="mb-1 text-nepsis-muted">CALL payload preview</div>
                   <pre className="max-h-40 overflow-auto text-[11px] text-nepsis-muted">
                     {JSON.stringify(
-                      deriveSignFromNarrative(activeSession?.family ?? family, reportCorpus || reportInput).sign,
+                      deriveSignFromNarrative(activeSession?.family ?? family, reportDraftText).sign,
                       null,
                       2,
                     )}
@@ -1493,16 +2791,18 @@ export default function EnginePage() {
 
             <div className="mt-3 flex flex-wrap gap-2">
               <button
+                id="report-run-button"
                 onClick={() => void handleRunReport()}
-                disabled={loading}
+                disabled={loading || reportLocked}
                 className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
               >
                 Run CALL + REPORT
               </button>
               {!reportLocked ? (
                 <button
-                  onClick={handleLockReport}
-                  className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
+                  onClick={() => void handleLockReport()}
+                  disabled={loading || displayInterpretationGateStatus !== "PASS"}
+                  className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent disabled:opacity-60"
                 >
                   Lock Report →
                 </button>
@@ -1520,18 +2820,45 @@ export default function EnginePage() {
 
         {showPosteriorPanel && (
           <section
-            className={`flex min-h-[760px] flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
+            id="stage-threshold"
+            tabIndex={-1}
+            className={`flex ${panelHeightClass} flex-col rounded-2xl border border-nepsis-border bg-nepsis-panel p-4 ${
               !reportLocked ? "pointer-events-none opacity-50" : ""
             }`}
           >
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold">3) Posterior / Thresholds / New Priors</h2>
-                <p className="text-xs text-nepsis-muted">Decision hierarchy first, then metrics and carry-forward.</p>
+                <h2 className="text-sm font-semibold">3) {audienceLabels.stage3}</h2>
+                <p className="text-xs text-nepsis-muted">{audienceLabels.stage3Subtitle}</p>
               </div>
-              <span className="rounded-full border border-nepsis-border bg-black/20 px-2 py-0.5 text-[11px] text-nepsis-muted">
-                {reportLocked ? "Ready to commit" : "Locked"}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-[11px] ${gateBadgeClass(displayThresholdGateStatus)}`}>
+                  Threshold Gate: {displayThresholdGateStatus}
+                </span>
+                <span className="rounded-full border border-nepsis-border bg-black/20 px-2 py-0.5 text-[11px] text-nepsis-muted">
+                  {reportLocked ? "Ready to commit" : "Locked"}
+                </span>
+              </div>
+            </div>
+            <div className="mb-3 rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-[11px]">
+              <div className="text-nepsis-muted">Gate requirements</div>
+              <div className={`mt-1 ${gateTextClass(displayThresholdGateStatus)}`}>{gateMissingText(thresholdGateView)}</div>
+              <div className="mt-2 rounded border border-nepsis-border bg-black/20 p-2">
+                <div className="text-nepsis-muted">Nepsis stage coach</div>
+                <div className={`mt-1 ${gateTextClass(displayThresholdGateStatus)}`}>{displayThresholdCoach.summary}</div>
+                {displayThresholdCoach.prompts.length > 0 && (
+                  <div className="mt-1 space-y-1 text-nepsis-text">
+                    {displayThresholdCoach.prompts.map((prompt, idx) => (
+                      <div key={`${idx}-${prompt}`}>- {prompt}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {showOperatorControls && (
+                <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
+                  {JSON.stringify(thresholdGateView.packet, null, 2)}
+                </pre>
+              )}
             </div>
 
             <div className="flex-1 space-y-3">
@@ -1552,18 +2879,18 @@ export default function EnginePage() {
                   value={posteriorInput}
                   onChange={(event) => setPosteriorInput(event.target.value)}
                   rows={2}
-                  placeholder="Carry-forward discussion..."
+                  placeholder={userMode ? "Draft what should carry into the next frame..." : "Carry-forward discussion..."}
                   className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
                 <button
-                  onClick={handleSendPosteriorMessage}
+                  onClick={() => void handleSendPosteriorMessage()}
                   className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
                 >
                   Send
                 </button>
               </div>
 
-              <div className="grid gap-2 md:grid-cols-3">
+              <div id="threshold-gate-metrics" className="grid gap-2 md:grid-cols-3">
                 <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
                   <div className="text-nepsis-muted">Decision</div>
                   <div className="mt-1 font-mono text-nepsis-text">{topInterpretation?.[0] ?? "n/a"}</div>
@@ -1588,7 +2915,37 @@ export default function EnginePage() {
                 </div>
               </div>
 
-              <div className="rounded-lg border border-nepsis-border bg-black/20 p-3">
+              <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                <div className="mb-2 text-nepsis-muted">Threshold decision declaration</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <label className="block text-nepsis-muted">
+                    Decision
+                    <select
+                      id="threshold-decision-select"
+                      value={thresholdDecision}
+                      onChange={(event) => setThresholdDecision(event.target.value as ThresholdDecision)}
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
+                    >
+                      <option value="undecided">undecided</option>
+                      <option value="recommend">recommend action</option>
+                      <option value="hold">hold for clarification</option>
+                    </select>
+                  </label>
+                  <label className="block text-nepsis-muted">
+                    Hold rationale
+                    <textarea
+                      id="threshold-hold-reason"
+                      value={thresholdHoldReason}
+                      onChange={(event) => setThresholdHoldReason(event.target.value)}
+                      rows={2}
+                      placeholder="Required when decision is hold."
+                      className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div id="threshold-posterior" className="rounded-lg border border-nepsis-border bg-black/20 p-3">
                 <div className="mb-2 text-xs text-nepsis-muted">Posterior distribution</div>
                 <div className="space-y-2">
                   {posteriorRows.length === 0 && <div className="text-xs text-nepsis-muted">No posterior yet.</div>}
@@ -1698,7 +3055,7 @@ export default function EnginePage() {
             <div className="mt-3 flex gap-2">
               <button
                 onClick={() => void handleCommitIteration()}
-                disabled={loading}
+                disabled={loading || displayThresholdGateStatus !== "PASS"}
                 className="rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
               >
                 Commit Iteration
@@ -1711,7 +3068,7 @@ export default function EnginePage() {
       {showTimeline && (
         <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Timeline</h3>
+            <h3 className="text-sm font-semibold">{audienceLabels.history}</h3>
             <div className="text-xs text-nepsis-muted">{compactTimeline.length} items</div>
           </div>
 
@@ -1740,8 +3097,67 @@ export default function EnginePage() {
             <div className="mt-3 rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
               {selectedTimeline.kind === "frame" && selectedTimeline.frame && (
                 <div className="space-y-2">
-                  <div className="text-nepsis-muted">Frame timeline detail</div>
-                  <div className="font-mono text-nepsis-accent">v{selectedTimeline.frame.frameVersion}</div>
+                  <div className="text-nepsis-muted">Frame lineage detail</div>
+                  <div className="font-mono text-nepsis-accent">
+                    {selectedTimeline.frame.branchId} · L{selectedTimeline.frame.lineageVersion} · v
+                    {selectedTimeline.frame.frameVersion}
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                      parent: {selectedTimeline.frame.parentFrameId ?? "root"}
+                    </div>
+                    <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                      session: {shortSession(selectedTimeline.frame.sessionId)}
+                    </div>
+                    <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                      gates: frame={selectedTimeline.frame.gateFrameStatus}
+                    </div>
+                    <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                      gates: interpretation={selectedTimeline.frame.gateInterpretationStatus} / threshold=
+                      {selectedTimeline.frame.gateThresholdStatus}
+                    </div>
+                  </div>
+                  {selectedTimeline.frame.audit ? (
+                    <div className="space-y-2">
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                          audit stage: {selectedTimeline.frame.audit.stage}
+                        </div>
+                        <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                          audit policy: {selectedTimeline.frame.audit.policyName}@{selectedTimeline.frame.audit.policyVersion}
+                        </div>
+                        <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                          audit packet count: {selectedTimeline.frame.audit.sourcePacketCount}
+                        </div>
+                        <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                          audit packet id: {selectedTimeline.frame.audit.sourceLatestPacketId ?? "n/a"}
+                        </div>
+                        <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                          audit iteration: {selectedTimeline.frame.audit.sourceLatestIteration ?? "n/a"}
+                        </div>
+                        <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted md:col-span-2">
+                          context applied: {selectedTimeline.frame.audit.contextApplied ? "yes" : "no"}
+                        </div>
+                      </div>
+                      {showOperatorControls && (
+                        <div className="grid gap-2 md:grid-cols-3">
+                          <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                            frame coach: {selectedTimeline.frame.audit.frameCoachSummary}
+                          </div>
+                          <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                            interpretation coach: {selectedTimeline.frame.audit.interpretationCoachSummary}
+                          </div>
+                          <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                            threshold coach: {selectedTimeline.frame.audit.thresholdCoachSummary}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                      audit snapshot: unavailable (recorded before backend stage-audit integration)
+                    </div>
+                  )}
                   <div className="text-nepsis-text">{selectedTimeline.frame.text}</div>
                   <div className="text-nepsis-muted">{selectedTimeline.frame.note}</div>
                 </div>
@@ -1852,6 +3268,22 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
                 />
               </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => captureModelSnapshot(null)}
+                  disabled={!detachedCompare}
+                  className="rounded-full border border-nepsis-border px-3 py-1 text-[11px] hover:border-nepsis-accent disabled:opacity-60"
+                >
+                  Capture Snapshot
+                </button>
+                <button
+                  onClick={clearModelSnapshots}
+                  disabled={modelSnapshots.length === 0}
+                  className="rounded-full border border-nepsis-border px-3 py-1 text-[11px] hover:border-nepsis-accent disabled:opacity-60"
+                >
+                  Clear Deltas
+                </button>
+              </div>
             </div>
 
             <div className="mt-3 h-[52vh] overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
@@ -1871,6 +3303,41 @@ export default function EnginePage() {
                 </div>
               ))}
             </div>
+
+            {detachedCompare && (
+              <div className="mt-3 rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                <div className="mb-1 text-nepsis-muted">Structured model deltas</div>
+                {!baselineSnapshot && (
+                  <div className="text-nepsis-muted">Capture a snapshot to establish baseline comparison.</div>
+                )}
+                {baselineSnapshot && (
+                  <div className="space-y-2">
+                    <div className="rounded border border-nepsis-border px-2 py-1.5 text-nepsis-muted">
+                      baseline: {baselineSnapshot.model}
+                      {baselineSnapshot.source ? ` · src: ${baselineSnapshot.source}` : ""}
+                    </div>
+                    {modelDeltaRows.length === 0 && (
+                      <div className="text-nepsis-muted">Capture at least one additional model snapshot for deltas.</div>
+                    )}
+                    {modelDeltaRows.map((row) => (
+                      <div key={row.snapshot.id} className="rounded border border-nepsis-border px-2 py-1.5">
+                        <div className="font-medium text-nepsis-text">{row.snapshot.model}</div>
+                        <div className="mt-1 grid gap-1 md:grid-cols-2 text-nepsis-muted">
+                          <div>frame deltas: {row.frameDeltaCount}</div>
+                          <div>interpretation deltas: {row.interpretationDeltaCount}</div>
+                          <div>threshold deltas: {row.thresholdDeltaCount}</div>
+                          <div>gate status: {deltaMarker(row.gateStatusDelta)}</div>
+                          <div>
+                            recommendation: {row.snapshot.recommendation ?? "n/a"}
+                          </div>
+                          <div>warning: {row.snapshot.warningLevel ?? "n/a"}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="mt-3 flex gap-2">
               <textarea

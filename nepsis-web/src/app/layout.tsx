@@ -35,7 +35,7 @@ export default function RootLayout({
             </div>
             <div className="flex items-center gap-4 text-sm">
               <a href="/settings" className="hover:text-nepsis-accent">
-                Settings
+                Connect LLM
               </a>
               <a
                 href="/login"

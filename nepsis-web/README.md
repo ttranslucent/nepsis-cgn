@@ -34,6 +34,8 @@ The web app now exposes backend proxy routes under `/api/engine/*`:
 - `DELETE /api/engine/sessions/:sessionId`
 - `POST /api/engine/sessions/:sessionId/step`
 - `POST /api/engine/sessions/:sessionId/reframe`
+- `GET /api/engine/sessions/:sessionId/stage-audit`
+- `POST /api/engine/sessions/:sessionId/stage-audit`
 - `GET /api/engine/sessions/:sessionId/packets`
 
 By default these proxy to `http://127.0.0.1:8787`.
