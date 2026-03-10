@@ -3,6 +3,46 @@ NepsisCGN v0.3
 
 NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces a three-step protocol—Triage → Projection → Validation—with a ZeroBack repair loop and explicit red/blue channels. This repository includes reference manifolds, an LLM provider registry, and a CLI for quick runs.
 
+Current Status (2026-03-10)
+---------------------------
+- Active branch: `codex/nepsis-mvp-ui-polish` (pushed to origin).
+- Baseline continuation point was commit `8838c55`; current branch adds:
+  - backend stage-audit gate contract + policy metadata,
+  - frontend gate enforcement wiring for `/engine`,
+  - adversarial scenario test coverage,
+  - Vercel-facing UI/UX polish for `/`, `/settings`, and global shell.
+- Most recent commits on this branch:
+  - `e557d93` `feat: wire stage-audit gates and adversarial QA coverage`
+  - `f8caea6` `feat: polish Vercel-facing UI shell and onboarding pages`
+- Validation status:
+  - `npm run build` (in `nepsis-web`) passes.
+  - `.venv/bin/pytest tests/test_engine_api_service.py tests/test_engine_api_server.py -q` passes (`43 passed, 1 skipped` in sandboxed env).
+
+Session Pickup (Next Working Session)
+-------------------------------------
+1. Checkout and sync:
+   - `git fetch origin`
+   - `git checkout codex/nepsis-mvp-ui-polish`
+   - `git pull --ff-only`
+2. Re-verify build and tests:
+   - `cd nepsis-web && npm run build`
+   - `cd .. && .venv/bin/pytest tests/test_engine_api_service.py tests/test_engine_api_server.py -q`
+3. Run adversarial expected-outcome snapshot:
+   - `PYTHONPATH=src .venv/bin/python scripts/engine_adversarial_gate_snapshot.py > briefs/2026-03-10_engine_adversarial_gate_expected.json`
+4. Execute manual engine QA runbook:
+   - `briefs/2026-03-10_engine_adversarial_qa_runbook.md`
+
+Internal Handoff
+----------------
+- Thread recap doc:
+  - `briefs/2026-03-10_internal_thread_recap.md`
+- Latest session ledger entries:
+  - `ledger/sessions/2026-03-10_session-40.md`
+  - `ledger/sessions/2026-03-10_session-41.md`
+  - `ledger/sessions/2026-03-10_session-42.md`
+  - `ledger/sessions/2026-03-10_session-43.md`
+  - `ledger/sessions/2026-03-10_session-44.md`
+
 Key Components
 --------------
 - Supervisor: orchestrates triage → projection → validation with bounded retries and ZeroBack deltas.
