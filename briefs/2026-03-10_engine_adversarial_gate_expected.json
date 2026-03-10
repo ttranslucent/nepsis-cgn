@@ -1,0 +1,62 @@
+{
+  "generated_at_utc": "2026-03-10T21:44:38+00:00",
+  "scenarios": [
+    {
+      "id": "S1-vague-frame",
+      "label": "Vague frame (underdefined priors)",
+      "stage_status": {
+        "frame": "BLOCK",
+        "interpretation": "BLOCK",
+        "threshold": "BLOCK"
+      },
+      "check_status": {
+        "frame": {
+          "problem_statement": "pass",
+          "catastrophic_outcome": "block",
+          "optimization_goal": "block",
+          "decision_horizon": "block",
+          "key_uncertainty": "block",
+          "constraint_structure": "block"
+        }
+      }
+    },
+    {
+      "id": "S2-contradiction-heavy",
+      "label": "Contradiction-heavy report",
+      "stage_status": {
+        "frame": "PASS",
+        "interpretation": "WARN",
+        "threshold": "PASS"
+      },
+      "check_status": {
+        "interpretation": {
+          "report_text": "pass",
+          "hypothesis_count": "pass",
+          "evidence_count": "pass",
+          "evaluation_freshness": "pass",
+          "contradictions_declared": "pass",
+          "contradiction_density": "warn"
+        }
+      }
+    },
+    {
+      "id": "S3-red-override-conflict",
+      "label": "Forced red-override conflict",
+      "stage_status": {
+        "frame": "PASS",
+        "interpretation": "PASS",
+        "threshold": "BLOCK"
+      },
+      "check_status": {
+        "threshold": {
+          "posterior_available": "pass",
+          "loss_asymmetry": "pass",
+          "red_override_metadata": "pass",
+          "decision_declared": "pass",
+          "hold_reason": "pass",
+          "red_override_enforced": "block"
+        }
+      }
+    }
+  ]
+}

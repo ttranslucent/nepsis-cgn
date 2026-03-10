@@ -53,6 +53,341 @@ def test_reframe_increments_frame_version() -> None:
     assert reframed["frame"]["frame_id"] == frame_before["frame_id"]
 
 
+def test_reframe_tracks_lineage_branch_and_parent_frame() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        frame={"text": "Initial frame for lineage"},
+    )
+    sid = created["session_id"]
+    assert created["lineage_version"] == 1
+    assert created["branch_id"].endswith("-b1")
+    assert created["parent_frame_id"] is None
+    parent_ref = created["frame_ref"]
+    assert isinstance(parent_ref, str) and parent_ref
+
+    reframed = svc.reframe_session(
+        sid,
+        frame={"text": "Lineage update frame"},
+        branch_id="test-branch-b2",
+        parent_frame_id=parent_ref,
+    )
+    assert reframed["lineage_version"] == 2
+    assert reframed["branch_id"] == "test-branch-b2"
+    assert reframed["parent_frame_id"] == parent_ref
+
+    summary = svc.get_session(sid)
+    assert summary["lineage_version"] == 2
+    assert summary["branch_id"] == "test-branch-b2"
+    assert summary["parent_frame_id"] == parent_ref
+
+
+def test_stage_audit_defaults_show_blocked_contracts() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        frame={"text": "Initial question only"},
+    )
+    sid = created["session_id"]
+
+    audit = svc.stage_audit_session(sid)
+    assert audit["policy"]["name"] == "nepsis_cgn.stage_audit"
+    assert audit["policy"]["version"] == "2026-03-10"
+    assert audit["frame"]["status"] == "BLOCK"
+    assert audit["interpretation"]["status"] == "BLOCK"
+    assert audit["threshold"]["status"] == "BLOCK"
+    assert isinstance(audit["frame"]["coach"]["prompts"], list)
+
+
+def test_stage_audit_accepts_context_and_can_pass_all_stages() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={
+            "text": "Assess whether to escalate.",
+            "time_horizon": "short",
+            "constraints_hard": ["No policy breach"],
+            "constraints_soft": ["Keep response latency low"],
+            "rationale_for_change": "Red channel: avoid catastrophic miss | Blue channel: optimize utility | Uncertainty: signal quality",
+        },
+    )
+    sid = created["session_id"]
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+
+    audit = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": {
+                "problem_statement": "Assess whether to escalate now.",
+                "catastrophic_outcome": "Miss a catastrophic event.",
+                "optimization_goal": "Maximize safety while minimizing disruption.",
+                "decision_horizon": "short",
+                "key_uncertainty": "Signal reliability from first report.",
+                "hard_constraints": ["No policy breach"],
+                "soft_constraints": ["Keep response latency low"],
+            },
+            "interpretation": {
+                "report_text": "obs: critical signal present\nobs: no policy violation",
+                "evidence_count": 2,
+                "report_synced": True,
+                "contradictions_status": "none_identified",
+                "contradictions_note": "",
+            },
+            "threshold": {
+                "decision": "hold",
+                "hold_reason": "Need one additional discriminator before recommendation.",
+            },
+        },
+    )
+    assert audit["frame"]["status"] == "PASS"
+    assert audit["interpretation"]["status"] == "PASS"
+    assert audit["threshold"]["status"] == "PASS"
+    assert audit["policy"]["name"] == "nepsis_cgn.stage_audit"
+    assert audit["threshold"]["coach"]["summary"].startswith("Threshold contract")
+
+
+def test_stage_audit_workflow_blocks_and_unblocks_across_stages() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={
+            "text": "Decide whether to escalate response.",
+        },
+    )
+    sid = created["session_id"]
+
+    frame_context = {
+        "problem_statement": "Decide escalation now.",
+        "catastrophic_outcome": "Miss a catastrophic incident.",
+        "optimization_goal": "Protect safety while reducing unnecessary disruption.",
+        "decision_horizon": "short",
+        "key_uncertainty": "Signal quality from the first report.",
+        "hard_constraints": ["No policy breach"],
+        "soft_constraints": ["Minimize disruption"],
+    }
+    interpretation_context = {
+        "report_text": "obs: critical signal present\nobs: no policy violation",
+        "evidence_count": 2,
+        "report_synced": True,
+        "contradictions_status": "none_identified",
+        "contradictions_note": "",
+    }
+    threshold_base = {
+        "loss_treat": 1.0,
+        "loss_not_treat": 9.0,
+        "warning_level": "red",
+        "gate_crossed": True,
+        "recommendation": "escalate",
+    }
+
+    audit_initial = svc.stage_audit_session(sid)
+    assert audit_initial["frame"]["status"] == "BLOCK"
+    assert audit_initial["interpretation"]["status"] == "BLOCK"
+    assert audit_initial["threshold"]["status"] == "BLOCK"
+
+    audit_frame_ready = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": frame_context,
+        },
+    )
+    assert audit_frame_ready["frame"]["status"] == "PASS"
+    assert audit_frame_ready["interpretation"]["status"] == "BLOCK"
+    assert audit_frame_ready["threshold"]["status"] == "BLOCK"
+
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+
+    audit_missing_decision = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": frame_context,
+            "interpretation": interpretation_context,
+            "threshold": {
+                **threshold_base,
+                "decision": "undecided",
+                "hold_reason": "",
+            },
+        },
+    )
+    assert audit_missing_decision["frame"]["status"] == "PASS"
+    assert audit_missing_decision["interpretation"]["status"] == "PASS"
+    assert audit_missing_decision["threshold"]["status"] == "BLOCK"
+    threshold_checks_missing_decision = {
+        check["key"]: check for check in audit_missing_decision["threshold"]["checks"]
+    }
+    assert threshold_checks_missing_decision["decision_declared"]["status"] == "block"
+
+    audit_red_override = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": frame_context,
+            "interpretation": interpretation_context,
+            "threshold": {
+                **threshold_base,
+                "decision": "recommend",
+                "hold_reason": "",
+            },
+        },
+    )
+    assert audit_red_override["threshold"]["status"] == "BLOCK"
+    threshold_checks_red_override = {
+        check["key"]: check for check in audit_red_override["threshold"]["checks"]
+    }
+    assert threshold_checks_red_override["red_override_enforced"]["status"] == "block"
+
+    audit_hold_pass = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": frame_context,
+            "interpretation": interpretation_context,
+            "threshold": {
+                **threshold_base,
+                "decision": "hold",
+                "hold_reason": "Collect one additional discriminator before recommendation.",
+            },
+        },
+    )
+    assert audit_hold_pass["frame"]["status"] == "PASS"
+    assert audit_hold_pass["interpretation"]["status"] == "PASS"
+    assert audit_hold_pass["threshold"]["status"] == "PASS"
+
+
+def test_stage_audit_adversarial_vague_frame_blocks_contract() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        frame={"text": "Help?"},
+    )
+    sid = created["session_id"]
+
+    audit = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": {
+                "problem_statement": "Not sure, maybe this?",
+            }
+        },
+    )
+    assert audit["frame"]["status"] == "BLOCK"
+    assert audit["interpretation"]["status"] == "BLOCK"
+    assert audit["threshold"]["status"] == "BLOCK"
+
+    checks = {check["key"]: check for check in audit["frame"]["checks"]}
+    assert checks["problem_statement"]["status"] == "pass"
+    assert checks["catastrophic_outcome"]["status"] == "block"
+    assert checks["optimization_goal"]["status"] == "block"
+    assert checks["decision_horizon"]["status"] == "block"
+    assert checks["key_uncertainty"]["status"] == "block"
+    assert checks["constraint_structure"]["status"] == "block"
+
+
+def test_stage_audit_adversarial_contradiction_heavy_report_warns_interpretation() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={"text": "Decide escalation path."},
+    )
+    sid = created["session_id"]
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+
+    audit = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": {
+                "problem_statement": "Decide escalation now.",
+                "catastrophic_outcome": "Miss critical incident.",
+                "optimization_goal": "Protect users while reducing disruption.",
+                "decision_horizon": "short",
+                "key_uncertainty": "Signal quality from first report.",
+                "hard_constraints": ["No policy breach"],
+                "soft_constraints": ["Minimize disruption"],
+            },
+            "interpretation": {
+                "report_text": (
+                    "obs: signal strongly indicates escalation\n"
+                    "obs: signal likely false positive\n"
+                    "obs: team reports conflicting timelines"
+                ),
+                "evidence_count": 3,
+                "report_synced": True,
+                "contradictions_status": "declared",
+                "contradictions_note": "Signal reliability and timeline evidence conflict.",
+                "contradiction_density": 0.82,
+            },
+            "threshold": {
+                "loss_treat": 1.0,
+                "loss_not_treat": 9.0,
+                "warning_level": "yellow",
+                "gate_crossed": False,
+                "recommendation": "hold",
+                "decision": "hold",
+                "hold_reason": "Gather one additional discriminator.",
+            },
+        },
+    )
+    assert audit["frame"]["status"] == "PASS"
+    assert audit["interpretation"]["status"] == "WARN"
+
+    checks = {check["key"]: check for check in audit["interpretation"]["checks"]}
+    assert checks["report_text"]["status"] == "pass"
+    assert checks["contradictions_declared"]["status"] == "pass"
+    assert checks["contradiction_density"]["status"] == "warn"
+    assert audit["interpretation"]["coach"]["status"] == "WARN"
+
+
+def test_stage_audit_adversarial_forced_red_override_conflict_blocks_threshold() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={"text": "Decide escalation path."},
+    )
+    sid = created["session_id"]
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+
+    audit = svc.stage_audit_session(
+        sid,
+        context={
+            "frame": {
+                "problem_statement": "Decide escalation now.",
+                "catastrophic_outcome": "Miss critical incident.",
+                "optimization_goal": "Protect users while reducing disruption.",
+                "decision_horizon": "short",
+                "key_uncertainty": "Signal quality from first report.",
+                "hard_constraints": ["No policy breach"],
+                "soft_constraints": ["Minimize disruption"],
+            },
+            "interpretation": {
+                "report_text": "obs: critical signal present\nobs: no policy violation",
+                "evidence_count": 2,
+                "report_synced": True,
+                "contradictions_status": "none_identified",
+                "contradictions_note": "",
+            },
+            "threshold": {
+                "loss_treat": 1.0,
+                "loss_not_treat": 9.0,
+                "warning_level": "red",
+                "gate_crossed": True,
+                "recommendation": "escalate",
+                "decision": "recommend",
+                "hold_reason": "",
+            },
+        },
+    )
+    assert audit["frame"]["status"] == "PASS"
+    assert audit["interpretation"]["status"] == "PASS"
+    assert audit["threshold"]["status"] == "BLOCK"
+
+    checks = {check["key"]: check for check in audit["threshold"]["checks"]}
+    assert checks["decision_declared"]["status"] == "pass"
+    assert checks["red_override_enforced"]["status"] == "block"
+    assert checks["red_override_enforced"]["detail"].startswith("Red gate crossed")
+
+
 def test_packets_endpoint_tracks_history() -> None:
     svc = EngineApiService()
     created = svc.create_session(family="safety")
@@ -224,6 +559,8 @@ def test_sqlite_store_round_trip(tmp_path) -> None:
     session = restored.get_session(sid)
     assert session["steps"] == 1
     assert session["storage"] == "disk"
+    assert session["lineage_version"] >= 1
+    assert isinstance(session["branch_id"], str)
 
 
 def test_corrupt_json_store_is_recovered(tmp_path) -> None:

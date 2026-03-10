@@ -165,8 +165,45 @@ def create_app():
         frame = body.get("frame")
         if not isinstance(frame, dict):
             raise HTTPException(status_code=400, detail="reframe payload requires object field 'frame'")
+        branch_id = body.get("branch_id")
+        if branch_id is not None and (not isinstance(branch_id, str) or not branch_id.strip()):
+            raise HTTPException(status_code=400, detail="branch_id must be a non-empty string when provided")
+        parent_frame_id = body.get("parent_frame_id")
+        if parent_frame_id is not None and not isinstance(parent_frame_id, str):
+            raise HTTPException(status_code=400, detail="parent_frame_id must be a string when provided")
         try:
-            return API.reframe_session(session_id, frame=frame)
+            return API.reframe_session(
+                session_id,
+                frame=frame,
+                branch_id=branch_id.strip() if isinstance(branch_id, str) else None,
+                parent_frame_id=parent_frame_id.strip() if isinstance(parent_frame_id, str) else None,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/v1/sessions/{session_id}/stage-audit")
+    async def stage_audit_session(session_id: str):
+        try:
+            return API.stage_audit_session(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/sessions/{session_id}/stage-audit")
+    async def stage_audit_session_with_context(session_id: str, request: Request):
+        body = await _read_json_body(request)
+        raw_context = body.get("context", body)
+        if raw_context is None:
+            context = None
+        else:
+            if not isinstance(raw_context, dict):
+                raise HTTPException(status_code=400, detail="stage-audit payload 'context' must be an object when provided")
+            context = raw_context
+        try:
+            return API.stage_audit_session(session_id, context=context)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -357,6 +394,8 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "DELETE", "path": "/v1/sessions/{session_id}", "description": "Delete session"},
         {"method": "POST", "path": "/v1/sessions/{session_id}/step", "description": "Run one step"},
         {"method": "POST", "path": "/v1/sessions/{session_id}/reframe", "description": "Update frame version"},
+        {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
+        {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
         {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
     ]
 
