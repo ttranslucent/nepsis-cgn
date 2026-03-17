@@ -7,7 +7,8 @@ Current Working State (2026-03-17)
 ----------------------------------
 - Primary branch: `main`
 - Primary repo path: `/Users/trentthorn/Code/nepsiscgn`
-- Current continuation commit: `93b76fe` (`docs: close session with main handoff`)
+- Start point: current `main` HEAD in this repo path
+- Stable product anchor commit: `4a0aec4` (`feat: harden nepsis web auth and engine deployment flow`)
 - `main` includes:
   - stage-gate integration hardening and adversarial QA verifier/report artifacts,
   - passwordless auth repair with signed cookies and optional Resend delivery,
