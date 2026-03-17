@@ -7,12 +7,13 @@ Current Working State (2026-03-17)
 ----------------------------------
 - Primary branch: `main`
 - Primary repo path: `/Users/trentthorn/Code/nepsiscgn`
-- Current continuation commit: `4a0aec4` (`feat: harden nepsis web auth and engine deployment flow`)
+- Current continuation commit: `93b76fe` (`docs: close session with main handoff`)
 - `main` includes:
   - stage-gate integration hardening and adversarial QA verifier/report artifacts,
   - passwordless auth repair with signed cookies and optional Resend delivery,
   - `/engine` connectivity/status hardening for deployed environments,
-  - Vercel-facing `nepsis-web` README and `.env.example` updates.
+  - Vercel-facing `nepsis-web` README and `.env.example` updates,
+  - this close-out handoff in the root README and ledger.
 - Local sidecar branch preserved for unrelated follow-up work:
   - `codex/openai-secret-hygiene` at `9cae352`
 
