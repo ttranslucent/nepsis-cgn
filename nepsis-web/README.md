@@ -1,33 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Nepsis Web
+==========
 
-## Getting Started
+`nepsis-web` is the Next.js operator UI for NepsisCGN. It serves the public landing pages, passwordless login flow, `/engine` workspace, and server-side proxy routes under `/api/engine/*`.
 
-Start the Nepsis backend API first (from repo root):
+## Local Development
+
+1. Start the Nepsis backend API from the repo root:
 
 ```bash
 nepsiscgn-api --host 127.0.0.1 --port 8787
 ```
 
-Then run the web development server:
+2. In this directory, copy the example env file and adjust any local overrides:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. Install dependencies and run the web app:
 
-## Engine API Proxy
+```bash
+npm install
+npm run dev
+```
 
-The web app now exposes backend proxy routes under `/api/engine/*`:
+4. Open [http://localhost:3000](http://localhost:3000).
+
+Development defaults:
+
+- `/api/engine/*` proxies to `http://127.0.0.1:8787` when `NEPSIS_API_BASE_URL` is unset.
+- Login codes can fall back to on-screen preview in non-production environments.
+
+## Engine Proxy Routes
+
+The web app exposes these backend proxy routes:
 
 - `GET /api/engine/health`
 - `GET /api/engine/routes`
+- `GET /api/engine/openapi`
 - `POST /api/engine/sessions`
 - `GET /api/engine/sessions`
 - `GET /api/engine/sessions/:sessionId`
@@ -38,35 +48,52 @@ The web app now exposes backend proxy routes under `/api/engine/*`:
 - `POST /api/engine/sessions/:sessionId/stage-audit`
 - `GET /api/engine/sessions/:sessionId/packets`
 
-By default these proxy to `http://127.0.0.1:8787`.
+Key frontend integration points:
 
-Override target with:
+- Typed client: `src/lib/engineClient.ts`
+- Session/state hook: `src/lib/useEngineSession.ts`
+- Operator workspace: `src/app/engine/page.tsx`
 
-```bash
-NEPSIS_API_BASE_URL=http://127.0.0.1:8787 npm run dev
-```
+## Environment Variables
 
-Frontend helpers for these routes:
+Engine connectivity:
 
-- Typed browser client: `src/lib/engineClient.ts`
-- Hook/state wrapper: `src/lib/useEngineSession.ts`
-- Live console page: `/engine` (`src/app/engine/page.tsx`)
+- `NEPSIS_API_BASE_URL`: Required in production. Public base URL of the Nepsis API that Vercel should reach.
+- `NEPSIS_API_TOKEN`: Optional bearer token forwarded to the Nepsis API.
+- `NEPSIS_ENGINE_ALLOW_ANON`: Optional local/demo override to bypass browser login for engine session controls.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Passwordless auth:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `NEPSIS_AUTH_SECRET`: Required in production. Cookie-signing secret for login challenge and user session cookies.
+- `RESEND_API_KEY`: Required if the deployment should send real login emails.
+- `NEPSIS_AUTH_FROM_EMAIL`: Required with `RESEND_API_KEY`. Verified sender identity for login emails.
+- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional preview-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable.
 
-## Learn More
+OpenAI-backed playground routes:
 
-To learn more about Next.js, take a look at the following resources:
+- `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`: Optional server-side key for playground/model-sandbox calls.
+- `OPENAI_MODEL`: Optional default model. Defaults to `gpt-4.1-mini`.
+- `OPENAI_API_URL`: Optional override for the Responses API endpoint.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Local proto-puzzle overrides:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `NEPSIS_PYTHON`
+- `NEPSIS_PROJECT_ROOT`
+- `NEPSIS_PROTO_PUZZLE_CLI`
 
-## Deploy on Vercel
+## Vercel Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Production behavior is intentionally strict:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- If `NEPSIS_API_BASE_URL` is missing, `/api/engine/*` returns `503` and `/engine` shows `Engine backend not configured`.
+- If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
+- If email delivery is not configured, `/login` tells the operator which auth env vars are missing instead of claiming an email was sent.
+
+Recommended deployment sequence:
+
+1. Deploy the `nepsis-web` project to Vercel.
+2. Set `NEPSIS_API_BASE_URL` to the public Nepsis API origin.
+3. Set `NEPSIS_AUTH_SECRET` to a long random secret.
+4. Set `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
+5. Optionally set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true` only for preview/testing deployments.
+6. Verify `/login` and `/engine` after the deployment is live.

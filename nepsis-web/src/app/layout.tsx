@@ -2,7 +2,10 @@ import "./globals.css";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+
+import { NEPSIS_USER_COOKIE } from "@/lib/nepsisAuth";
 
 const nepsisSans = Space_Grotesk({
   subsets: ["latin"],
@@ -33,11 +36,18 @@ const navLinks = [
   { href: "/settings", label: "Settings" },
 ];
 
-export default function RootLayout({
+function displayUser(email: string): string {
+  return email.length > 28 ? `${email.slice(0, 25)}...` : email;
+}
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const cookieStore = await cookies();
+  const signedInUser = cookieStore.get(NEPSIS_USER_COOKIE)?.value ?? null;
+
   return (
     <html lang="en" className={`${nepsisSans.variable} ${nepsisMono.variable}`}>
       <body className="min-h-screen bg-nepsis-bg text-nepsis-text antialiased">
@@ -71,12 +81,28 @@ export default function RootLayout({
                     {link.label}
                   </Link>
                 ))}
-                <Link
-                  href="/login"
-                  className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs font-semibold transition hover:border-nepsis-accent hover:text-nepsis-accent"
-                >
-                  Login
-                </Link>
+                {signedInUser ? (
+                  <>
+                    <span className="rounded-full border border-nepsis-border bg-black/20 px-3 py-1.5 text-[11px] font-mono text-nepsis-muted">
+                      {displayUser(signedInUser)}
+                    </span>
+                    <form action="/api/auth/logout" method="post">
+                      <button
+                        type="submit"
+                        className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs font-semibold transition hover:border-nepsis-accent hover:text-nepsis-accent"
+                      >
+                        Logout
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <Link
+                    href="/login"
+                    className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs font-semibold transition hover:border-nepsis-accent hover:text-nepsis-accent"
+                  >
+                    Login
+                  </Link>
+                )}
               </nav>
             </div>
           </header>

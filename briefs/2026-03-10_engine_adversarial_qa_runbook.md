@@ -20,6 +20,19 @@ Canonical stage outcomes:
 - `S2-contradiction-heavy`: `frame=PASS`, `interpretation=WARN`, `threshold=PASS`
 - `S3-red-override-conflict`: `frame=PASS`, `interpretation=PASS`, `threshold=BLOCK`
 
+## Automated Verification (Local API Contract)
+
+Run the automated contract check before manual UI execution:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/engine_adversarial_qa_verify.py
+```
+
+Outputs:
+
+- Console report with per-scenario pass/fail.
+- Markdown report: `briefs/2026-03-11_engine_adversarial_qa_report.md`
+
 ## Environment
 
 1. Start backend API:

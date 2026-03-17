@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 
 import {
+  EngineClientError,
   type EngineCreateSessionPayload,
   type EngineDeleteSessionResponse,
   type EngineFrame,
@@ -60,7 +61,12 @@ export function useEngineSession() {
     try {
       return await op();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Engine request failed";
+      const message =
+        error instanceof EngineClientError && error.status === 401
+          ? "Sign in to access engine session controls."
+          : error instanceof Error
+            ? error.message
+            : "Engine request failed";
       setState((prev) => ({ ...prev, error: message }));
       return undefined;
     } finally {
@@ -75,6 +81,7 @@ export function useEngineSession() {
   const refreshHealth = useCallback(async () => {
     const data = await run(() => engineClient.getHealth());
     if (!data) {
+      setState((prev) => ({ ...prev, healthy: false }));
       return undefined;
     }
     setState((prev) => ({ ...prev, healthy: !!data.ok }));

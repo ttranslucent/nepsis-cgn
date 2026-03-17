@@ -170,6 +170,20 @@ type StageAuditContextOverrides = {
   threshold?: Record<string, unknown>;
 };
 
+type StageAuditMode = "canonical" | "preview";
+
+type StageAuditRequest = {
+  sessionId?: string;
+  overrides?: StageAuditContextOverrides;
+  mode?: StageAuditMode;
+};
+
+type AuthSessionState = {
+  authenticated: boolean;
+  engineControlAllowed: boolean;
+  user: string | null;
+};
+
 const MODEL_SNAPSHOT_STORAGE_PREFIX = "nepsis_engine_model_snapshots";
 
 const OBJECTIVE_OPTIONS = ["explain", "decide", "predict", "debug", "design", "sensemake"] as const;
@@ -238,28 +252,28 @@ const FRAME_STARTER_MESSAGE: ChatMessage = {
   id: "frame-start",
   role: "nepsis",
   text: "Start by describing the real question, risk asymmetry, and constraints that must hold.",
-  at: new Date().toISOString(),
+  at: "",
 };
 
 const REPORT_STARTER_MESSAGE: ChatMessage = {
   id: "report-start",
   role: "nepsis",
   text: "Add observations, tests, and contradictory evidence. Run CALL + REPORT when ready.",
-  at: new Date().toISOString(),
+  at: "",
 };
 
 const POSTERIOR_STARTER_MESSAGE: ChatMessage = {
   id: "posterior-start",
   role: "nepsis",
   text: "Review posterior mix, ruin flags, and threshold gate. Then draft what carries forward.",
-  at: new Date().toISOString(),
+  at: "",
 };
 
 const DETACHED_STARTER: DetachedMessage = {
   id: "detached-start",
   role: "assistant",
   text: "Model sandbox is detached from Nepsis state. Use it to compare model behavior before committing anything.",
-  at: new Date().toISOString(),
+  at: "",
   model: "gpt-4.1",
   source: null,
 };
@@ -365,6 +379,14 @@ function toTimestamp(value: string | null): number {
   }
   const ts = Date.parse(value);
   return Number.isFinite(ts) ? ts : Number.NaN;
+}
+
+function formatMessageTime(value: string): string | null {
+  const ts = toTimestamp(value);
+  if (!Number.isFinite(ts)) {
+    return null;
+  }
+  return new Date(ts).toLocaleTimeString();
 }
 
 function buildPacketEvents(packets: Record<string, unknown>[]): PacketEvent[] {
@@ -887,6 +909,7 @@ export default function EnginePage() {
   const [developerToolsEnabled, setDeveloperToolsEnabled] = useState(false);
   const [systemStatusOpen, setSystemStatusOpen] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
+  const [authSession, setAuthSession] = useState<AuthSessionState | null>(null);
   const [hasConnectedKey, setHasConnectedKey] = useState<boolean | null>(null);
   const [showConnectedNotice, setShowConnectedNotice] = useState(false);
   const [connectedFromQuery, setConnectedFromQuery] = useState(false);
@@ -974,9 +997,39 @@ export default function EnginePage() {
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
 
   useEffect(() => {
-    void (async () => {
-      await Promise.all([refreshHealth(), refreshSessions()]);
-    })();
+    let cancelled = false;
+
+    async function loadWorkspaceState() {
+      let nextAuth: AuthSessionState | null = null;
+      try {
+        const res = await fetch("/api/auth/session", { cache: "no-store" });
+        if (res.ok) {
+          const data = (await res.json()) as Partial<AuthSessionState>;
+          nextAuth = {
+            authenticated: Boolean(data.authenticated),
+            engineControlAllowed: Boolean(data.engineControlAllowed),
+            user: typeof data.user === "string" ? data.user : null,
+          };
+        }
+      } catch {
+        nextAuth = null;
+      }
+
+      if (cancelled) {
+        return;
+      }
+      setAuthSession(nextAuth);
+
+      await refreshHealth();
+      if (nextAuth?.engineControlAllowed) {
+        await refreshSessions();
+      }
+    }
+
+    void loadWorkspaceState();
+    return () => {
+      cancelled = true;
+    };
   }, [refreshHealth, refreshSessions]);
 
   useEffect(() => {
@@ -993,11 +1046,7 @@ export default function EnginePage() {
     setActiveBranchId(resolvedBranchId);
     setBranchCounter(parseBranchCounter(resolvedBranchId));
     setPendingBranchParentFrameId(activeSession.parent_frame_id ?? null);
-  }, [
-    activeSession?.session_id,
-    activeSession?.branch_id,
-    activeSession?.parent_frame_id,
-  ]);
+  }, [activeSession]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1568,13 +1617,17 @@ export default function EnginePage() {
   }
 
   const requestBackendStageAudit = useCallback(
-    async (
-      sessionId?: string,
-      overrides?: StageAuditContextOverrides,
-    ) => {
+    async ({
+      sessionId,
+      overrides,
+      mode = "canonical",
+    }: StageAuditRequest = {}) => {
       const targetId = sessionId ?? activeSession?.session_id;
       if (!targetId) {
         return undefined;
+      }
+      if (mode === "canonical") {
+        return stageAudit(undefined, targetId);
       }
       const frameContext = {
         ...(frameGate.packet as unknown as Record<string, unknown>),
@@ -1617,7 +1670,10 @@ export default function EnginePage() {
       return;
     }
     const timeout = window.setTimeout(() => {
-      void requestBackendStageAudit(activeSession.session_id);
+      void requestBackendStageAudit({
+        sessionId: activeSession.session_id,
+        mode: "canonical",
+      });
     }, 450);
     return () => {
       window.clearTimeout(timeout);
@@ -1659,7 +1715,10 @@ export default function EnginePage() {
     setBranchCounter(parseBranchCounter(initialBranchId));
     setPendingBranchParentFrameId(opened.parent_frame_id ?? null);
     await refreshPackets(opened.session_id);
-    const audit = await requestBackendStageAudit(opened.session_id);
+    const audit = await requestBackendStageAudit({
+      sessionId: opened.session_id,
+      mode: "canonical",
+    });
     appendFrameTimeline(opened.session_id, opened.frame, "Session opened", {
       branchId: initialBranchId,
       parentFrameId: opened.parent_frame_id ?? null,
@@ -1691,7 +1750,7 @@ export default function EnginePage() {
       return;
     }
     pushFrameMessage("human", text);
-    const audit = await requestBackendStageAudit();
+    const audit = await requestBackendStageAudit({ mode: "preview" });
     pushFrameMessage("nepsis", coachMessage(selectCoach("frame", frameCoach, audit ?? lastAudit)));
     setFrameInput("");
   }
@@ -1713,9 +1772,12 @@ export default function EnginePage() {
       contradictionDensity: governance?.contradiction_density ?? null,
     });
     const previewCoach = buildInterpretationCoach(previewInterpretationGate);
-    const audit = await requestBackendStageAudit(undefined, {
-      interpretation: {
-        ...previewInterpretationGate.packet,
+    const audit = await requestBackendStageAudit({
+      mode: "preview",
+      overrides: {
+        interpretation: {
+          ...previewInterpretationGate.packet,
+        },
       },
     });
     pushReportMessage("human", text);
@@ -1730,10 +1792,13 @@ export default function EnginePage() {
     if (!text) {
       return;
     }
-    const audit = await requestBackendStageAudit(undefined, {
-      threshold: {
-        decision: thresholdDecision,
-        hold_reason: thresholdHoldReason,
+    const audit = await requestBackendStageAudit({
+      mode: "preview",
+      overrides: {
+        threshold: {
+          decision: thresholdDecision,
+          hold_reason: thresholdHoldReason,
+        },
       },
     });
     pushPosteriorMessage("human", text);
@@ -1768,10 +1833,18 @@ export default function EnginePage() {
 
   async function handleLockFrame() {
     clearAllErrors();
+    if (authSession && !authSession.engineControlAllowed) {
+      setLocalError("Sign in to create or update engine sessions.");
+      pushFrameMessage("nepsis", "Engine session controls are locked until you sign in.");
+      return;
+    }
     let auditForAction: EngineStageAuditResponse | undefined;
     let frameActionStatus = displayFrameGateStatus;
     if (activeSession) {
-      auditForAction = await requestBackendStageAudit(activeSession.session_id);
+      auditForAction = await requestBackendStageAudit({
+        sessionId: activeSession.session_id,
+        mode: "preview",
+      });
       frameActionStatus = normalizeGateStatus(auditForAction?.frame?.status) ?? frameActionStatus;
     }
     if (frameActionStatus !== "PASS") {
@@ -1847,7 +1920,10 @@ export default function EnginePage() {
     resetDownstreamStages();
     setPendingBranchParentFrameId(null);
     await refreshSessions();
-    const auditAfterLock = await requestBackendStageAudit(sessionId);
+    const auditAfterLock = await requestBackendStageAudit({
+      sessionId,
+      mode: "canonical",
+    });
     if (resultingFrame) {
       appendFrameTimeline(sessionId, resultingFrame, "Frame locked", {
         ...timelineMeta,
@@ -1932,14 +2008,18 @@ export default function EnginePage() {
     });
     const interpretationCoachAfterEval = buildInterpretationCoach(evaluatedInterpretationGate);
     const thresholdCoachAfterEval = buildThresholdCoach(evaluatedThresholdGate);
-    const audit = await requestBackendStageAudit(result.session.session_id, {
-      interpretation: {
-        ...evaluatedInterpretationGate.packet,
-      },
-      threshold: {
-        ...evaluatedThresholdGate.packet,
-        decision: thresholdDecision,
-        hold_reason: thresholdHoldReason,
+    const audit = await requestBackendStageAudit({
+      sessionId: result.session.session_id,
+      mode: "preview",
+      overrides: {
+        interpretation: {
+          ...evaluatedInterpretationGate.packet,
+        },
+        threshold: {
+          ...evaluatedThresholdGate.packet,
+          decision: thresholdDecision,
+          hold_reason: thresholdHoldReason,
+        },
       },
     });
 
@@ -1966,7 +2046,7 @@ export default function EnginePage() {
 
   async function handleLockReport() {
     clearAllErrors();
-    const auditForAction = await requestBackendStageAudit();
+    const auditForAction = await requestBackendStageAudit({ mode: "preview" });
     const interpretationActionStatus =
       normalizeGateStatus(auditForAction?.interpretation?.status) ?? displayInterpretationGateStatus;
     if (!reportResult) {
@@ -2015,7 +2095,7 @@ export default function EnginePage() {
       setLocalError("No active session.");
       return;
     }
-    const auditForAction = await requestBackendStageAudit();
+    const auditForAction = await requestBackendStageAudit({ mode: "preview" });
     const thresholdActionStatus =
       normalizeGateStatus(auditForAction?.threshold?.status) ?? displayThresholdGateStatus;
     if (thresholdActionStatus !== "PASS") {
@@ -2074,11 +2154,50 @@ export default function EnginePage() {
     pushPosteriorMessage("nepsis", "Iteration committed. Priors stage reopened for the next cycle.");
     pushFrameMessage("nepsis", `Frame v${updatedFrame.frame_version} is now the working prior.`);
     await refreshSessions();
-    await requestBackendStageAudit(activeSession.session_id);
+    await requestBackendStageAudit({
+      sessionId: activeSession.session_id,
+      mode: "canonical",
+    });
   }
 
   const mergedError = localError ?? error;
+  const backendStatusLabel =
+    healthy == null
+      ? "checking backend"
+      : healthy
+        ? "reachable"
+        : mergedError?.includes("NEPSIS_API_BASE_URL")
+          ? "not configured"
+          : "unreachable";
+  const backendStatusTone =
+    healthy == null
+      ? "text-yellow-300"
+      : healthy
+        ? "text-green-400"
+        : mergedError?.includes("NEPSIS_API_BASE_URL")
+          ? "text-amber-300"
+          : "text-red-400";
+  const backendHelpMessage =
+    healthy === false
+      ? mergedError ??
+        "Engine backend is unreachable. Start the Nepsis API server or set NEPSIS_API_BASE_URL for this deployment."
+      : null;
   const activeStage = activeSession?.stage ?? "none";
+  const backendAuditSource = lastAudit
+    ? lastAudit.source.context_applied
+      ? "preview context"
+      : "canonical session"
+    : "n/a";
+  const engineAccessLabel =
+    authSession == null
+      ? "checking access"
+      : authSession.engineControlAllowed
+        ? authSession.user
+          ? `signed in as ${authSession.user}`
+          : "anonymous access enabled"
+        : "sign in required";
+  const llmKeyLabel =
+    hasConnectedKey == null ? "checking key" : hasConnectedKey ? "browser key stored" : "no browser key";
   const whyNotConverging = governance?.why_not_converging ?? [];
   const topInterpretation = posteriorRows[0] ?? null;
   const secondInterpretation = posteriorRows[1] ?? null;
@@ -2145,9 +2264,7 @@ export default function EnginePage() {
           <div className="mt-3 grid gap-2 rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs text-nepsis-muted md:grid-cols-3">
             <div>
               backend:{" "}
-              <span className={healthy ? "text-green-400" : healthy === false ? "text-red-400" : "text-yellow-300"}>
-                {healthy === null ? "unknown" : healthy ? "healthy" : "unreachable"}
-              </span>
+              <span className={backendStatusTone}>{healthy === null ? "unknown" : backendStatusLabel}</span>
             </div>
             <div>active session: {activeSession ? shortSession(activeSession.session_id) : "none"}</div>
             <div>stage: {activeStage}</div>
@@ -2163,6 +2280,7 @@ export default function EnginePage() {
             <div>backend audit interpretation: {lastAudit?.interpretation.status ?? "n/a"}</div>
             <div>backend audit threshold: {lastAudit?.threshold.status ?? "n/a"}</div>
             <div>backend audit policy: {lastAudit ? `${lastAudit.policy.name}@${lastAudit.policy.version}` : "n/a"}</div>
+            <div>backend audit source: {backendAuditSource}</div>
           </div>
         )}
 
@@ -2190,6 +2308,7 @@ export default function EnginePage() {
               <div>branch: {activeBranchId}</div>
               <div>backend audit: {lastAudit ? `${lastAudit.frame.status}/${lastAudit.interpretation.status}/${lastAudit.threshold.status}` : "not run"}</div>
               <div>audit policy: {lastAudit ? `${lastAudit.policy.name}@${lastAudit.policy.version}` : "n/a"}</div>
+              <div>audit source: {backendAuditSource}</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -2211,11 +2330,11 @@ export default function EnginePage() {
                 Refresh
               </button>
               <button
-                onClick={() => void requestBackendStageAudit()}
+                onClick={() => void requestBackendStageAudit({ mode: "canonical" })}
                 disabled={loading || !activeSession}
                 className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent disabled:opacity-60"
               >
-                Backend Audit
+                Canonical Audit
               </button>
             </div>
           </div>
@@ -2233,11 +2352,43 @@ export default function EnginePage() {
           </div>
         )}
 
+        {userMode && (
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            <div className="rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-xs">
+              <div className="text-nepsis-muted">Engine backend</div>
+              <div className="mt-1 text-nepsis-text">{backendStatusLabel}</div>
+            </div>
+            <div className="rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-xs">
+              <div className="text-nepsis-muted">Session access</div>
+              <div className="mt-1 text-nepsis-text">{engineAccessLabel}</div>
+            </div>
+            <div className="rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-xs">
+              <div className="text-nepsis-muted">Model sandbox</div>
+              <div className="mt-1 text-nepsis-text">{llmKeyLabel}</div>
+            </div>
+          </div>
+        )}
+
+        {userMode && healthy === false && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+            <span>{backendHelpMessage}</span>
+          </div>
+        )}
+
+        {userMode && authSession != null && !authSession.engineControlAllowed && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            <span>Engine session controls are locked until you sign in. Backend health can still be checked without a session.</span>
+            <a href="/login" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
+              Sign In
+            </a>
+          </div>
+        )}
+
         {userMode && hasConnectedKey === false && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-            <span>Connect your OpenAI key to run CALL + REPORT with live model output.</span>
+            <span>OpenAI browser key is optional here. Add it for detached model comparisons and live playground calls.</span>
             <a href="/settings" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
-              Open Connect LLM
+              Open Model Settings
             </a>
           </div>
         )}
@@ -2426,7 +2577,9 @@ export default function EnginePage() {
                     <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
                       {message.role === "human" ? "You" : "Nepsis"}
                     </span>
-                    <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
+                    {formatMessageTime(message.at) && (
+                      <span className="text-nepsis-muted"> · {formatMessageTime(message.at)}</span>
+                    )}
                     <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
                   </div>
                 ))}
@@ -2695,7 +2848,9 @@ export default function EnginePage() {
                       <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
                         {message.role === "human" ? "You" : "Nepsis"}
                       </span>
-                      <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
+                      {formatMessageTime(message.at) && (
+                        <span className="text-nepsis-muted"> · {formatMessageTime(message.at)}</span>
+                      )}
                       <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
                     </div>
                   ))}
@@ -2868,7 +3023,9 @@ export default function EnginePage() {
                     <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
                       {message.role === "human" ? "You" : "Nepsis"}
                     </span>
-                    <span className="text-nepsis-muted"> · {new Date(message.at).toLocaleTimeString()}</span>
+                    {formatMessageTime(message.at) && (
+                      <span className="text-nepsis-muted"> · {formatMessageTime(message.at)}</span>
+                    )}
                     <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
                   </div>
                 ))}
@@ -3296,7 +3453,7 @@ export default function EnginePage() {
                     <span className="text-nepsis-muted">{message.model}</span>
                   </div>
                   <div className="text-[11px] text-nepsis-muted">
-                    {new Date(message.at).toLocaleTimeString()}
+                    {formatMessageTime(message.at)}
                     {message.source ? ` · src: ${message.source}` : ""}
                   </div>
                   <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>

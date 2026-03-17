@@ -1,8 +1,25 @@
+import { readNepsisUserFromRequest } from "@/lib/nepsisAuth";
+
 const DEFAULT_ENGINE_BASE_URL = "http://127.0.0.1:8787";
+
+class EngineConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineConfigurationError";
+  }
+}
 
 export function engineBaseUrl(): string {
   const configured = process.env.NEPSIS_API_BASE_URL?.trim();
-  return configured && configured.length > 0 ? configured : DEFAULT_ENGINE_BASE_URL;
+  if (configured && configured.length > 0) {
+    return configured;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    return DEFAULT_ENGINE_BASE_URL;
+  }
+  throw new EngineConfigurationError(
+    "NEPSIS_API_BASE_URL is not configured for this deployment.",
+  );
 }
 
 function configuredEngineToken(): string | null {
@@ -19,26 +36,15 @@ function withEngineAuthHeaders(input?: HeadersInit): Headers {
   return headers;
 }
 
-function hasNepsisUserCookie(request: Request): boolean {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (!cookieHeader) {
-    return false;
-  }
-  return cookieHeader
-    .split(";")
-    .map((entry) => entry.trim())
-    .some((entry) => entry.startsWith("nepsis_user=") && entry.length > "nepsis_user=".length);
-}
-
 export function requireEngineControlAuth(request: Request): Response | null {
   const allowAnonymous = process.env.NEPSIS_ENGINE_ALLOW_ANON === "true";
-  if (allowAnonymous || hasNepsisUserCookie(request)) {
+  if (allowAnonymous || readNepsisUserFromRequest(request)) {
     return null;
   }
   return Response.json(
     {
       error: "Unauthorized",
-      detail: "Sign in required for engine control routes",
+      detail: "Sign in required for engine session controls",
     },
     { status: 401 },
   );
@@ -50,6 +56,27 @@ export async function proxyEngineRequest(path: string, init?: RequestInit): Prom
   const target = `${base}${normalizedPath}`;
   const headers = withEngineAuthHeaders(init?.headers);
   return fetch(target, { ...init, headers });
+}
+
+export function engineErrorResponse(error: unknown): Response {
+  if (error instanceof EngineConfigurationError) {
+    return Response.json(
+      {
+        error: error.message,
+        detail:
+          "Set NEPSIS_API_BASE_URL to the public base URL of the Nepsis API before deploying this web app.",
+      },
+      { status: 503 },
+    );
+  }
+
+  return Response.json(
+    {
+      error: "Engine backend request failed",
+      detail: (error as Error)?.message ?? "Unknown error",
+    },
+    { status: 502 },
+  );
 }
 
 export async function proxyJsonResponse(res: Response): Promise<Response> {

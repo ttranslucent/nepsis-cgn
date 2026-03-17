@@ -1,4 +1,9 @@
-import { proxyEngineRequest, proxyJsonResponse, requireEngineControlAuth } from "@/lib/engineApi";
+import {
+  engineErrorResponse,
+  proxyEngineRequest,
+  proxyJsonResponse,
+  requireEngineControlAuth,
+} from "@/lib/engineApi";
 
 export const runtime = "nodejs";
 
@@ -18,12 +23,6 @@ export async function GET(req: Request, { params }: RouteParams) {
     const upstream = await proxyEngineRequest(suffix, { method: "GET" });
     return proxyJsonResponse(upstream);
   } catch (error) {
-    return Response.json(
-      {
-        error: "Engine backend request failed",
-        detail: (error as Error)?.message ?? "Unknown error",
-      },
-      { status: 502 },
-    );
+    return engineErrorResponse(error);
   }
 }

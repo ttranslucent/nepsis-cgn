@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { LLM_CONNECTED_NOTICE_KEY, OPENAI_KEY_STORAGE_KEY } from "@/lib/clientStorage";
@@ -19,16 +19,18 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") {
+      return;
+    }
     try {
       const stored = window.localStorage.getItem(OPENAI_KEY_STORAGE_KEY);
       if (stored) {
-        setApiKey(stored);
-        setHasKey(true);
+        startTransition(() => {
+          setApiKey(stored);
+          setHasKey(true);
+        });
       }
-    } catch {
-      setHasKey(false);
-    }
+    } catch {}
   }, []);
 
   function connectLlm() {

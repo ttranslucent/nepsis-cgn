@@ -1,4 +1,4 @@
-import { proxyEngineRequest, proxyJsonResponse } from "@/lib/engineApi";
+import { engineErrorResponse, proxyEngineRequest, proxyJsonResponse } from "@/lib/engineApi";
 
 export const runtime = "nodejs";
 
@@ -7,12 +7,6 @@ export async function GET() {
     const upstream = await proxyEngineRequest("/v1/health", { method: "GET" });
     return proxyJsonResponse(upstream);
   } catch (error) {
-    return Response.json(
-      {
-        error: "Engine backend request failed",
-        detail: (error as Error)?.message ?? "Unknown error",
-      },
-      { status: 502 },
-    );
+    return engineErrorResponse(error);
   }
 }

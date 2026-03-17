@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 
 import { consumeConnectedNotice, hasStoredOpenAiKey } from "@/lib/clientStorage";
 
@@ -12,8 +12,10 @@ export default function HomePage() {
     const connectedFromQuery =
       typeof window !== "undefined" && new URLSearchParams(window.location.search).get("connected") === "1";
     const connectedFromNotice = consumeConnectedNotice();
-    setShowConnectedMessage(connectedFromQuery || connectedFromNotice);
-    setHasKey(hasStoredOpenAiKey());
+    startTransition(() => {
+      setShowConnectedMessage(connectedFromQuery || connectedFromNotice);
+      setHasKey(hasStoredOpenAiKey());
+    });
   }, []);
 
   const primaryHref = hasKey ? "/engine" : "/settings";
