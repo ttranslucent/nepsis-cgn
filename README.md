@@ -3,6 +3,33 @@ NepsisCGN v0.3
 
 NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces a three-step protocol—Triage → Projection → Validation—with a ZeroBack repair loop and explicit red/blue channels. This repository includes reference manifolds, an LLM provider registry, and a CLI for quick runs.
 
+Current Working State (2026-03-17)
+----------------------------------
+- Primary branch: `main`
+- Primary repo path: `/Users/trentthorn/Code/nepsiscgn`
+- Current continuation commit: `4a0aec4` (`feat: harden nepsis web auth and engine deployment flow`)
+- `main` includes:
+  - stage-gate integration hardening and adversarial QA verifier/report artifacts,
+  - passwordless auth repair with signed cookies and optional Resend delivery,
+  - `/engine` connectivity/status hardening for deployed environments,
+  - Vercel-facing `nepsis-web` README and `.env.example` updates.
+- Local sidecar branch preserved for unrelated follow-up work:
+  - `codex/openai-secret-hygiene` at `9cae352`
+
+Next Session Pickup
+-------------------
+1. Confirm clean starting point:
+   - `git switch main`
+   - `git pull --ff-only`
+2. Re-verify the web app if touching `/engine` or auth:
+   - `cd nepsis-web && npm run lint`
+   - `cd nepsis-web && npm run build`
+3. Review the latest handoff notes:
+   - `ledger/sessions/2026-03-11_session-47.md`
+   - `ledger/sessions/2026-03-17_session-48.md`
+   - `ledger/sessions/2026-03-17_session-49.md`
+4. For deployment follow-up, start with `nepsis-web/README.md` and `nepsis-web/.env.example`.
+
 Key Components
 --------------
 - Supervisor: orchestrates triage → projection → validation with bounded retries and ZeroBack deltas.

@@ -5,3 +5,4 @@ __pycache__/
 src/nepsis_ra/data/
 .claude/
 *.egg-info/
+ledger/sessions/engine_api_sessions.db*
