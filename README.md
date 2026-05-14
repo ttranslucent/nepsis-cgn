@@ -27,6 +27,10 @@ The MVP demonstrates:
 
 `state_feedback` in v0.3 is deterministic MVP scaffolding only, not a live runtime feedback engine.
 
+## What This Is Not
+
+The v0.3 MVP is not a medical diagnostic tool, not a live clinical decision support system, and not a replacement for clinician judgment. The demo packets are deterministic proof artifacts showing the governance architecture, not autonomous model conclusions.
+
 ## Quickstart
 
 Clone and enter the repo:
@@ -161,13 +165,13 @@ Environment notes:
 
 ## v0.4 Backlog Stub
 
-Do not retessellate the v0.3 architecture unless v0.4 is explicitly opened.
+Do not expand the v0.3 architecture unless v0.4 development is explicitly opened.
 
 Candidate v0.4 work:
 
 - Decide whether runtime State Feedback should become a live feedback engine.
 - Decide whether API session packets and MVP packets should converge.
-- Decide whether LLM integration belongs in the deterministic MVP path or remains separate.
+- Define how LLM integration should call into the deterministic governance packet path without making the MVP demo dependent on live model behavior.
 - Expand demo documentation before adding architecture.
 
 ## Additional CLI Examples
