@@ -1,127 +1,179 @@
-NepsisCGN v0.3
-================
+# NepsisCGN v0.3
 
-NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces a three-step protocol—Triage → Projection → Validation—with a ZeroBack repair loop and explicit red/blue channels. In the runtime model, Red and Blue are treated as distinct decision spaces with different invariants, not as one risk surface with different thresholds. This repository includes reference manifolds, an LLM provider registry, and a CLI for quick runs.
+Last verified: 2026-05-14
 
-Current Working State (2026-03-17)
-----------------------------------
-- Primary branch: `main`
-- Primary repo path: `/Users/trentthorn/Code/nepsiscgn`
-- Start point: current `main` HEAD in this repo path
-- Stable product anchor commit: `4a0aec4` (`feat: harden nepsis web auth and engine deployment flow`)
-- `main` includes:
-  - stage-gate integration hardening and adversarial QA verifier/report artifacts,
-  - passwordless auth repair with signed cookies and optional Resend delivery,
-  - `/engine` connectivity/status hardening for deployed environments,
-  - Vercel-facing `nepsis-web` README and `.env.example` updates,
-  - this close-out handoff in the root README and ledger.
-- Local sidecar branch preserved for unrelated follow-up work:
-  - `codex/openai-secret-hygiene` at `9cae352`
+NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces structured reasoning under uncertainty with distinct RED/BLUE decision spaces, STILL checkpoints, contradiction monitoring, denominator collapse detection, ZeroBack repair, consequence-weighted commitment, state feedback scaffolding, and audit packets.
 
-Next Session Pickup
--------------------
-1. Confirm clean starting point:
-   - `git switch main`
-   - `git pull --ff-only`
-2. Re-verify the web app if touching `/engine` or auth:
-   - `cd nepsis-web && npm run lint`
-   - `cd nepsis-web && npm run build`
-3. Review the latest handoff notes:
-   - `ledger/sessions/2026-03-11_session-47.md`
-   - `ledger/sessions/2026-03-17_session-48.md`
-   - `ledger/sessions/2026-03-17_session-49.md`
-4. For deployment follow-up, start with `nepsis-web/README.md` and `nepsis-web/.env.example`.
+## v0.3 MVP
 
-Key Components
---------------
-- Supervisor: orchestrates triage → projection → validation with bounded retries and ZeroBack deltas.
-- Manifolds:
-  - WordGameManifold (multiset/dictionary check with repair hints).
-  - UTF8HiddenManifold (enforces hidden U+200B marker).
-  - Utf8StreamManifold (RFC-style UTF-8 validator/normalizer).
-  - SeedManifold (Voronoi-style adversarial seed demo).
-  - GravityRoomManifold (ARC-style physics with stepwise gravity and collision detection; static vs mobile separation, graded blue_score).
-- Geometry: additive-weighted Voronoi engine for seed-based partitioning.
-- Meta: DevianceMonitor adjusts tau_R based on SAFE / NEAR_MISS / CRASH history.
-- LLM Providers: simulated stub and OpenAI provider (defaults to gpt-4o; map “openai” alias).
- - Interpretant layer: Bayesian selector that binds signs to manifolds (semantic worlds) and instantiates constraint geometry, transforms, and ruin seeds.
- - Manifold Governor: tension-aware collapse gate with history/velocity to catch acute spikes vs slow drift; emits trace metadata for UI.
+Freeze baseline: `3d775d3` (`Polish MVP header flow`) on `main`.
 
-CLI Usage
----------
-Examples:
-- Word game: `python -m nepsis.cli --mode word_game --letters "JANIGLL" --model simulated`
-- UTF-8 hidden marker: `python -m nepsis.cli --mode utf8 --target "NEPSIS" --model simulated`
-- Seed manifold: `python -m nepsis.cli --mode seed --candidate "OK" --model simulated`
-- Gravity/ARC: `python -m nepsis.cli --mode arc --query "[[0,0,0],[0,1,0],[0,0,0],[2,2,2]]" --model simulated`
-- OpenAI (needs OPENAI_API_KEY): `python -m nepsis.cli --mode arc --model openai --query "[[0,0,0],[0,1,0],[0,0,0],[2,2,2]]"`
+The v0.3 MVP exposes a deterministic proof packet through CLI, API, and the local Next UI.
 
-LLM Provider Registry
----------------------
-- Simulated: exercises red-channel repair (hallucinates once, then complies).
-- OpenAI: Chat Completions; use `--model openai` (maps to gpt-4o) or a specific gpt-* model.
+Flow:
 
-Tests
------
-Run `.venv/bin/python -m pytest -q` from this checkout. The system `python3` is not sufficient here because the project requires Python >=3.11 and the package is installed in `.venv`.
+RED → STILL → BLUE → STILL → commitment → state feedback → audit
 
-MVP Demo Packet
----------------
-The smallest deterministic MVP proof is exposed through CLI, API, and the local Next UI. It emits a canonical packet showing RED Channel -> STILL checkpoint -> BLUE Channel -> contradiction/retessellation -> STILL checkpoint -> commitment -> state feedback -> audit packet.
+The MVP demonstrates:
 
-CLI:
-- `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing`
-- `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case clinical`
+- RED Channel hazard and constraint preservation.
+- BLUE Channel bounded analysis inside the RED safety boundary.
+- STILL metacognitive checkpoints before BLUE and before commitment.
+- Contradiction, denominator collapse, and non-quiescence detection.
+- Retessellation and ZeroBack reset when the frame is unstable.
+- Consequence-weighted Voronoi commitment.
+- Predicted next-state / State Feedback scaffolding.
+- Auditable reasoning trace.
 
-API:
-- Start: `NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787`
-- Run: `curl -s -X POST http://127.0.0.1:8787/v1/mvp -H 'Content-Type: application/json' -d '{"case_id":"jailing"}'`
+`state_feedback` in v0.3 is deterministic MVP scaffolding only, not a live runtime feedback engine.
 
-Clickable UI:
-1. Start the backend: `NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787`
-2. Start the web app: `cd nepsis-web && npm run dev`
-3. Open `http://localhost:3000/mvp`
-4. Choose `Jailing` or `Clinical`, then click `Run Demo`.
+## Quickstart
 
-MVP freeze demo script:
-1. Open `/mvp` and point to the header flow: RED → STILL → BLUE → STILL → commitment → state feedback → audit.
-2. Run `Jailing`. Show that RED preserves the governed `JINGALL` source-token constraint, STILL prevents naive commitment, contradiction/denominator collapse force retessellation, and the audit trace records the sequence.
-3. Run `Clinical`. Show that RED keeps high-consequence clinical uncertainty active, STILL preserves escalation/hold logic, State Feedback declares the predicted next observation, and final output lists required discriminators.
-4. Open the raw JSON section and confirm `still.checkpoints`, `state_feedback`, `audit_trace`, and `final_output` are present.
+Clone and enter the repo:
 
-Canonical packet fields include `case_id`, `input_text`, `observations`, `constraints`, `red_channel`, `still.checkpoints`, `blue_channel`, `contradiction_monitor`, `denominator_collapse`, `voronoi_commitment`, `non_quiescence`, `zeroback`, `state_feedback`, `audit_trace`, and `final_output`. `state_feedback` declares the active frame, predicted next state, failure conditions, and loop decision for the next observation; it is deterministic MVP scaffolding, not a runtime feedback engine. Runtime `nepsis.iteration_packet` output also includes `still` as the finalization interlock for session/API runs.
-
-Notes
------
-- OPENAI_API_KEY must be set for real model calls.
-- ZeroBack adds `next_projection_delta` on validation failure to tighten subsequent prompts.
-- GravityRoomManifold treats IDs on the bottom row as static terrain; only mobile objects fall. Blue score is graded by error density.
-- Governance spec (draft): `briefs/nepsis_governance_spec_v1.md`
-
-Architecture Overview
----------------------
-- Signs (input) → Interpretant layer → manifold selection/construction → constraint solving → collapse governor → output.
-- Interpretant = manifold selector: chooses manifold family and fills seeds, transformation rules, ruin nodes, success signatures; updates posteriors via Bayesian weights.
-- Manifold = instantiated interpretant: defines constraint geometry and transforms; evaluated by CGNSolver.
-- Manifold Governor = temporal vitals: tracks tension history/velocity/accel, triggers warn/collapse/ruin, and logs causes for traceability.
-- Manifest loader: YAML-driven interpretant/manifold registry (`data/manifests/manifest_definitions.yaml`) with per-manifold governor thresholds.
-
-Flow (semantic locking before solving):
-```
-Sign / Raw Input -> parse -> Interpretant Manager (posterior over manifolds)
-    -> select Manifold (family + seeds + transforms + ruin)
-    -> Manifold.run(sign) -> CGNSolver
-    -> ManifoldGovernor (tension history + velocity/accel)
-    -> decision (continue/warn/collapse/ruin) + trace
+```bash
+git clone <repo>
+cd nepsiscgn
 ```
 
-Clinical and puzzle examples:
-- Puzzle: strict_set vs phonetic_variant manifolds (Jailing/Jingall) with ruin on missing hidden letters; silent-U and I/J transforms optional.
-- Clinical: radicular_spasm (blue) vs cauda_equina (red) manifolds with red-flag ruin seeds and follow-up transforms; interpretant likelihood favors cauda when saddle/bladder flags appear.
+One-time dependency setup:
 
-CLI
----
-Install deps (ensure `pyyaml` is present) and run:
+```bash
+python3.11 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev,api]'
+cd nepsis-web && npm ci && cd ..
+```
+
+## CLI Demo
+
+Run the canonical MVP packet builder:
+
+```bash
+.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing
+.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case clinical
+```
+
+## API Demo
+
+Start the backend:
+
+```bash
+NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787
+```
+
+Call `POST /v1/mvp`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/v1/mvp \
+  -H 'Content-Type: application/json' \
+  -d '{"case_id":"jailing"}' | .venv/bin/python -m json.tool
+```
+
+The local Next API proxy used by the UI is `/api/engine/mvp`, which forwards to backend `POST /v1/mvp`.
+
+## Clickable UI Demo
+
+Start the local UI:
+
+```bash
+cd nepsis-web
+npm run dev
+```
+
+Open `http://localhost:3000/mvp`, choose `Jailing` or `Clinical`, then click `Run Demo`.
+
+## MVP Freeze Demo Script
+
+1. Open `/mvp`.
+2. Point to the header flow: RED → STILL → BLUE → STILL → commitment → state feedback → audit.
+3. Run `Jailing`.
+4. Show RED preserving the governed `JINGALL` source-token constraint.
+5. Show STILL preventing naive commitment.
+6. Show contradiction and denominator collapse forcing retessellation.
+7. Show ZeroBack reset.
+8. Show State Feedback declaring expected next-state checks.
+9. Open the raw JSON and audit trace.
+10. Run `Clinical`.
+11. Show RED preserving high-consequence clinical uncertainty and final output listing required discriminators.
+
+## Canonical MVP Packet Fields
+
+- `case_id`
+- `input_text`
+- `observations`
+- `constraints`
+- `red_channel`
+- `still.checkpoints`
+- `blue_channel`
+- `contradiction_monitor`
+- `denominator_collapse`
+- `non_quiescence`
+- `zeroback`
+- `voronoi_commitment`
+- `state_feedback`
+- `audit_trace`
+- `final_output`
+
+## Core Architecture
+
+- Signal intake parses scenario input into observations, context, constraints, hypotheses, and unknowns.
+- RED Channel runs first and preserves must-not-miss hazards and governing constraints.
+- STILL asks whether the engine has permission to continue, hold, retessellate, or stop.
+- BLUE Channel performs bounded analytic reasoning inside the RED safety boundary.
+- Contradiction and denominator collapse detection prevent premature narrative closure.
+- ZeroBack records reset logic when contradiction or wrong-manifold risk persists.
+- State Feedback declares what the next observed state should show if the frame is correct.
+- Audit packets preserve the ordered reasoning trace.
+
+Runtime architecture also includes the triage → projection → validation supervisor, reference manifolds, manifest loader, tension-aware manifold governor, and LLM provider registry. Runtime `nepsis.iteration_packet` output includes `still` as the finalization interlock for session/API runs.
+
+## Tests and Environment Notes
+
+Run the backend tests:
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Run the web checks:
+
+```bash
+cd nepsis-web
+npm run lint
+npm run build
+```
+
+Environment notes:
+
+- Python must be >=3.11.
+- Use `.venv/bin/python`; system `python3` may be Python 3.9.
+- `OPENAI_API_KEY` is required only for real model calls.
+- The simulated provider exercises red-channel repair without external model access.
+- The OpenAI provider maps the `openai` alias to `gpt-4o` unless a specific `gpt-*` model is supplied.
+
+## Known Limitations
+
+- Runtime State Feedback is not implemented; current State Feedback is deterministic MVP packet scaffolding.
+- API session packets and MVP packets are separate shapes.
+- LLM integration is not part of the deterministic MVP demo path.
+- system `python3` may be Python 3.9; use `.venv/bin/python`.
+- `pytest -q` alone may fail unless the package/environment is installed correctly.
+
+## v0.4 Backlog Stub
+
+Do not retessellate the v0.3 architecture unless v0.4 is explicitly opened.
+
+Candidate v0.4 work:
+
+- Decide whether runtime State Feedback should become a live feedback engine.
+- Decide whether API session packets and MVP packets should converge.
+- Decide whether LLM integration belongs in the deterministic MVP path or remains separate.
+- Expand demo documentation before adding architecture.
+
+## Additional CLI Examples
+
+The canonical v0.3 MVP command is `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing`. These older or broader runtime examples are useful for engine exploration, but they are not the primary MVP quickstart.
+
 - Puzzle: `nepsiscgn --json puzzle --letters JAIILUNG --candidate JAILING`
 - Safety red/blue: `nepsiscgn --json safety --critical-signal`
 - Safety with governance gate: `nepsiscgn --json --c-fp 1 --c-fn 9 safety --critical-signal`
@@ -130,54 +182,13 @@ Install deps (ensure `pyyaml` is present) and run:
 - Safety with override capture: `nepsiscgn --json --c-fp 1 --c-fn 9 --continue-override --override-reason "Need confirmatory test" safety --critical-signal`
 - Safety with packet sink: `nepsiscgn --json --packet-dir ./packets safety --critical-signal`
 - Clinical red/blue: `nepsiscgn clinical --radicular-pain --spasm-present --notes "L5 paresthesias"`
+- Legacy word game: `python -m nepsis.cli --mode word_game --letters "JANIGLL" --model simulated`
+- Legacy UTF-8 hidden marker: `python -m nepsis.cli --mode utf8 --target "NEPSIS" --model simulated`
+- Legacy seed manifold: `python -m nepsis.cli --mode seed --candidate "OK" --model simulated`
+- Legacy gravity/ARC: `python -m nepsis.cli --mode arc --query "[[0,0,0],[0,1,0],[0,0,0],[2,2,2]]" --model simulated`
 
-Backend API (Engine Sessions)
------------------------------
-Run local backend API server:
-- `NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787`
+## Handoff Notes
 
-Endpoints:
-- `POST /v1/sessions` create session (`family`: `puzzle|clinical|safety`, optional `governance`, `frame`)
-- `GET /v1/sessions` list session summaries
-- `GET /v1/sessions/{session_id}` session summary (stage/frame/packet count)
-- `DELETE /v1/sessions/{session_id}` delete session and in-memory state
-- `POST /v1/sessions/{session_id}/step` run one iteration (`sign`, optional `commit`, `user_decision`, `override_reason`)
-- `POST /v1/sessions/{session_id}/reframe` update frame version
-- `GET /v1/sessions/{session_id}/stage-audit` evaluate stage gates from canonical session state
-- `POST /v1/sessions/{session_id}/stage-audit` evaluate stage gates with optional context overrides
-- `GET /v1/sessions/{session_id}/packets` replay packets
-- `GET /v1/routes` route manifest for API discoverability
-- `GET /v1/health` health check
-
-Example session flow:
-```bash
-curl -sX POST http://127.0.0.1:8787/v1/sessions \
-  -H 'Content-Type: application/json' \
-  -d '{"family":"safety","governance":{"c_fp":1,"c_fn":9}}'
-```
-```bash
-curl -sX POST http://127.0.0.1:8787/v1/sessions/<SESSION_ID>/step \
-  -H 'Content-Type: application/json' \
-  -d '{"sign":{"critical_signal":true},"commit":false}'
-```
-
-The CLI loads `data/manifests/manifest_definitions.yaml`, instantiates interpretants/manifolds, runs navigation with tension-aware governor, and emits a trace (manifold, decision, tension/velocity, cause, posterior). Add `--manifest /path/to/manifest_definitions.yaml` to use a custom manifest.
-
-What Is a Manifold?
--------------------
-A manifold is a semantic world with its own constraints, ruin conditions, tension parameters, and transformation rules. The interpretant selects the manifold; the governor evaluates tension inside it. If evidence no longer fits, the system collapses or vectors to a new manifold.
-
-Example Run
------------
-- Puzzle (strict-set ruin):
-  - `$ nepsiscgn --json puzzle --letters JAIILUNG --candidate JAILING`
-  - `{"manifold":"strict_set","decision":"ruin","cause":"RUIN_NODE",...}`
-- Clinical (benign radicular):
-  - `$ nepsiscgn clinical --json --radicular-pain --spasm-present --notes "L5 paresthesias"`
-  - `manifold=radicular_spasm decision=continue tension=0.0 posterior={'clinical_radicular_spasm': 0.75, 'clinical_cauda_equina': 0.25}`
-- Clinical (cauda red flags):
-  - `$ nepsiscgn clinical --json --radicular-pain --saddle-anesthesia --bladder-dysfunction`
-  - `{"manifold":"cauda_equina","decision":"continue","tension":0.0,"posterior":{"clinical_radicular_spasm":0.27,"clinical_cauda_equina":0.73}}`
-- Safety (red-channel escalation):
-  - `$ nepsiscgn --json safety --critical-signal`
-  - `{"manifold":"red_channel","decision":"warn","cause":"ABS_TENSION",...}`
+- March continuity, deployment/auth notes, local machine paths, and side-branch notes were moved to `docs/handoff.md`.
+- The manifest loader uses `data/manifests/manifest_definitions.yaml`; pass `--manifest /path/to/manifest_definitions.yaml` for a custom manifest.
+- Governance draft: `briefs/nepsis_governance_spec_v1.md`.
