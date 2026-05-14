@@ -83,6 +83,12 @@ Clickable UI:
 3. Open `http://localhost:3000/mvp`
 4. Choose `Jailing` or `Clinical`, then click `Run Demo`.
 
+MVP freeze demo script:
+1. Open `/mvp` and point to the header flow: RED → STILL → BLUE → STILL → commitment → state feedback → audit.
+2. Run `Jailing`. Show that RED preserves the governed `JINGALL` source-token constraint, STILL prevents naive commitment, contradiction/denominator collapse force retessellation, and the audit trace records the sequence.
+3. Run `Clinical`. Show that RED keeps high-consequence clinical uncertainty active, STILL preserves escalation/hold logic, State Feedback declares the predicted next observation, and final output lists required discriminators.
+4. Open the raw JSON section and confirm `still.checkpoints`, `state_feedback`, `audit_trace`, and `final_output` are present.
+
 Canonical packet fields include `case_id`, `input_text`, `observations`, `constraints`, `red_channel`, `still.checkpoints`, `blue_channel`, `contradiction_monitor`, `denominator_collapse`, `voronoi_commitment`, `non_quiescence`, `zeroback`, `state_feedback`, `audit_trace`, and `final_output`. `state_feedback` declares the active frame, predicted next state, failure conditions, and loop decision for the next observation; it is deterministic MVP scaffolding, not a runtime feedback engine. Runtime `nepsis.iteration_packet` output also includes `still` as the finalization interlock for session/API runs.
 
 Notes

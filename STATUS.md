@@ -1,5 +1,11 @@
 # NepsisCGN MVP Status
 
+## MVP Freeze
+
+- Freeze baseline: `3d775d3` (`Polish MVP header flow`) on `main`.
+- Architecture and packet behavior are MVP-complete enough to stop expanding.
+- Next work should be documentation, demo rehearsal, and operator-facing explanation only.
+
 ## Working
 
 - `.venv/bin/python -m pytest -q` passes.
@@ -25,4 +31,4 @@
 
 ## Next Patch
 
-Keep the deterministic MVP demo thin: preserve the `/mvp` UI path, the `/api/engine/mvp` proxy to `POST /v1/mvp`, and focused tests before any architecture expansion.
+Docs-only. Preserve the `/mvp` UI path, the `/api/engine/mvp` proxy to `POST /v1/mvp`, and the frozen deterministic packet shape.
