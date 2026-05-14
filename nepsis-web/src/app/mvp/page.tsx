@@ -55,7 +55,7 @@ export default function MvpDemoPage() {
               NepsisCGN MVP Demo
             </div>
             <h1 className="mt-2 text-2xl font-semibold md:text-4xl">
-              RED -&gt; STILL -&gt; BLUE -&gt; STILL -&gt; audit packet
+              RED &rarr; STILL &rarr; BLUE &rarr; STILL &rarr; commitment &rarr; state feedback &rarr; audit
             </h1>
             <p className="mt-3 text-sm text-nepsis-muted md:text-base">
               Run a deterministic canonical case through the backend packet builder and inspect the structured result.
