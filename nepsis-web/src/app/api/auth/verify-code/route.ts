@@ -42,7 +42,9 @@ export async function POST(req: Request) {
   }
   if (!verification.ok) {
     const response = NextResponse.json({ error: verification.error }, { status: 400 });
-    response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
+    if (verification.error !== "Invalid code") {
+      response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
+    }
     return response;
   }
 

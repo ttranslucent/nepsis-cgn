@@ -9,6 +9,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from .service import EngineApiService
 
@@ -98,6 +99,17 @@ def create_app():
     @app.get("/v1/openapi.json")
     async def openapi_document():
         return openapi_spec()
+
+    @app.post("/v1/mvp")
+    async def run_mvp(request: Request):
+        body = await _read_json_body(request)
+        case_id = body.get("case_id", body.get("case", "jailing"))
+        if case_id not in {"jailing", "clinical"}:
+            raise HTTPException(status_code=400, detail="case_id must be one of: jailing, clinical")
+        input_text = body.get("input_text", body.get("inputText"))
+        if input_text is not None and not isinstance(input_text, str):
+            raise HTTPException(status_code=400, detail="input_text must be a string when provided")
+        return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
 
     @app.get("/v1/sessions")
     async def list_sessions(limit: int = 50, offset: int = 0):
@@ -387,6 +399,7 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "GET", "path": "/v1/health", "description": "Health check"},
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
         {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
+        {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
         {"method": "POST", "path": "/v1/sessions", "description": "Create engine session"},
         {"method": "GET", "path": "/v1/sessions", "description": "List sessions"},
         {"method": "DELETE", "path": "/v1/sessions", "description": "Purge old sessions by TTL"},

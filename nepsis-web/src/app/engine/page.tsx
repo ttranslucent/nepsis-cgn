@@ -11,10 +11,10 @@ import {
   type EngineStepResponse,
 } from "@/lib/engineClient";
 import {
-  type StageCoach,
   type GateResult,
   type GateStatus,
   type InterpretationContradictionsStatus,
+  type StageCoach,
   type ThresholdDecision,
   buildFrameCoach,
   buildInterpretationCoach,
@@ -23,12 +23,16 @@ import {
   evaluateInterpretationGate,
   evaluateThresholdGate,
 } from "@/lib/nepsisGates";
-import { consumeConnectedNotice, hasStoredOpenAiKey } from "@/lib/clientStorage";
+import {
+  consumeConnectedNotice,
+  getStoredOpenAiKey,
+  hasStoredOpenAiKey,
+} from "@/lib/clientStorage";
 import { useEngineSession } from "@/lib/useEngineSession";
 
 type ChatRole = "human" | "nepsis";
 type DetachedRole = "human" | "assistant";
-type DetachedModel = "gpt-4.1" | "o3" | "claude-sonnet" | "gemini";
+type DetachedModel = "gpt-4.1" | "gpt-4.1-mini" | "o3" | "o4-mini";
 
 type ChatMessage = {
   id: string;
@@ -272,7 +276,7 @@ const POSTERIOR_STARTER_MESSAGE: ChatMessage = {
 const DETACHED_STARTER: DetachedMessage = {
   id: "detached-start",
   role: "assistant",
-  text: "Model sandbox is detached from Nepsis state. Use it to compare model behavior before committing anything.",
+  text: "Model sandbox is detached from Nepsis state. It uses the browser-stored OpenAI key when available.",
   at: "",
   model: "gpt-4.1",
   source: null,
@@ -952,6 +956,7 @@ export default function EnginePage() {
   const [detachedSource, setDetachedSource] = useState("");
   const [detachedInput, setDetachedInput] = useState("");
   const [detachedChat, setDetachedChat] = useState<DetachedMessage[]>([DETACHED_STARTER]);
+  const [detachedBusy, setDetachedBusy] = useState(false);
 
   const snapshotStorageKey = useMemo(
     () => `${MODEL_SNAPSHOT_STORAGE_PREFIX}:${activeSession?.session_id ?? "workspace"}`,
@@ -1806,29 +1811,72 @@ export default function EnginePage() {
     setPosteriorInput("");
   }
 
-  function handleSendDetachedMessage() {
+  async function handleSendDetachedMessage() {
     clearAllErrors();
     const text = optionalText(detachedInput);
     if (!text) {
       return;
     }
     const source = optionalText(detachedSource) ?? null;
-    setDetachedChat((prev) => [
-      ...prev,
-      createDetachedMessage("human", text, detachedModel, source),
-      createDetachedMessage(
-        "assistant",
-        detachedCompare
-          ? `Comparison mode enabled. Sandbox currently set to ${detachedModel}.`
-          : `Captured in sandbox (${detachedModel}). This does not alter Nepsis stage state.`,
-        detachedModel,
-        source,
-      ),
-    ]);
-    if (detachedCompare) {
-      captureModelSnapshot(text);
-    }
+    setDetachedChat((prev) => [...prev, createDetachedMessage("human", text, detachedModel, source)]);
     setDetachedInput("");
+    setDetachedBusy(true);
+    try {
+      const apiKey = getStoredOpenAiKey();
+      const res = await fetch("/api/run-with-nepsis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: text,
+          model: detachedModel,
+          apiKey: apiKey ?? undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            error?: unknown;
+            detail?: unknown;
+            outputText?: unknown;
+            rawAnswer?: unknown;
+          }
+        | null;
+      if (!res.ok) {
+        const message =
+          typeof data?.detail === "string"
+            ? data.detail
+            : typeof data?.error === "string"
+              ? data.error
+              : "Sandbox request failed.";
+        throw new Error(message);
+      }
+      const outputText =
+        typeof data?.outputText === "string"
+          ? data.outputText
+          : typeof data?.rawAnswer === "string"
+            ? data.rawAnswer
+            : "";
+      setDetachedChat((prev) => [
+        ...prev,
+        createDetachedMessage(
+          "assistant",
+          outputText || `No text returned from ${detachedModel}.`,
+          detachedModel,
+          source,
+        ),
+      ]);
+      if (detachedCompare) {
+        captureModelSnapshot(text);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sandbox request failed.";
+      setLocalError(message);
+      setDetachedChat((prev) => [
+        ...prev,
+        createDetachedMessage("assistant", `Sandbox request failed: ${message}`, detachedModel, source),
+      ]);
+    } finally {
+      setDetachedBusy(false);
+    }
   }
 
   async function handleLockFrame() {
@@ -2386,7 +2434,7 @@ export default function EnginePage() {
 
         {userMode && hasConnectedKey === false && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-            <span>OpenAI browser key is optional here. Add it for detached model comparisons and live playground calls.</span>
+            <span>OpenAI browser key powers live playground requests and sandbox model calls when the server has no API key configured.</span>
             <a href="/settings" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
               Open Model Settings
             </a>
@@ -3396,16 +3444,16 @@ export default function EnginePage() {
 
             <div className="space-y-3 text-xs">
               <label className="block text-nepsis-muted">
-                Model
+                OpenAI model
                 <select
                   value={detachedModel}
                   onChange={(event) => setDetachedModel(event.target.value as DetachedModel)}
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
                 >
                   <option value="gpt-4.1">gpt-4.1</option>
+                  <option value="gpt-4.1-mini">gpt-4.1-mini</option>
                   <option value="o3">o3</option>
-                  <option value="claude-sonnet">claude-sonnet</option>
-                  <option value="gemini">gemini</option>
+                  <option value="o4-mini">o4-mini</option>
                 </select>
               </label>
               <label className="flex items-center gap-2 text-nepsis-muted">
@@ -3502,13 +3550,15 @@ export default function EnginePage() {
                 onChange={(event) => setDetachedInput(event.target.value)}
                 rows={3}
                 placeholder="Sandbox prompt..."
+                disabled={detachedBusy}
                 className="w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
               />
               <button
-                onClick={handleSendDetachedMessage}
-                className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent"
+                onClick={() => void handleSendDetachedMessage()}
+                disabled={detachedBusy}
+                className="h-fit rounded-full border border-nepsis-border px-3 py-1.5 text-xs hover:border-nepsis-accent disabled:opacity-60"
               >
-                Send
+                {detachedBusy ? "Running..." : "Send"}
               </button>
             </div>
           </aside>

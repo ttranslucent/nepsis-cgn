@@ -209,6 +209,8 @@ class NavigationController(Generic[SignT, StateT]):
             trace_metadata={
                 "manifold_id": evaluation.manifold_id,
                 "family": evaluation.family,
+                "channel_space": evaluation.channel_semantics.space,
+                "channel_mode": evaluation.channel_semantics.decision_mode,
                 "decision": decision.decision,
                 "cause": decision.cause,
                 "tension": decision.metrics.tension,

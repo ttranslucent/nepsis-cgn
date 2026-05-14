@@ -1,6 +1,6 @@
-const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+export const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
 const API_URL = process.env.OPENAI_API_URL ?? "https://api.openai.com/v1/responses";
-const API_KEY = process.env.OPENAI_API_KEY ?? process.env.NEPSIS_OPENAI_API_KEY ?? "";
+const ENV_API_KEY = process.env.OPENAI_API_KEY ?? process.env.NEPSIS_OPENAI_API_KEY ?? "";
 
 type CreateResponseArgs = {
   model?: string;
@@ -42,7 +42,7 @@ class SimpleOpenAiClient {
   public readonly responses = {
     create: (args: CreateResponseArgs) => {
       const payload = {
-        model: args.model ?? DEFAULT_MODEL,
+        model: args.model ?? DEFAULT_OPENAI_MODEL,
         input: args.input,
       };
       return this.request(payload);
@@ -50,4 +50,54 @@ class SimpleOpenAiClient {
   };
 }
 
-export const openai = new SimpleOpenAiClient(API_KEY, API_URL);
+function normalizeApiKey(value?: string | null): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function createOpenAiClient(apiKeyOverride?: string | null): SimpleOpenAiClient {
+  const apiKey = normalizeApiKey(apiKeyOverride) || ENV_API_KEY;
+  return new SimpleOpenAiClient(apiKey, API_URL);
+}
+
+export function extractOpenAiText(payload: Record<string, unknown> | null | undefined): string {
+  if (!payload) {
+    return "";
+  }
+
+  const outputText = payload.output_text;
+  if (typeof outputText === "string") {
+    return outputText;
+  }
+  if (Array.isArray(outputText)) {
+    return outputText.filter((chunk): chunk is string => typeof chunk === "string").join("\n\n");
+  }
+
+  const output = payload.output;
+  if (!Array.isArray(output)) {
+    return "";
+  }
+
+  const chunks: string[] = [];
+  for (const item of output) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const chunk of content) {
+      if (typeof chunk !== "object" || chunk === null) {
+        continue;
+      }
+      const text = (chunk as { text?: unknown }).text;
+      if (typeof text === "string" && text.length > 0) {
+        chunks.push(text);
+      }
+    }
+  }
+
+  return chunks.join("\n\n");
+}
+
+export const openai = createOpenAiClient();

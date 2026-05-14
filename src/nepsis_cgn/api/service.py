@@ -722,6 +722,7 @@ def _trace_payload(entry: Any) -> Dict[str, Any]:
     payload = {
         "manifold": evaln.manifold_id,
         "family": evaln.family,
+        "channel": evaln.channel_semantics.to_dict(),
         "decision": decision.decision,
         "cause": decision.cause,
         "tension": decision.metrics.tension,
@@ -938,8 +939,8 @@ def _coerce_lineage_version(value: Any) -> Optional[int]:
 
 _FRAME_COACH_PROMPTS: dict[str, str] = {
     "problem_statement": "What exact decision or question are we trying to resolve?",
-    "catastrophic_outcome": "What catastrophic outcome must never be allowed?",
-    "optimization_goal": "What should we optimize for when red-channel risks are controlled?",
+    "catastrophic_outcome": "What catastrophic outcome defines the red-channel boundary space?",
+    "optimization_goal": "What should the blue-channel utility space optimize once red boundaries are controlled?",
     "decision_horizon": "What decision horizon are we operating on right now?",
     "key_uncertainty": "What uncertainty could most change the decision?",
     "constraint_structure": "List at least one hard constraint and one soft constraint.",
@@ -960,7 +961,7 @@ _THRESHOLD_COACH_PROMPTS: dict[str, str] = {
     "red_override_metadata": "Missing red-gate metadata. Re-run interpretation to refresh governance values.",
     "decision_declared": "Declare threshold decision: recommend action or hold.",
     "hold_reason": "If holding, explain what clarification or evidence is required.",
-    "red_override_enforced": "Red gate is crossed. Recommendation is blocked; hold and gather more evidence.",
+    "red_override_enforced": "Red space is active. Recommendation stays blocked until you reframe, release, or gather the discriminator you need.",
 }
 
 

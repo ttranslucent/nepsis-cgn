@@ -51,7 +51,7 @@ def build_iteration_packet(
     packet_id = str(uuid4())
     packet: Dict[str, Any] = {
         "schema_id": "nepsis.iteration_packet",
-        "schema_version": "0.1.0",
+        "schema_version": "0.1.2",
         "meta": {
             "packet_id": packet_id,
             "session_id": session_id,
@@ -68,6 +68,7 @@ def build_iteration_packet(
         "manifold": {
             "id": manifold_evaluation.manifold_id,
             "family": manifold_evaluation.family,
+            "channel": manifold_evaluation.channel_semantics.to_dict(),
         },
         "result": {
             "decision": governor_decision.decision,
@@ -89,6 +90,12 @@ def build_iteration_packet(
             "description": manifold_evaluation.result.state_description,
             "constraint_set": manifold_evaluation.result.metadata.get("constraint_set"),
         },
+        "still": _build_still_gate(
+            manifold_evaluation=manifold_evaluation,
+            governor_decision=governor_decision,
+            governance_metrics=governance_metrics,
+            governance_decision=governance_decision,
+        ),
     }
 
     if governance_metrics is not None and governance_decision is not None:
@@ -144,6 +151,81 @@ def _default_carry_forward_policy(governance_decision: Optional[GovernanceDecisi
         policy["constraints"]["soft"] = "relax"
 
     return policy
+
+
+def _build_still_gate(
+    *,
+    manifold_evaluation: ManifoldEvaluation[Any],
+    governor_decision: GovernorDecision,
+    governance_metrics: Optional[GovernanceMetrics],
+    governance_decision: Optional[GovernanceDecision],
+) -> Dict[str, Any]:
+    blockers: list[str] = []
+    required_exit_criteria: list[str] = []
+
+    channel_space = manifold_evaluation.channel_semantics.space
+    error_count = sum(1 for v in manifold_evaluation.result.violations if getattr(v, "severity", None) == "error")
+    warning_count = sum(1 for v in manifold_evaluation.result.violations if getattr(v, "severity", None) == "warning")
+
+    if manifold_evaluation.is_ruin:
+        blockers.append("ruin_node_active")
+        required_exit_criteria.append("Resolve or explicitly escalate active ruin node.")
+    if channel_space == "ruin" and governor_decision.decision in {"warn", "ruin"}:
+        blockers.append("red_boundary_active")
+        required_exit_criteria.append("Red boundary must be released by explicit re-evaluation or reframe.")
+    if error_count > 0:
+        blockers.append("constraint_contradiction")
+        required_exit_criteria.append("Clear hard constraint violations or retessellate the hypothesis space.")
+    if warning_count > 0:
+        required_exit_criteria.append("Review warning-level evidence before commitment.")
+
+    if governance_metrics is not None:
+        if governance_metrics.contradiction_density >= 0.35:
+            blockers.append("contradiction_density_high")
+            required_exit_criteria.append("Add a discriminator targeting the contradiction cluster.")
+        if governance_metrics.top_margin < 0.08 and governance_metrics.posterior_entropy_norm > 0.6:
+            blockers.append("posterior_margin_collapse")
+            required_exit_criteria.append("Hold plurality until posterior margin improves or denominator is rebuilt.")
+
+    if governance_decision is not None:
+        if governance_decision.posture in {"red_override", "anti_stall", "zeroback"}:
+            blockers.append(f"governance_{governance_decision.posture}")
+            required_exit_criteria.append(f"Complete recommended governance action: {governance_decision.recommended_action}.")
+        elif governance_decision.posture == "mixture_mode":
+            blockers.append("mixture_mode")
+            required_exit_criteria.append("Run abductive discriminator before collapse.")
+
+    blockers = list(dict.fromkeys(blockers))
+    required_exit_criteria = list(dict.fromkeys(required_exit_criteria))
+    blocked = bool(blockers)
+
+    return {
+        "name": "STILL",
+        "purpose": "Stability and termination interlock before final answer collapse.",
+        "finalization_permitted": not blocked,
+        "status": "blocked" if blocked else "clear",
+        "finalization_blockers": blockers,
+        "required_exit_criteria": required_exit_criteria,
+        "next_allowed_move": _still_next_move(blockers, governance_decision),
+        "rationale": "Do not finalize while live hazards, contradictions, denominator collapse, or wrong-manifold risk remain.",
+    }
+
+
+def _still_next_move(
+    blockers: list[str],
+    governance_decision: Optional[GovernanceDecision],
+) -> str:
+    if not blockers:
+        return "finalize_with_audit"
+    if governance_decision is not None and governance_decision.recommended_action:
+        return governance_decision.recommended_action
+    if "posterior_margin_collapse" in blockers:
+        return "retessellate"
+    if "contradiction_density_high" in blockers or "constraint_contradiction" in blockers:
+        return "request_discriminator"
+    if "red_boundary_active" in blockers or "ruin_node_active" in blockers:
+        return "escalate_or_reframe"
+    return "hold"
 
 
 __all__ = [

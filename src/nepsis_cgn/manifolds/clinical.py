@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from ..core.constraints import CGNState, Constraint, ConstraintSet, ConstraintViolation
 from ..core.interpretant import (
+    RUIN_CHANNEL,
+    UTILITY_CHANNEL,
     InterpretantHypothesis,
     InterpretantManager,
     Manifold,
@@ -228,6 +230,7 @@ class RadicularSpasmManifold(Manifold[ClinicalState]):
             ],
             seeds={"red_flags": ["saddle_anesthesia", "bladder_dysfunction", "bilateral_weakness"]},
             success_signatures=["spasm_breakthrough"],
+            channel_semantics=UTILITY_CHANNEL,
         )
 
     def project_state(self, sign: ClinicalSign) -> ClinicalState:
@@ -251,6 +254,7 @@ class CaudaEquinaManifold(Manifold[ClinicalState]):
             ],
             seeds={"red_flags": ["saddle_anesthesia", "bladder_dysfunction", "bilateral_weakness"]},
             success_signatures=["red_channel_engaged"],
+            channel_semantics=RUIN_CHANNEL,
         )
 
     def project_state(self, sign: ClinicalSign) -> ClinicalState:

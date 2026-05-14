@@ -4,6 +4,7 @@ export const NEPSIS_USER_COOKIE = "nepsis_user";
 export const NEPSIS_LOGIN_CHALLENGE_COOKIE = "nepsis_login_challenge";
 export const LOGIN_CODE_TTL_SECONDS = 10 * 60;
 export const LOGIN_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const RESEND_REQUEST_TIMEOUT_MS = 8000;
 
 type LoginChallengePayload = {
   email: string;
@@ -15,6 +16,24 @@ type LoginCodeDelivery =
   | { delivery: "email" }
   | { delivery: "preview"; previewCode: string }
   | { delivery: "unavailable"; error: string };
+
+function envFlag(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function previewCodesAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" || envFlag("NEPSIS_AUTH_ALLOW_CODE_PREVIEW");
+}
+
+function isPlaceholderResendConfig(apiKey: string, from: string): boolean {
+  return (
+    apiKey === "re_xxxxxxxxxxxxx" ||
+    apiKey === "your_resend_api_key_here" ||
+    from.includes("auth@example.com") ||
+    from.includes("example.com")
+  );
+}
 
 function authSecret(): string {
   const configured = process.env.NEPSIS_AUTH_SECRET?.trim();
@@ -151,21 +170,37 @@ async function sendWithResend(email: string, code: string): Promise<boolean> {
   if (!resendApiKey || !from) {
     return false;
   }
+  if (isPlaceholderResendConfig(resendApiKey, from)) {
+    return false;
+  }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from,
-      to: [email],
-      subject: "Your NepsisCGN login code",
-      text: `Your NepsisCGN login code is ${code}. It expires in 10 minutes.`,
-      html: `<p>Your NepsisCGN login code is <strong>${code}</strong>.</p><p>This code expires in 10 minutes.</p>`,
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RESEND_REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [email],
+        subject: "Your NepsisCGN login code",
+        text: `Your NepsisCGN login code is ${code}. It expires in 10 minutes.`,
+        html: `<p>Your NepsisCGN login code is <strong>${code}</strong>.</p><p>This code expires in 10 minutes.</p>`,
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if ((error as Error)?.name === "AbortError") {
+      throw new Error("Email provider request timed out.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`Email provider rejected request (${response.status}).`);
@@ -174,29 +209,27 @@ async function sendWithResend(email: string, code: string): Promise<boolean> {
 }
 
 export async function deliverLoginCode(email: string, code: string): Promise<LoginCodeDelivery> {
+  let deliveryError: string | null = null;
   try {
     if (await sendWithResend(email, code)) {
       return { delivery: "email" };
     }
   } catch (error) {
-    if (process.env.NODE_ENV === "production") {
-      return {
-        delivery: "unavailable",
-        error: (error as Error)?.message ?? "Login email delivery failed.",
-      };
-    }
+    deliveryError = (error as Error)?.message ?? "Login email delivery failed.";
   }
 
-  const allowPreview =
-    process.env.NODE_ENV !== "production" || process.env.NEPSIS_AUTH_ALLOW_CODE_PREVIEW === "true";
-  if (allowPreview) {
+  if (previewCodesAllowed()) {
+    if (deliveryError) {
+      console.warn(`Nepsis login email unavailable for ${email}: ${deliveryError}`);
+    }
     console.log(`Nepsis login code for ${email}: ${code}`);
     return { delivery: "preview", previewCode: code };
   }
 
   return {
     delivery: "unavailable",
-    error:
-      "Login email delivery is not configured. Set RESEND_API_KEY and NEPSIS_AUTH_FROM_EMAIL, or enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW for preview-only testing.",
+    error: deliveryError
+      ? `${deliveryError} Enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true for preview-only testing without email delivery.`
+      : "Login email delivery is not configured. Set RESEND_API_KEY and NEPSIS_AUTH_FROM_EMAIL, or enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true for preview-only testing.",
   };
 }

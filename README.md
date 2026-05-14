@@ -1,7 +1,7 @@
 NepsisCGN v0.3
 ================
 
-NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces a three-step protocol—Triage → Projection → Validation—with a ZeroBack repair loop and explicit red/blue channels. This repository includes reference manifolds, an LLM provider registry, and a CLI for quick runs.
+NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces a three-step protocol—Triage → Projection → Validation—with a ZeroBack repair loop and explicit red/blue channels. In the runtime model, Red and Blue are treated as distinct decision spaces with different invariants, not as one risk surface with different thresholds. This repository includes reference manifolds, an LLM provider registry, and a CLI for quick runs.
 
 Current Working State (2026-03-17)
 ----------------------------------
@@ -63,7 +63,27 @@ LLM Provider Registry
 
 Tests
 -----
-Run `pytest -q` (current suite covers word-game, UTF-8 hidden/stream, seed manifold, deviance monitor, and gravity manifold).
+Run `.venv/bin/python -m pytest -q` from this checkout. The system `python3` is not sufficient here because the project requires Python >=3.11 and the package is installed in `.venv`.
+
+MVP Demo Packet
+---------------
+The smallest deterministic MVP proof is exposed through CLI, API, and the local Next UI. It emits a canonical packet showing RED Channel -> STILL checkpoint -> BLUE Channel -> contradiction/retessellation -> STILL checkpoint -> commitment -> state feedback -> audit packet.
+
+CLI:
+- `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing`
+- `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case clinical`
+
+API:
+- Start: `NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787`
+- Run: `curl -s -X POST http://127.0.0.1:8787/v1/mvp -H 'Content-Type: application/json' -d '{"case_id":"jailing"}'`
+
+Clickable UI:
+1. Start the backend: `NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787`
+2. Start the web app: `cd nepsis-web && npm run dev`
+3. Open `http://localhost:3000/mvp`
+4. Choose `Jailing` or `Clinical`, then click `Run Demo`.
+
+Canonical packet fields include `case_id`, `input_text`, `observations`, `constraints`, `red_channel`, `still.checkpoints`, `blue_channel`, `contradiction_monitor`, `denominator_collapse`, `voronoi_commitment`, `non_quiescence`, `zeroback`, `state_feedback`, `audit_trace`, and `final_output`. `state_feedback` declares the active frame, predicted next state, failure conditions, and loop decision for the next observation; it is deterministic MVP scaffolding, not a runtime feedback engine. Runtime `nepsis.iteration_packet` output also includes `still` as the finalization interlock for session/API runs.
 
 Notes
 -----
@@ -108,7 +128,7 @@ Install deps (ensure `pyyaml` is present) and run:
 Backend API (Engine Sessions)
 -----------------------------
 Run local backend API server:
-- `nepsiscgn-api --host 127.0.0.1 --port 8787`
+- `NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787`
 
 Endpoints:
 - `POST /v1/sessions` create session (`family`: `puzzle|clinical|safety`, optional `governance`, `frame`)

@@ -36,6 +36,19 @@ from .frame import (
 from .packet import (
     build_iteration_packet,
 )
+from .mvp import (
+    MVP_PACKET_SCHEMA_ID,
+    MVP_PACKET_SCHEMA_VERSION,
+    build_nepsis_mvp_packet,
+)
+from .still import (
+    StillReadiness,
+    build_still_pathway,
+)
+from .state_feedback import (
+    LoopDecisionStatus,
+    build_state_feedback,
+)
 from .runtime import (
     build_navigation_controller,
     default_manifest_path,
@@ -60,15 +73,20 @@ from .governance import (
     sigmoid,
 )
 from .interpretant import (
+    ChannelSpace,
+    ChannelSemantics,
+    EXPLORATORY_CHANNEL,
     InterpretantHypothesis,
     InterpretantManager,
     Manifold,
     ManifoldEvaluation,
     PhoneticVariantManifold,
+    RUIN_CHANNEL,
     RuinNode,
     Sign,
     StrictSetManifold,
     TransformationRule,
+    UTILITY_CHANNEL,
     WordPuzzleManifold,
     WordPuzzleSign,
     demo_jailing_vs_jingall,
@@ -105,6 +123,9 @@ __all__ = [
     "GovernorConfig",
     "GovernorDecision",
     "GovernorState",
+    "ChannelSemantics",
+    "ChannelSpace",
+    "EXPLORATORY_CHANNEL",
     "InterpretantHypothesis",
     "InterpretantManager",
     "InterpretantSpec",
@@ -116,12 +137,14 @@ __all__ = [
     "NavigationController",
     "NavigationTraceEntry",
     "PhoneticVariantManifold",
+    "RUIN_CHANNEL",
     "RuinNode",
     "Sign",
     "SolverResult",
     "StrictSetManifold",
     "TransformationRule",
     "TensionMetrics",
+    "UTILITY_CHANNEL",
     "build_governor_configs",
     "build_interpretants_from_spec",
     "load_manifest_spec",
@@ -167,6 +190,13 @@ __all__ = [
     "ObjectiveType",
     "infer_frame_from_sign",
     "build_iteration_packet",
+    "MVP_PACKET_SCHEMA_ID",
+    "MVP_PACKET_SCHEMA_VERSION",
+    "build_nepsis_mvp_packet",
+    "StillReadiness",
+    "build_still_pathway",
+    "LoopDecisionStatus",
+    "build_state_feedback",
     "build_navigation_controller",
     "default_manifest_path",
 ]

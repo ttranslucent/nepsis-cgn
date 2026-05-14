@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from ..core import (
     GovernanceCosts,
     NavigationController,
+    build_nepsis_mvp_packet,
 )
 from ..core.interpretant import WordPuzzleSign
 from ..core.runtime import build_navigation_controller
@@ -168,6 +169,19 @@ def run_safety(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_mvp(args: argparse.Namespace) -> int:
+    packet = build_nepsis_mvp_packet(case_id=args.case, input_text=args.input_text)
+    if args.json:
+        print(json.dumps(packet))
+        return 0
+
+    print(f"case_id={packet['case_id']}")
+    print(f"red_escalation_required={packet['red_channel']['escalation_required']}")
+    print(f"retessellation_required={packet['denominator_collapse']['retessellation_required']}")
+    print(f"recommendation={packet['final_output']['concise_recommendation']}")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="nepsiscgn", description="Nepsis Constraint Geometry Navigator")
     parser.add_argument(
@@ -241,6 +255,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_safety.add_argument("--policy-violation", action="store_true", help="Policy violation detected.")
     p_safety.add_argument("--notes", help="Context notes.", default=None)
     p_safety.set_defaults(func=run_safety)
+
+    p_mvp = subparsers.add_parser("mvp", help="Emit canonical NepsisCGN MVP packet.")
+    p_mvp.add_argument(
+        "--case",
+        choices=["jailing", "clinical"],
+        default="jailing",
+        help="Canonical demo case to run.",
+    )
+    p_mvp.add_argument(
+        "--input-text",
+        default=None,
+        help="Optional scenario text. Defaults to the selected canonical demo.",
+    )
+    p_mvp.set_defaults(func=run_mvp)
 
     args = parser.parse_args(argv)
     return args.func(args)

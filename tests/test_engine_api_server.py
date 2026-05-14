@@ -39,6 +39,7 @@ def test_route_manifest_contains_routes_endpoint() -> None:
     routes = route_manifest()
     assert any(r["path"] == "/v1/routes" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/openapi.json" and r["method"] == "GET" for r in routes)
+    assert any(r["path"] == "/v1/mvp" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/step" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/stage-audit" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/stage-audit" and r["method"] == "POST" for r in routes)
@@ -144,6 +145,8 @@ def test_openapi_spec_contains_route_paths() -> None:
     assert spec["openapi"] == "3.1.0"
     assert "/v1/sessions" in spec["paths"]
     assert "get" in spec["paths"]["/v1/sessions"]
+    assert "/v1/mvp" in spec["paths"]
+    assert "post" in spec["paths"]["/v1/mvp"]
     assert "/v1/sessions/{session_id}/stage-audit" in spec["paths"]
     assert "get" in spec["paths"]["/v1/sessions/{session_id}/stage-audit"]
     assert "post" in spec["paths"]["/v1/sessions/{session_id}/stage-audit"]
@@ -198,6 +201,19 @@ def test_stage_audit_post_handler_accepts_context_payload(monkeypatch) -> None:
     assert result["interpretation"]["status"] == "PASS"
     assert result["threshold"]["status"] == "PASS"
     assert result["source"]["context_applied"] is True
+
+
+def test_mvp_post_handler_emits_canonical_packet() -> None:
+    result = api_server.EngineApiHandler._run_mvp(
+        object(),
+        {
+            "case_id": "jailing",
+            "input_text": "The source says JINGALL but candidate says JAILING.",
+        },
+    )
+    assert result["schema_id"] == "nepsis.mvp_packet"
+    assert result["red_channel"]["escalation_required"] is True
+    assert result["denominator_collapse"]["retessellation_required"] is True
 
 
 def test_stage_audit_post_handler_rejects_non_object_context(monkeypatch) -> None:

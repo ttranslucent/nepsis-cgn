@@ -19,14 +19,22 @@ families:
     manifolds:
       - id: radicular_spasm
         class: radicular_spasm
-        description: "Blue-channel radicular pain with spasm; red flags are ruin."
+        description: "Blue utility space for radicular pain with spasm; red flags remain boundary conditions."
+        channel_space: utility
+        channel_invariants:
+          - "Optimize coherence and expected utility only while red boundaries are controlled."
+          - "Preserve graded uncertainty until a discriminator supports closure."
         governor:
           tension_warn: 1.0
           tension_ruin: 2.0
           velocity_shock: 3.0
       - id: cauda_equina
         class: cauda_equina
-        description: "Red-channel cauda equina manifold; red flags expected."
+        description: "Red ruin space for cauda equina; catastrophic miss is treated as a boundary, not a tradeoff."
+        channel_space: ruin
+        channel_invariants:
+          - "Catastrophic miss is a boundary condition, not a utility term."
+          - "Escalate or hold until explicit release back to the blue utility space."
         governor:
           tension_warn: 0.5
           tension_ruin: 1.5
@@ -35,14 +43,22 @@ families:
     manifolds:
       - id: blue_channel
         class: blue_channel
-        description: "Routine blue channel; no critical signals."
+        description: "Routine blue utility space for graded action under bounded risk."
+        channel_space: utility
+        channel_invariants:
+          - "Optimize utility only while catastrophic boundaries remain controlled."
+          - "Do not force closure when contradictions still need discrimination."
         governor:
           tension_warn: 1.0
           tension_ruin: 2.0
           velocity_shock: 4.0
       - id: red_channel
         class: red_channel
-        description: "Red channel for critical signals; policy violation is ruin."
+        description: "Red ruin space for critical signals; policy violation defines a boundary condition."
+        channel_space: ruin
+        channel_invariants:
+          - "Policy-violation ruin is a boundary, not a utility penalty."
+          - "Release back to blue requires explicit re-evaluation or reframe."
         governor:
           tension_warn: 0.5
           tension_ruin: 1.0
@@ -80,5 +96,5 @@ interpretants:
     manifold_id: red_channel
     prior: 0.4
     likelihood:
-      keyword: urgent
+      keywords: ["critical_signal", "urgent"]
       boost: 2.0

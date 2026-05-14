@@ -88,6 +88,40 @@ def test_packet_includes_override_and_carry_forward() -> None:
     assert "Need one more real-world check" in packet["governance"]["override_reason"]
 
 
+def test_packet_includes_channel_semantics() -> None:
+    manager = InterpretantManager(build_red_blue_hypotheses())
+    nav = NavigationController(manager, emit_iteration_packet=True)
+
+    entry = nav.step(SafetySign(critical_signal=False, policy_violation=False))
+    assert entry.iteration_packet is not None
+    packet = entry.iteration_packet
+
+    assert packet["manifold"]["channel"]["space"] == "utility"
+    assert packet["manifold"]["channel"]["label"] == "Blue channel"
+    assert packet["manifold"]["channel"]["decision_mode"] == "graded"
+    assert entry.trace_metadata["channel_space"] == "utility"
+    assert entry.trace_metadata["channel_mode"] == "graded"
+
+
+def test_packet_includes_still_gate_for_runtime_finalization() -> None:
+    manager = InterpretantManager(build_red_blue_hypotheses())
+    nav = NavigationController(
+        manager,
+        emit_iteration_packet=True,
+        governance_costs=GovernanceCosts(c_fp=1.0, c_fn=9.0),
+    )
+
+    entry = nav.step(SafetySign(critical_signal=True, policy_violation=False))
+    assert entry.iteration_packet is not None
+    packet = entry.iteration_packet
+
+    assert packet["still"]["name"] == "STILL"
+    assert packet["still"]["status"] == "blocked"
+    assert packet["still"]["finalization_permitted"] is False
+    assert "governance_red_override" in packet["still"]["finalization_blockers"]
+    assert packet["still"]["next_allowed_move"] == "escalate_red"
+
+
 def test_stop_decision_prevents_commit_transition() -> None:
     manager = InterpretantManager(build_red_blue_hypotheses())
     nav = NavigationController(

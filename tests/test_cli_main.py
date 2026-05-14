@@ -25,6 +25,17 @@ def test_cli_safety_json(capsys) -> None:
     assert "tension" in payload
 
 
+def test_cli_mvp_json_emits_canonical_packet(capsys) -> None:
+    code = main(["--json", "mvp", "--case", "jailing"])
+    assert code == 0
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+    assert payload["schema_id"] == "nepsis.mvp_packet"
+    assert payload["case_id"] == "jailing"
+    assert payload["red_channel"]["escalation_required"] is True
+    assert payload["denominator_collapse"]["retessellation_required"] is True
+
+
 def test_cli_safety_json_with_governance(capsys) -> None:
     code = main(["--json", "--c-fp", "1", "--c-fn", "9", "safety", "--critical-signal"])
     assert code == 0

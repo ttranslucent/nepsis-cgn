@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { getStoredOpenAiKey } from "@/lib/clientStorage";
+
 type PackOption = {
   id: "jailing_jingall" | "utf8_clean";
   label: string;
@@ -41,14 +43,19 @@ export default function PlaygroundPage() {
     }
 
     try {
+      const apiKey = getStoredOpenAiKey();
       const res = await fetch("/api/playground-nepsis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, packId }),
+        body: JSON.stringify({
+          prompt,
+          packId,
+          apiKey: apiKey ?? undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Run failed.");
+        setError(data.detail || data.error || "Run failed.");
         return;
       }
       setRawOutput(data.rawOutput ?? "");

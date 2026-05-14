@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { openai } from "@/lib/openaiClient";
+import {
+  DEFAULT_OPENAI_MODEL,
+  createOpenAiClient,
+  extractOpenAiText,
+} from "@/lib/openaiClient";
 import { buildProtoStateFromOutput, extractJingallCandidate, letterDelta } from "@/lib/protoPuzzleFromLlm";
 import { evaluateProtoPuzzleTs, type ProtoEvaluation } from "@/lib/protoPuzzle";
 
@@ -10,41 +14,9 @@ const PLAYGROUND_PACKS = new Set(["jailing_jingall", "utf8_clean"]);
 type PlaygroundRequest = {
   prompt?: string;
   packId?: string;
+  apiKey?: string;
+  model?: string;
 };
-
-function extractText(payload: Record<string, unknown> | null | undefined): string {
-  if (!payload) {
-    return "";
-  }
-
-  const outputText = payload["output_text"];
-  if (typeof outputText === "string") {
-    return outputText;
-  }
-  if (Array.isArray(outputText)) {
-    return outputText.join("\n\n");
-  }
-
-  const output = payload["output"];
-  if (Array.isArray(output) && output.length > 0) {
-    const first = output[0] as Record<string, unknown>;
-    const content = first?.["content"];
-    if (Array.isArray(content)) {
-      const textChunk = content.find((chunk) => typeof (chunk as { text?: string }).text === "string") as
-        | { text: string }
-        | undefined;
-      if (textChunk?.text) {
-        return textChunk.text;
-      }
-    }
-  }
-
-  if (typeof payload["text"] === "string") {
-    return payload["text"] as string;
-  }
-
-  return "";
-}
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -52,7 +24,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { prompt, packId } = body as PlaygroundRequest;
+  const { prompt, packId, apiKey, model } = body as PlaygroundRequest;
 
   if (!prompt || typeof prompt !== "string") {
     return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
@@ -63,12 +35,12 @@ export async function POST(req: Request) {
   }
 
   try {
-    const completion = await openai.responses.create({
-      model: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    const completion = await createOpenAiClient(apiKey).responses.create({
+      model: typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL,
       input: prompt,
     });
 
-    const rawOutput = extractText(completion) || "";
+    const rawOutput = extractOpenAiText(completion) || "";
     const state = buildProtoStateFromOutput(packId, rawOutput);
     const evaluation = await evaluateProtoPuzzleTs(packId, state);
     const enrichedEvaluation =

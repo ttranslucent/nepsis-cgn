@@ -8,7 +8,7 @@ Nepsis Web
 1. Start the Nepsis backend API from the repo root:
 
 ```bash
-nepsiscgn-api --host 127.0.0.1 --port 8787
+NEPSIS_API_ALLOW_ANON=true .venv/bin/python -m nepsis_cgn.api.server --host 127.0.0.1 --port 8787
 ```
 
 2. In this directory, copy the example env file and adjust any local overrides:
@@ -25,6 +25,7 @@ npm run dev
 ```
 
 4. Open [http://localhost:3000](http://localhost:3000).
+5. Open [http://localhost:3000/mvp](http://localhost:3000/mvp), choose `Jailing` or `Clinical`, and click `Run Demo`.
 
 Development defaults:
 
@@ -38,6 +39,7 @@ The web app exposes these backend proxy routes:
 - `GET /api/engine/health`
 - `GET /api/engine/routes`
 - `GET /api/engine/openapi`
+- `POST /api/engine/mvp`
 - `POST /api/engine/sessions`
 - `GET /api/engine/sessions`
 - `GET /api/engine/sessions/:sessionId`
@@ -67,7 +69,9 @@ Passwordless auth:
 - `NEPSIS_AUTH_SECRET`: Required in production. Cookie-signing secret for login challenge and user session cookies.
 - `RESEND_API_KEY`: Required if the deployment should send real login emails.
 - `NEPSIS_AUTH_FROM_EMAIL`: Required with `RESEND_API_KEY`. Verified sender identity for login emails.
-- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional preview-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable.
+- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional local/preview-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable. Keep this disabled in production.
+
+For local login without email, leave `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` blank and set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true`. The `/login` page will show the one-time code after `Send code`.
 
 OpenAI-backed playground routes:
 
@@ -87,7 +91,7 @@ Production behavior is intentionally strict:
 
 - If `NEPSIS_API_BASE_URL` is missing, `/api/engine/*` returns `503` and `/engine` shows `Engine backend not configured`.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
-- If email delivery is not configured, `/login` tells the operator which auth env vars are missing instead of claiming an email was sent.
+- If email delivery is not configured, `/login` either shows a preview code when preview is enabled or tells the operator which auth env vars are missing.
 
 Recommended deployment sequence:
 

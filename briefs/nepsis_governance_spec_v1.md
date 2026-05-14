@@ -8,8 +8,8 @@ Applies to: `nepsis_cgn` runtime sidecar and UI loop
 
 Nepsis governs reasoning under asymmetric loss by keeping two mandates separate:
 
-- Blue mandate: maximize coherence and expected utility under modeled conditions.
-- Red mandate: minimize catastrophic regret under uncertainty.
+- Blue mandate: operate inside a utility/coherence space with graded uncertainty and reversible optimization.
+- Red mandate: operate inside a ruin/boundary space where catastrophic miss is treated as a constraint, not a tradeoff.
 
 Nepsis is advisory-first in v1: warnings can block by default in UI, but users may continue with explicit override rationale.
 
@@ -36,6 +36,7 @@ Single packet emitted per loop:
 - `posterior_window`: weights, metrics, recommendation
 - `governance`: warning, triggers, user decision, overrides
 - `carry_forward`: explicit persistence policy for next iteration
+- `manifold.channel`: explicit channel semantics (`utility|ruin|exploratory`) and invariants
 
 ### 2.3 CanonicalRecord (audit)
 
@@ -119,8 +120,10 @@ Nepsis computes calibrated risk:
 
 Do not merge into one scalar objective:
 
-- Blue policy selects utility/coherence actions.
-- Red policy gates catastrophic exposure.
+- Blue is a utility manifold, not just a lower threshold.
+- Red is a ruin manifold, not just a steeper threshold.
+- Blue policy selects graded utility/coherence actions after red boundaries are controlled.
+- Red policy enforces catastrophic boundaries and may block recommendation until explicit release/reframe.
 - Arbitration combines policies into final recommendation and warning level.
 
 ## 6) Governance Postures

@@ -1,4 +1,5 @@
 export type EngineFamily = "puzzle" | "clinical" | "safety";
+export type NepsisMvpCaseId = "jailing" | "clinical";
 
 export type EngineRoute = {
   method: string;
@@ -186,6 +187,137 @@ export type EnginePacketResponse = {
   packets: Record<string, unknown>[];
 };
 
+export type NepsisMvpAuditEvent = {
+  order: number;
+  stage: string;
+  summary: string;
+};
+
+export type NepsisMvpStillCheckpoint = {
+  name: string;
+  position: string;
+  trigger_status: string;
+  reason: string;
+  required_before_commitment: string[];
+};
+
+export type NepsisMvpStill = {
+  name: string;
+  definition: string;
+  checkpoints: NepsisMvpStillCheckpoint[];
+  commitment_readiness: {
+    status: "ready" | "hold" | "retessellate" | "zeroback";
+    rationale: string;
+  };
+  learning_notes: string[];
+  audit_events: NepsisMvpAuditEvent[];
+};
+
+export type NepsisMvpStateFeedback = {
+  current_state: {
+    timestamp_or_phase: string;
+    active_frame: string;
+    active_constraints: string[];
+    active_hazards: string[];
+    current_commitment: string;
+    uncertainty_level: string;
+  };
+  predicted_next_state: {
+    expected_time_window: string;
+    expected_changes: string[];
+    expected_discriminators: string[];
+    expected_resolution_signs: string[];
+    failure_conditions: string[];
+  };
+  observed_next_state: {
+    status: "not_observed_in_mvp";
+    placeholder_reason: string;
+  };
+  delta_analysis: {
+    matches_prediction: "pending";
+    contradiction_delta: "pending";
+    confidence_delta: "pending";
+    reason: string;
+  };
+  loop_decision: {
+    status: "continue" | "hold" | "retessellate" | "zeroback" | "pending_observation";
+    rationale: string;
+    next_observation_required: string;
+  };
+  audit_events: string[];
+};
+
+export type NepsisMvpPacket = {
+  schema_id: string;
+  schema_version: string;
+  packet_id: string;
+  created_at: string;
+  case_id: NepsisMvpCaseId;
+  input_text: string;
+  observations: string[];
+  constraints: string[];
+  red_channel: {
+    active_hazards: Record<string, unknown>[];
+    ruled_out_hazards: Record<string, unknown>[];
+    missing_discriminators: string[];
+    escalation_required: boolean;
+    rationale: string;
+  };
+  blue_channel: {
+    hypotheses: Array<{
+      id: string;
+      label: string;
+      likelihood: string;
+      supporting_features: string[];
+      contradicting_features: string[];
+      needed_discriminators: string[];
+      action_threshold: string;
+    }>;
+    weights: Record<string, string>;
+    supporting_features: string[];
+    contradicting_features: string[];
+    needed_discriminators: string[];
+  };
+  contradiction_monitor: {
+    contradictions: Record<string, unknown>[];
+    contradiction_density: number;
+    stability_status: string;
+  };
+  denominator_collapse: {
+    detected: boolean;
+    missing_hypothesis_classes: string[];
+    retessellation_required: boolean;
+  };
+  voronoi_commitment: {
+    recommended_action: string;
+    threshold_basis: string;
+    consequence_weighting: string;
+  };
+  non_quiescence: {
+    wrong_manifold_possible: boolean;
+    reason: string;
+    next_required_move: string;
+  };
+  still: NepsisMvpStill;
+  zeroback: {
+    triggered: boolean;
+    reason: string;
+    reset_scope: string;
+  };
+  state_feedback: NepsisMvpStateFeedback;
+  audit_trace: NepsisMvpAuditEvent[];
+  final_output: {
+    concise_recommendation: string;
+    caveats: string[];
+    required_next_discriminators: string[];
+  };
+};
+
+export type NepsisMvpPayload = {
+  case_id: NepsisMvpCaseId;
+  input_text?: string;
+};
+
 export type EngineDeleteSessionResponse = {
   deleted: true;
   session_id: string;
@@ -310,5 +442,9 @@ export const engineClient = {
       `/sessions/${encodeURIComponent(sessionId)}/stage-audit`,
       { method: "GET" },
     );
+  },
+
+  runMvp(payload: NepsisMvpPayload): Promise<NepsisMvpPacket> {
+    return requestEngine<NepsisMvpPacket>("/mvp", jsonRequest("POST", payload));
   },
 };

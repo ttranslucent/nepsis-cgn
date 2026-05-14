@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from ..core.constraints import CGNState, Constraint, ConstraintSet, ConstraintViolation
 from ..core.interpretant import (
+    RUIN_CHANNEL,
+    UTILITY_CHANNEL,
     InterpretantHypothesis,
     InterpretantManager,
     Manifold,
@@ -141,6 +143,7 @@ class BlueChannelManifold(Manifold[SafetyState]):
             transformation_rules=[],
             seeds={"channel": "blue"},
             success_signatures=["routine_clearance"],
+            channel_semantics=UTILITY_CHANNEL,
         )
 
     def project_state(self, sign: SafetySign) -> SafetyState:
@@ -164,6 +167,7 @@ class RedChannelManifold(Manifold[SafetyState]):
             transformation_rules=[],
             seeds={"channel": "red"},
             success_signatures=["escalation_active"],
+            channel_semantics=RUIN_CHANNEL,
         )
 
     def project_state(self, sign: SafetySign) -> SafetyState:

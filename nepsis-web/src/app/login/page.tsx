@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 
 export default function LoginPage() {
   const [step, setStep] = useState<"email" | "code">("email");
@@ -9,8 +9,12 @@ export default function LoginPage() {
   const [delivery, setDelivery] = useState<"email" | "preview" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const trimmedEmail = email.trim();
 
   async function sendCode() {
+    if (!trimmedEmail) {
+      return;
+    }
     setLoading(true);
     setMessage(null);
     setDelivery(null);
@@ -18,10 +22,11 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: trimmedEmail }),
       });
       const data = await res.json();
       if (res.ok) {
+        setEmail(trimmedEmail);
         setStep("code");
         setDelivery(data.delivery === "preview" ? "preview" : "email");
         if (data.delivery === "preview" && typeof data.previewCode === "string") {
@@ -66,6 +71,16 @@ export default function LoginPage() {
     }
   }
 
+  function handleEmailSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendCode();
+  }
+
+  function handleCodeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void verifyCode();
+  }
+
   return (
     <div className="flex items-center justify-center py-16">
       <div className="w-full max-w-sm rounded-xl border border-nepsis-border bg-nepsis-panel p-6 shadow-2xl shadow-black/40">
@@ -76,7 +91,7 @@ export default function LoginPage() {
         </p>
 
         {step === "email" ? (
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={handleEmailSubmit}>
             <div>
               <label className="mb-1 block text-xs">Email</label>
               <input
@@ -88,15 +103,15 @@ export default function LoginPage() {
               />
             </div>
             <button
-              disabled={loading || !email}
-              onClick={sendCode}
+              type="submit"
+              disabled={loading || !trimmedEmail}
               className="w-full rounded-full bg-nepsis-accent py-2 text-sm font-medium text-black transition hover:bg-nepsis-accentSoft disabled:opacity-60"
             >
               {loading ? "Sending..." : "Send code"}
             </button>
-          </div>
+          </form>
         ) : (
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={handleCodeSubmit}>
             <p className="text-xs text-nepsis-muted">
               {delivery === "preview" ? "Use the preview code for" : "We’ve sent a code to"}{" "}
               <span className="font-mono">{email}</span>.
@@ -108,11 +123,13 @@ export default function LoginPage() {
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 placeholder="123456"
+                inputMode="numeric"
+                maxLength={6}
               />
             </div>
             <button
-              disabled={loading || code.length === 0}
-              onClick={verifyCode}
+              type="submit"
+              disabled={loading || code.trim().length === 0}
               className="w-full rounded-full bg-nepsis-accent py-2 text-sm font-medium text-black transition hover:bg-nepsis-accentSoft disabled:opacity-60"
             >
               {loading ? "Verifying..." : "Verify & continue"}
@@ -129,7 +146,7 @@ export default function LoginPage() {
             >
               Use a different email
             </button>
-          </div>
+          </form>
         )}
 
         {message && (

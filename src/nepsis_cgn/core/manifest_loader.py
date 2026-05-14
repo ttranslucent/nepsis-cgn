@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .governor import GovernorConfig
 from .interpretant import (
@@ -28,6 +28,8 @@ class ManifoldEntry:
     id: str
     family: str
     description: Optional[str] = None
+    channel_space: Optional[str] = None
+    channel_invariants: Tuple[str, ...] = ()
     governor_overrides: Dict[str, float] = field(default_factory=dict)
 
 
@@ -83,6 +85,8 @@ def load_manifest_spec(path: str) -> ManifestSpec:
                 id=mid,
                 family=str(family),
                 description=entry.get("description"),
+                channel_space=str(entry.get("channel_space")) if entry.get("channel_space") is not None else None,
+                channel_invariants=tuple(str(item) for item in (entry.get("channel_invariants") or [])),
                 governor_overrides=dict(entry.get("governor", {})),
             )
 

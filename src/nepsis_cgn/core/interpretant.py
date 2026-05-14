@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Generic, List, Mapping, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Literal, Mapping, Optional, Sequence, Tuple, TypeVar
 
 from .constraints import CGNState, ConstraintSet
 from .solver import CGNSolver, SolverResult
@@ -15,6 +15,78 @@ from ..puzzles.word_game import (
 
 StateT = TypeVar("StateT", bound=CGNState)
 SignT = TypeVar("SignT")
+ChannelSpace = Literal["exploratory", "utility", "ruin"]
+DecisionMode = Literal["search", "graded", "boundary"]
+
+
+@dataclass(frozen=True)
+class ChannelSemantics:
+    """
+    Red/Blue semantics are topology, not a threshold preset.
+
+    - utility: graded decisions inside a bounded-risk space
+    - ruin: boundary protection against catastrophic miss
+    - exploratory: protected plurality while the system is still searching
+    """
+
+    space: ChannelSpace
+    label: str
+    description: str
+    decision_mode: DecisionMode
+    closure_rule: str
+    memory_rule: str
+    invariants: Tuple[str, ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "space": self.space,
+            "label": self.label,
+            "description": self.description,
+            "decision_mode": self.decision_mode,
+            "closure_rule": self.closure_rule,
+            "memory_rule": self.memory_rule,
+            "invariants": list(self.invariants),
+        }
+
+
+EXPLORATORY_CHANNEL = ChannelSemantics(
+    space="exploratory",
+    label="Exploratory channel",
+    description="Search space that protects plurality while contradictions remain unresolved.",
+    decision_mode="search",
+    closure_rule="Seek discriminators before closure; avoid forced collapse under unresolved contradiction.",
+    memory_rule="Preserve plurality and carry forward contradiction structure across iterations.",
+    invariants=(
+        "Protected plurality is allowed when contradictions remain live.",
+        "Coherence is not completion; unresolved mismatch should trigger more search, not forced unification.",
+    ),
+)
+
+UTILITY_CHANNEL = ChannelSemantics(
+    space="utility",
+    label="Blue channel",
+    description="Utility/coherence space for graded decisions once ruin boundaries are controlled.",
+    decision_mode="graded",
+    closure_rule="Collapse is earned by discrimination, low contradiction, and controlled red-channel exposure.",
+    memory_rule="Preserve graded uncertainty; do not hard-latch on weak or partial evidence.",
+    invariants=(
+        "Optimize coherence and expected utility only inside bounded catastrophic risk.",
+        "Competing explanations may remain live until a discriminator resolves them.",
+    ),
+)
+
+RUIN_CHANNEL = ChannelSemantics(
+    space="ruin",
+    label="Red channel",
+    description="Boundary-protection space where catastrophic miss is treated as a constraint, not a tradeoff.",
+    decision_mode="boundary",
+    closure_rule="When the boundary is crossed, escalate or hold; release requires explicit re-evaluation or reframe.",
+    memory_rule="Use hysteresis or explicit release discipline before returning to utility optimization.",
+    invariants=(
+        "Catastrophic miss is a boundary condition, not a utility term.",
+        "Prefer protective friction over false-negative ruin when the boundary is near or crossed.",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +138,7 @@ class InterpretantHypothesis(Generic[SignT, StateT]):
 class ManifoldEvaluation(Generic[StateT]):
     manifold_id: str
     family: str
+    channel_semantics: ChannelSemantics
     state: StateT
     result: SolverResult
     is_ruin: bool
@@ -93,12 +166,14 @@ class Manifold(Generic[StateT]):
         transformation_rules: Optional[Sequence[TransformationRule[StateT]]] = None,
         seeds: Optional[Mapping[str, Any]] = None,
         success_signatures: Optional[Sequence[str]] = None,
+        channel_semantics: Optional[ChannelSemantics] = None,
     ):
         self.constraint_set = constraint_set
         self.ruin_nodes: List[RuinNode[StateT]] = list(ruin_nodes or [])
         self.transformation_rules: List[TransformationRule[StateT]] = list(transformation_rules or [])
         self.seeds: Dict[str, Any] = dict(seeds or {})
         self.success_signatures: List[str] = list(success_signatures or [])
+        self.channel_semantics = channel_semantics or EXPLORATORY_CHANNEL
         self._solver = CGNSolver(constraint_set=self.constraint_set)
 
     def project_state(self, sign: SignT) -> StateT:
@@ -118,6 +193,7 @@ class Manifold(Generic[StateT]):
         return ManifoldEvaluation(
             manifold_id=self.id,
             family=self.family,
+            channel_semantics=self.channel_semantics,
             state=transformed_state,
             result=result,
             is_ruin=bool(ruin_hits),
@@ -128,6 +204,7 @@ class Manifold(Generic[StateT]):
                 "success_signatures": self.success_signatures,
                 "constraint_set": self.constraint_set.name,
                 "constraint_count": len(self.constraint_set.constraints),
+                "channel": self.channel_semantics.to_dict(),
             },
         )
 
@@ -309,15 +386,21 @@ def demo_jailing_vs_jingall(candidate: str = "JAILING") -> Dict[str, Any]:
 
 
 __all__ = [
+    "ChannelSpace",
+    "ChannelSemantics",
+    "DecisionMode",
+    "EXPLORATORY_CHANNEL",
     "InterpretantHypothesis",
     "InterpretantManager",
     "Manifold",
     "ManifoldEvaluation",
     "PhoneticVariantManifold",
     "RuinNode",
+    "RUIN_CHANNEL",
     "Sign",
     "StrictSetManifold",
     "TransformationRule",
+    "UTILITY_CHANNEL",
     "WordPuzzleManifold",
     "WordPuzzleSign",
     "demo_jailing_vs_jingall",

@@ -44,8 +44,14 @@ export default function HomePage() {
 
           <div className="mt-6 flex flex-wrap gap-3">
             <a
-              href={primaryHref}
+              href="/mvp"
               className="rounded-full bg-nepsis-accent px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-nepsis-accentSoft"
+            >
+              Run MVP Demo
+            </a>
+            <a
+              href={primaryHref}
+              className="rounded-full border border-nepsis-border px-5 py-2.5 text-sm text-nepsis-text transition hover:border-nepsis-accent"
             >
               {primaryLabel}
             </a>

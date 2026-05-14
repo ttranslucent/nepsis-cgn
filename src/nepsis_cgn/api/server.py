@@ -15,6 +15,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from .service import EngineApiService
 
@@ -41,6 +42,7 @@ ROUTES = (
     {"method": "GET", "path": "/v1/health", "description": "Health check"},
     {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
     {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
+    {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
     {"method": "POST", "path": "/v1/sessions", "description": "Create engine session"},
     {"method": "GET", "path": "/v1/sessions", "description": "List sessions"},
     {"method": "DELETE", "path": "/v1/sessions", "description": "Purge old sessions by TTL"},
@@ -125,6 +127,10 @@ class EngineApiHandler(BaseHTTPRequestHandler):
 
         if path == "/v1/sessions":
             self._safe(lambda: self._create_session(body))
+            return
+
+        if path == "/v1/mvp":
+            self._safe(lambda: self._run_mvp(body))
             return
 
         m_step = re.fullmatch(r"/v1/sessions/([^/]+)/step", path)
@@ -223,6 +229,15 @@ class EngineApiHandler(BaseHTTPRequestHandler):
                 raise ValueError("stage-audit payload 'context' must be an object when provided")
             context = raw_context
         return API.stage_audit_session(session_id, context=context)
+
+    def _run_mvp(self, body: dict[str, Any]) -> dict[str, Any]:
+        case_id = body.get("case_id", body.get("case", "jailing"))
+        if case_id not in {"jailing", "clinical"}:
+            raise ValueError("case_id must be one of: jailing, clinical")
+        input_text = body.get("input_text", body.get("inputText"))
+        if input_text is not None and not isinstance(input_text, str):
+            raise ValueError("input_text must be a string when provided")
+        return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
 
     def _list_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=50)

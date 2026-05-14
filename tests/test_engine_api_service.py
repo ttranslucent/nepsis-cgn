@@ -25,9 +25,12 @@ def test_create_and_step_safety_session_with_governance() -> None:
     )
     assert step["stage"] == "evaluated"
     assert "governance" in step
+    assert step["channel"]["space"] == "ruin"
+    assert step["channel"]["decision_mode"] == "boundary"
     assert step["governance"]["user_decision"] == "continue_override"
     assert "iteration_packet" in step
     assert step["iteration_packet"]["schema_id"] == "nepsis.iteration_packet"
+    assert step["iteration_packet"]["manifold"]["channel"]["space"] == "ruin"
     assert step["iteration_packet"]["meta"]["session_id"] == sid
     assert step["session"]["packet_count"] == 1
 

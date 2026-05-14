@@ -1,66 +1,31 @@
 import { NextResponse } from "next/server";
+import {
+  DEFAULT_OPENAI_MODEL,
+  createOpenAiClient,
+  extractOpenAiText,
+} from "@/lib/openaiClient";
 
 export async function POST(req: Request) {
   try {
-    const { prompt, apiKey } = await req.json();
+    const { prompt, apiKey, model } = await req.json();
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
     }
 
-    if (!apiKey || typeof apiKey !== "string") {
-      return NextResponse.json({ error: "API key is required." }, { status: 400 });
-    }
-
-    const llmRes = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "responses-2024-12-01=v1",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: prompt,
-              },
-            ],
-          },
-        ],
-      }),
+    const completion = await createOpenAiClient(apiKey).responses.create({
+      model: typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL,
+      input: prompt,
     });
 
-    if (!llmRes.ok) {
-      const errText = await llmRes.text();
-      console.error("OpenAI error:", errText);
-      return NextResponse.json(
-        { error: "OpenAI API error", detail: errText },
-        { status: 500 },
-      );
-    }
-
-    const data = await llmRes.json();
-    let rawAnswer = "[No model output returned]";
-
-    if (typeof data.output_text === "string") {
-      rawAnswer = data.output_text;
-    } else if (
-      Array.isArray(data.output) &&
-      data.output.length > 0 &&
-      data.output[0].content &&
-      Array.isArray(data.output[0].content) &&
-      data.output[0].content[0]?.text
-    ) {
-      rawAnswer = data.output[0].content[0].text;
-    }
+    const outputText = extractOpenAiText(completion) || "[No model output returned]";
+    const resolvedModel =
+      typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL;
 
     return NextResponse.json({
-      rawAnswer,
+      model: resolvedModel,
+      outputText,
+      rawAnswer: outputText,
       cgn: {
         valid: true,
         distance: 0,
