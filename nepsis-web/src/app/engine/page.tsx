@@ -28,6 +28,8 @@ import {
   getStoredOpenAiKey,
   hasStoredOpenAiKey,
 } from "@/lib/clientStorage";
+import { OperatorAccessNotice } from "@/app/components/OperatorAccessNotice";
+import { publicSiteMode } from "@/lib/publicMode";
 import { useEngineSession } from "@/lib/useEngineSession";
 
 type ChatRole = "human" | "nepsis";
@@ -2605,6 +2607,15 @@ export default function EnginePage() {
   const selectedPacketResult = asRecord(selectedPacket?.result);
   const selectedPacketState = asRecord(selectedPacket?.state);
   const selectedPacketCarry = asRecord(selectedPacket?.carry_forward);
+  const publicMode = publicSiteMode();
+
+  if (publicMode && authSession === null) {
+    return <OperatorAccessNotice checking />;
+  }
+
+  if (publicMode && authSession && !authSession.engineControlAllowed) {
+    return <OperatorAccessNotice />;
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-[1850px] flex-col gap-4 px-4 py-6">

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: nepsis-cgn-api
+    runtime: python
+    plan: starter
+    buildCommand: python -m pip install --upgrade pip && python -m pip install -e '.[api]'
+    startCommand: NEPSIS_API_HOST=0.0.0.0 NEPSIS_API_PORT=$PORT nepsiscgn-api-asgi
+    healthCheckPath: /v1/health
+    envVars:
+      - key: NEPSIS_API_HOST
+        value: 0.0.0.0
+      - key: NEPSIS_API_PORT
+        value: $PORT
+      - key: NEPSIS_API_TOKEN
+        sync: false
+      - key: NEPSIS_API_ALLOWED_ORIGINS
+        value: https://nepsis-cgn.vercel.app,https://www.nepsisai.com,https://nepsisai.com
+      - key: NEPSIS_API_STORE_PATH
+        value: /var/data/engine_api_sessions.db
+    disk:
+      name: nepsis-cgn-sessions
+      mountPath: /var/data
+      sizeGB: 1

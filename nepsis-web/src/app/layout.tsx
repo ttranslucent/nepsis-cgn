@@ -6,6 +6,7 @@ import { cookies } from "next/headers";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
 import { NEPSIS_USER_COOKIE, readNepsisUserFromCookieValue } from "@/lib/nepsisAuth";
+import { publicSiteMode } from "@/lib/publicMode";
 
 const nepsisSans = Space_Grotesk({
   subsets: ["latin"],
@@ -32,9 +33,16 @@ export const metadata: Metadata = {
 const navLinks = [
   { href: "/", label: "Overview" },
   { href: "/mvp", label: "MVP Demo" },
-  { href: "/engine", label: "Engine" },
-  { href: "/playground", label: "Playground" },
+  { href: "/status", label: "Status" },
+  { href: "/engine", label: "Operator Engine" },
+  { href: "/playground", label: "Model Playground" },
   { href: "/settings", label: "Settings" },
+];
+
+const publicNavLinks = [
+  { href: "/", label: "Overview" },
+  { href: "/mvp", label: "MVP Demo" },
+  { href: "/status", label: "Status" },
 ];
 
 function displayUser(email: string): string {
@@ -48,6 +56,7 @@ export default async function RootLayout({
 }) {
   const cookieStore = await cookies();
   const signedInUser = readNepsisUserFromCookieValue(cookieStore.get(NEPSIS_USER_COOKIE)?.value);
+  const visibleNavLinks = publicSiteMode() ? publicNavLinks : navLinks;
 
   return (
     <html lang="en" className={`${nepsisSans.variable} ${nepsisMono.variable}`}>
@@ -73,7 +82,7 @@ export default async function RootLayout({
               </Link>
 
               <nav className="flex flex-wrap items-center gap-1.5 text-sm">
-                {navLinks.map((link) => (
+                {visibleNavLinks.map((link) => (
                   <Link
                     key={link.href}
                     href={link.href}
@@ -111,8 +120,8 @@ export default async function RootLayout({
                 <span>
                   Demo mode: <strong className="text-nepsis-text">/mvp</strong> is deterministic and frozen.
                 </span>
-                <span>Playground/model calls require OpenAI key configuration.</span>
-                <span>Engine sessions are experimental operator tools.</span>
+                <span>Operator tools require sign-in and deployment configuration.</span>
+                <span>Model calls are disabled on the public site unless explicitly enabled.</span>
               </div>
             </div>
           </header>

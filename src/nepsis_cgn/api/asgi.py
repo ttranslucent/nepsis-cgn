@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import os
 import json
@@ -26,7 +24,7 @@ def _default_store_path() -> str:
 
 
 API = EngineApiService(store_path=_default_store_path())
-PUBLIC_PATHS = {"/v1/health", "/v1/routes", "/v1/openapi.json", "/docs", "/openapi.json"}
+PUBLIC_PATHS = {"/v1/health", "/v1/routes", "/v1/openapi.json", "/docs", "/openapi.json", "/mcp"}
 
 
 def create_app():
@@ -107,6 +105,11 @@ def create_app():
     @app.get("/v1/openapi.json")
     async def openapi_document():
         return openapi_spec()
+
+    @app.post("/mcp")
+    async def mcp_endpoint(request: Request):
+        body = await _read_json_body(request)
+        return _mcp_handle_request(body, dict(request.headers))
 
     @app.post("/v1/mvp")
     async def run_mvp(request: Request):
@@ -466,6 +469,7 @@ def _rate_limit_allow(key: str) -> bool:
 
 def route_manifest() -> list[dict[str, str]]:
     return [
+        {"method": "POST", "path": "/mcp", "description": "Model Context Protocol JSON-RPC tool endpoint"},
         {"method": "GET", "path": "/v1/health", "description": "Health check"},
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
         {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
@@ -513,6 +517,168 @@ def openapi_spec() -> dict[str, Any]:
         },
         "paths": paths,
     }
+
+
+def _mcp_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "run_mvp",
+            "description": "Run the public deterministic NepsisCGN v0.3 MVP packet demo.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "case_id": {
+                        "type": "string",
+                        "enum": ["jailing", "clinical"],
+                        "description": "Canonical MVP case to run.",
+                    },
+                    "input_text": {
+                        "type": "string",
+                        "description": "Optional source text override for the deterministic packet.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "get_mvp_schema",
+            "description": "Return the canonical MVP packet schema fields and supported cases.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "health",
+            "description": "Return NepsisCGN API health.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "get_routes",
+            "description": "Return the NepsisCGN API route manifest. Requires API bearer auth when backend auth is enabled.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    ]
+
+
+def _mcp_handle_request(body: dict[str, Any], headers: dict[str, Any]) -> dict[str, Any]:
+    request_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params", {})
+    if body.get("jsonrpc") != "2.0" or not isinstance(method, str):
+        return _mcp_error(request_id, -32600, "Invalid JSON-RPC request.")
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        return _mcp_error(request_id, -32602, "JSON-RPC params must be an object.")
+
+    if method == "initialize":
+        return _mcp_result(
+            request_id,
+            {
+                "protocolVersion": "2025-06-18",
+                "serverInfo": {"name": "nepsis-cgn", "version": "0.3.0"},
+                "capabilities": {"tools": {}},
+            },
+        )
+    if method == "tools/list":
+        return _mcp_result(request_id, {"tools": _mcp_tools()})
+    if method == "tools/call":
+        return _mcp_call_tool(request_id, params, headers)
+    if method == "notifications/initialized":
+        return _mcp_result(request_id, {})
+    return _mcp_error(request_id, -32601, f"Unsupported MCP method: {method}")
+
+
+def _mcp_call_tool(request_id: Any, params: dict[str, Any], headers: dict[str, Any]) -> dict[str, Any]:
+    name = params.get("name")
+    arguments = params.get("arguments", {})
+    if not isinstance(name, str):
+        return _mcp_error(request_id, -32602, "MCP tools/call requires string field 'name'.")
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        return _mcp_error(request_id, -32602, "MCP tool arguments must be an object.")
+
+    if _mcp_tool_requires_auth(name) and not _mcp_authorized(headers):
+        return _mcp_error(request_id, -32001, "MCP tool requires API bearer authorization.")
+
+    try:
+        if name == "run_mvp":
+            result = _mcp_run_mvp(arguments)
+        elif name == "get_mvp_schema":
+            result = _mcp_mvp_schema()
+        elif name == "health":
+            result = {"ok": True}
+        elif name == "get_routes":
+            result = {"routes": route_manifest()}
+        else:
+            return _mcp_error(request_id, -32601, f"Unknown MCP tool: {name}")
+    except ValueError as exc:
+        return _mcp_error(request_id, -32602, str(exc))
+
+    return _mcp_result(
+        request_id,
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(result, sort_keys=True),
+                }
+            ],
+            "isError": False,
+        },
+    )
+
+
+def _mcp_run_mvp(arguments: dict[str, Any]) -> dict[str, Any]:
+    case_id = arguments.get("case_id", arguments.get("case", "jailing"))
+    if case_id not in {"jailing", "clinical"}:
+        raise ValueError("case_id must be one of: jailing, clinical")
+    input_text = arguments.get("input_text", arguments.get("inputText"))
+    if input_text is not None and not isinstance(input_text, str):
+        raise ValueError("input_text must be a string when provided")
+    return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+
+
+def _mcp_mvp_schema() -> dict[str, Any]:
+    return {
+        "schema_id": "nepsis.mvp_packet",
+        "supported_cases": ["jailing", "clinical"],
+        "top_level_fields": [
+            "case_id",
+            "input_text",
+            "observations",
+            "constraints",
+            "red_channel",
+            "still",
+            "blue_channel",
+            "contradiction_monitor",
+            "denominator_collapse",
+            "non_quiescence",
+            "zeroback",
+            "voronoi_commitment",
+            "state_feedback",
+            "audit_trace",
+            "final_output",
+        ],
+    }
+
+
+def _mcp_tool_requires_auth(name: str) -> bool:
+    return name == "get_routes" and _auth_required()
+
+
+def _mcp_authorized(headers: dict[str, Any]) -> bool:
+    expected = _configured_api_token()
+    if expected is None:
+        return not _auth_required()
+    return _request_api_token(headers) == expected
+
+
+def _mcp_result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _mcp_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
 def entrypoint(argv: list[str] | None = None) -> None:  # pragma: no cover

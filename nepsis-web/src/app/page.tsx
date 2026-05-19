@@ -3,10 +3,12 @@
 import { startTransition, useEffect, useState } from "react";
 
 import { consumeConnectedNotice, hasStoredOpenAiKey } from "@/lib/clientStorage";
+import { publicSiteMode } from "@/lib/publicMode";
 
 export default function HomePage() {
   const [hasKey, setHasKey] = useState(false);
   const [showConnectedMessage, setShowConnectedMessage] = useState(false);
+  const publicMode = publicSiteMode();
 
   useEffect(() => {
     const connectedFromQuery =
@@ -18,8 +20,8 @@ export default function HomePage() {
     });
   }, []);
 
-  const primaryHref = hasKey ? "/engine" : "/settings";
-  const primaryLabel = hasKey ? "Open Engine Workspace" : "Connect Model Key";
+  const primaryHref = publicMode ? "/status" : hasKey ? "/engine" : "/settings";
+  const primaryLabel = publicMode ? "View System Status" : hasKey ? "Open Engine Workspace" : "Connect Model Key";
 
   return (
     <div className="mx-auto w-full max-w-[1380px] px-4 py-8 md:px-6 md:py-12">
@@ -55,18 +57,22 @@ export default function HomePage() {
             >
               {primaryLabel}
             </a>
-            <a
-              href="/playground"
-              className="rounded-full border border-nepsis-border px-5 py-2.5 text-sm text-nepsis-text transition hover:border-nepsis-accent"
-            >
-              Open Playground
-            </a>
-            <a
-              href="/engine"
-              className="rounded-full border border-nepsis-border px-5 py-2.5 text-sm text-nepsis-text transition hover:border-nepsis-accent"
-            >
-              Engine Console
-            </a>
+            {!publicMode && (
+              <>
+                <a
+                  href="/playground"
+                  className="rounded-full border border-nepsis-border px-5 py-2.5 text-sm text-nepsis-text transition hover:border-nepsis-accent"
+                >
+                  Open Playground
+                </a>
+                <a
+                  href="/engine"
+                  className="rounded-full border border-nepsis-border px-5 py-2.5 text-sm text-nepsis-text transition hover:border-nepsis-accent"
+                >
+                  Engine Console
+                </a>
+              </>
+            )}
           </div>
 
           <div className="mt-6 grid gap-3 sm:grid-cols-3">
@@ -107,10 +113,10 @@ export default function HomePage() {
           </div>
 
           <a
-            href="/engine"
+            href={publicMode ? "/mvp" : "/engine"}
             className="mt-5 inline-flex rounded-full border border-nepsis-border px-4 py-2 text-sm transition hover:border-nepsis-accent"
           >
-            Run Engine QA
+            {publicMode ? "Run MVP Demo" : "Run Engine QA"}
           </a>
         </aside>
       </section>
