@@ -1,6 +1,6 @@
 # NepsisCGN v0.3
 
-Last verified: 2026-05-14
+Last verified: 2026-05-19
 
 NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces structured reasoning under uncertainty with distinct RED/BLUE decision spaces, STILL checkpoints, contradiction monitoring, denominator collapse detection, ZeroBack repair, consequence-weighted commitment, state feedback scaffolding, and audit packets.
 
@@ -62,6 +62,16 @@ npm ci
 cd ..
 ```
 
+Start the local deterministic MVP from the repo root:
+
+```bash
+scripts/mvp-local.sh
+```
+
+This starts the backend on `http://127.0.0.1:8787` and the Next UI at
+`http://127.0.0.1:3000/mvp` with local demo settings. Use `Ctrl-C` in the
+launcher terminal to stop both processes.
+
 Full reproducibility smoke path from the repo root:
 
 ```bash
@@ -94,6 +104,55 @@ curl -sS -X POST http://127.0.0.1:8787/v1/mvp \
 ```
 
 The local Next API proxy used by the UI is `/api/engine/mvp`, which forwards to backend `POST /v1/mvp`.
+
+## Public Website Deployment
+
+The public site posture is intentionally narrow:
+
+- `/mvp` is public, deterministic, and does not require login or model keys.
+- `/status` shows backend, auth, model-route, and MCP readiness.
+- `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
+- Production should not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` unless a separate protected operator deployment has been reviewed.
+
+Deploy the existing FastAPI backend as the API service. `render.yaml` defines a
+Render web service that installs `.[api]`, starts `nepsiscgn-api-asgi`, binds to
+`0.0.0.0:$PORT`, sets `NEPSIS_API_TOKEN`, configures CORS origins, and stores
+engine sessions under `/var/data` when sessions are enabled.
+
+Configure the Vercel web app with:
+
+```bash
+NEPSIS_API_BASE_URL=https://<render-service>
+NEPSIS_API_TOKEN=<same-token-as-render>
+NEPSIS_AUTH_SECRET=<long-random-secret>
+NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true
+NEPSIS_MODEL_ROUTES_ENABLED=false
+```
+
+After deployment, run:
+
+```bash
+NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
+```
+
+The script uses Python stdlib HTTP calls and checks `/`, `/mvp`,
+`/api/engine/health`, `POST /api/engine/mvp`, auth session state, and the
+playground config endpoint.
+
+## Public API and MCP
+
+Public-safe web access is `POST /api/engine/mvp` from the Vercel app. The direct
+FastAPI `POST /v1/mvp` endpoint remains protected by `NEPSIS_API_TOKEN` in shared
+deployments so the web proxy can control CORS and rollout posture.
+
+The backend also exposes a minimal HTTP MCP JSON-RPC endpoint at `/mcp` with
+tools `run_mvp`, `get_mvp_schema`, `health`, and protected `get_routes`.
+MCP is a tool surface, not a model-provider bypass: Codex/ChatGPT, Claude Code,
+and Gemini users should connect their own authenticated client to Nepsis tools
+rather than routing their model account through NepsisCGN.
+
+See [docs/public-api.md](docs/public-api.md) for request examples and the MCP
+tool list.
 
 ## Clickable UI Demo
 
@@ -181,6 +240,28 @@ Environment notes:
 - The OpenAI provider maps the `openai` alias to `gpt-4o` unless a specific `gpt-*` model is supplied.
 - Security policy: [SECURITY.md](SECURITY.md).
 - License: [LICENSE](LICENSE).
+
+## Open Model Harness Direction
+
+The local MVP launcher is intentionally model-free. The frozen `/mvp` path
+should stay deterministic while v0.4 explores an open model harness that uses
+supported host or CLI authentication flows instead of asking operators to paste
+provider API keys into NepsisCGN.
+
+- OpenAI API calls use API keys, while Codex supports ChatGPT sign-in. Future
+  OpenAI integration should prefer a supported Codex, ChatGPT Apps SDK, or MCP
+  path where that fits the harness boundary. See
+  [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
+  [Codex authentication](https://developers.openai.com/codex/auth), and
+  [Apps SDK authentication](https://developers.openai.com/apps-sdk/build/auth).
+- Claude account-based use needs separate review: Anthropic documents API-key
+  methods for third-party Agent SDK integrations unless claude.ai login access
+  is separately approved. See the
+  [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview).
+- Gemini can be approached through an already-authenticated Gemini CLI flow or
+  an explicit OAuth/ADC design. See
+  [Gemini CLI authentication](https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.mdx)
+  and [Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth).
 
 ## Known Limitations
 

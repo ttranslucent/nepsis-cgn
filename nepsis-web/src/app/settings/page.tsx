@@ -4,6 +4,7 @@ import { startTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { LLM_CONNECTED_NOTICE_KEY, OPENAI_KEY_STORAGE_KEY } from "@/lib/clientStorage";
+import { publicSiteMode } from "@/lib/publicMode";
 
 function maskKey(value: string): string {
   if (!value || value.length < 12) {
@@ -62,6 +63,49 @@ export default function SettingsPage() {
     setApiKey("");
     setHasKey(false);
     setMessage("LLM key removed from this browser.");
+  }
+
+  if (publicSiteMode()) {
+    return (
+      <div className="mx-auto w-full max-w-3xl px-4 py-8 md:px-6 md:py-12">
+        <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-6 md:p-7">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-nepsis-muted">Public site mode</div>
+          <h1 className="mt-3 text-2xl font-semibold">Operator settings</h1>
+          <p className="mt-3 text-sm leading-6 text-nepsis-muted">
+            API keys are disabled on the public site. Visitors can run the deterministic MVP without login or model
+            keys, while live model routes stay behind operator deployment controls.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <a
+              href="/mvp"
+              className="rounded-full bg-nepsis-accent px-4 py-2 text-sm font-semibold text-black transition hover:bg-nepsis-accentSoft"
+            >
+              Run MVP Demo
+            </a>
+            <a
+              href="/login"
+              className="rounded-full border border-nepsis-border px-4 py-2 text-sm transition hover:border-nepsis-accent"
+            >
+              Operator Login
+            </a>
+            <a
+              href="/status"
+              className="rounded-full border border-nepsis-border px-4 py-2 text-sm transition hover:border-nepsis-accent"
+            >
+              System Status
+            </a>
+            <button
+              type="button"
+              onClick={disconnectLlm}
+              className="rounded-full border border-red-500/40 px-4 py-2 text-sm text-red-300 transition hover:border-red-400"
+            >
+              Clear Browser Key
+            </button>
+          </div>
+          {message && <p className="mt-3 text-xs text-nepsis-muted">{message}</p>}
+        </section>
+      </div>
+    );
   }
 
   return (

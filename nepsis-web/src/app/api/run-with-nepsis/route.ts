@@ -4,9 +4,26 @@ import {
   createOpenAiClient,
   extractOpenAiText,
 } from "@/lib/openaiClient";
+import { requireEngineControlAuth } from "@/lib/engineApi";
+import { modelRoutesEnabled } from "@/lib/publicMode";
 
 export async function POST(req: Request) {
   try {
+    if (!modelRoutesEnabled()) {
+      return NextResponse.json(
+        {
+          error: "Model routes disabled",
+          detail: "Public deployments do not run model calls or accept browser API keys.",
+        },
+        { status: 403 },
+      );
+    }
+
+    const authFailure = requireEngineControlAuth(req);
+    if (authFailure) {
+      return authFailure;
+    }
+
     const { prompt, apiKey, model } = await req.json();
 
     if (!prompt || typeof prompt !== "string") {

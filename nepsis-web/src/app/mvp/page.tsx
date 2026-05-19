@@ -23,6 +23,18 @@ const CASES: Array<{ id: NepsisMvpCaseId; label: string; description: string }> 
   },
 ];
 
+function userFacingMvpError(err: unknown): string {
+  if (err instanceof EngineClientError) {
+    const detail = typeof err.detail === "string" ? err.detail : "";
+    const combined = `${err.message} ${detail}`;
+    if (err.status === 503 || combined.includes("NEPSIS_API_BASE_URL")) {
+      return "The MVP backend is not configured yet. Check System Status or try again after deployment.";
+    }
+    return err.message;
+  }
+  return (err as Error)?.message ?? "MVP demo request failed.";
+}
+
 export default function MvpDemoPage() {
   const [caseId, setCaseId] = useState<NepsisMvpCaseId>("jailing");
   const [packet, setPacket] = useState<NepsisMvpPacket | null>(null);
@@ -36,11 +48,7 @@ export default function MvpDemoPage() {
       const result = await engineClient.runMvp({ case_id: caseId });
       setPacket(result);
     } catch (err) {
-      if (err instanceof EngineClientError) {
-        setError(err.message);
-      } else {
-        setError((err as Error)?.message ?? "MVP demo request failed.");
-      }
+      setError(userFacingMvpError(err));
     } finally {
       setIsRunning(false);
     }
@@ -101,8 +109,11 @@ export default function MvpDemoPage() {
         </div>
 
         {error && (
-          <div className="mt-5 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-            {error}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            <span>{error}</span>
+            <a href="/status" className="rounded-full border border-red-300/50 px-3 py-1 text-xs hover:border-red-200">
+              System Status
+            </a>
           </div>
         )}
       </section>

@@ -5,6 +5,8 @@ import {
   extractOpenAiText,
   hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
+import { modelRoutesEnabled } from "@/lib/publicMode";
+import { requireEngineControlAuth } from "@/lib/engineApi";
 import { buildProtoStateFromOutput, extractJingallCandidate, letterDelta } from "@/lib/protoPuzzleFromLlm";
 import { evaluateProtoPuzzleTs, type ProtoEvaluation } from "@/lib/protoPuzzle";
 
@@ -20,13 +22,30 @@ type PlaygroundRequest = {
 };
 
 export async function GET() {
+  const enabled = modelRoutesEnabled();
   return NextResponse.json({
-    hasServerKey: hasConfiguredOpenAiKey(),
+    modelRoutesEnabled: enabled,
+    hasServerKey: enabled && hasConfiguredOpenAiKey(),
     defaultModel: DEFAULT_OPENAI_MODEL,
   });
 }
 
 export async function POST(req: Request) {
+  if (!modelRoutesEnabled()) {
+    return NextResponse.json(
+      {
+        error: "Model routes disabled",
+        detail: "Public deployments do not run model calls or accept browser API keys.",
+      },
+      { status: 403 },
+    );
+  }
+
+  const authFailure = requireEngineControlAuth(req);
+  if (authFailure) {
+    return authFailure;
+  }
+
   const body = await req.json().catch(() => null);
   if (!body) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
