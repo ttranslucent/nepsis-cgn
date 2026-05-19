@@ -50,6 +50,7 @@ ROUTES = (
     {"method": "DELETE", "path": "/v1/sessions/{session_id}", "description": "Delete session"},
     {"method": "POST", "path": "/v1/sessions/{session_id}/step", "description": "Run one step"},
     {"method": "POST", "path": "/v1/sessions/{session_id}/reframe", "description": "Update frame version"},
+    {"method": "POST", "path": "/v1/sessions/{session_id}/workspace", "description": "Persist UI workspace state"},
     {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
     {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
     {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
@@ -151,6 +152,12 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             self._safe(lambda: self._stage_audit_session(session_id, body))
             return
 
+        m_workspace = re.fullmatch(r"/v1/sessions/([^/]+)/workspace", path)
+        if m_workspace:
+            session_id = m_workspace.group(1)
+            self._safe(lambda: self._update_workspace_state(session_id, body))
+            return
+
         self._send_json(404, {"error": "Not found"})
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -231,7 +238,22 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             if not isinstance(raw_context, dict):
                 raise ValueError("stage-audit payload 'context' must be an object when provided")
             context = raw_context
-        return API.stage_audit_session(session_id, context=context, owner_id=_handler_owner_id(self))
+        return API.stage_audit_session(
+            session_id,
+            context=context,
+            persist_context=bool(body.get("persist_context", False)),
+            owner_id=_handler_owner_id(self),
+        )
+
+    def _update_workspace_state(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        workspace_state = body.get("workspace_state", body.get("state", body))
+        if not isinstance(workspace_state, dict):
+            raise ValueError("workspace_state must be an object")
+        return API.update_workspace_state(
+            session_id,
+            workspace_state=workspace_state,
+            owner_id=_handler_owner_id(self),
+        )
 
     def _run_mvp(self, body: dict[str, Any]) -> dict[str, Any]:
         case_id = body.get("case_id", body.get("case", "jailing"))

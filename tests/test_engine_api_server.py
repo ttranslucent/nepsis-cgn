@@ -187,6 +187,8 @@ def test_openapi_spec_contains_route_paths() -> None:
     assert "/v1/sessions/{session_id}/stage-audit" in spec["paths"]
     assert "get" in spec["paths"]["/v1/sessions/{session_id}/stage-audit"]
     assert "post" in spec["paths"]["/v1/sessions/{session_id}/stage-audit"]
+    assert "/v1/sessions/{session_id}/workspace" in spec["paths"]
+    assert "post" in spec["paths"]["/v1/sessions/{session_id}/workspace"]
 
 
 def test_stage_audit_post_handler_accepts_context_payload(monkeypatch) -> None:
@@ -265,6 +267,29 @@ def test_stage_audit_post_handler_rejects_non_object_context(monkeypatch) -> Non
             sid,
             {"context": "invalid"},
         )
+
+
+def test_workspace_post_handler_persists_state(monkeypatch) -> None:
+    svc = EngineApiService()
+    created = svc.create_session(family="safety", frame={"text": "Assess whether to escalate."})
+    sid = created["session_id"]
+    monkeypatch.setattr(api_server, "API", svc)
+
+    result = api_server.EngineApiHandler._update_workspace_state(
+        object(),
+        sid,
+        {
+            "workspace_state": {
+                "schema_version": "2026-05-19",
+                "frame_locked": True,
+                "report_locked": False,
+                "stage_audit_context": {"frame": {"problem_statement": "Assess whether to escalate."}},
+            }
+        },
+    )
+
+    assert result["workspace_state"]["frame_locked"] is True
+    assert svc.get_session(sid)["workspace_state"]["stage_audit_context"]["frame"]["problem_statement"]
 
 
 def test_http_rejects_missing_api_token(monkeypatch) -> None:

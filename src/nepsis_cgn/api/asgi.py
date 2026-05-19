@@ -214,6 +214,25 @@ def create_app():
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/v1/sessions/{session_id}/workspace")
+    async def update_workspace_state(session_id: str, request: Request):
+        body = await _read_json_body(request)
+        workspace_state = body.get("workspace_state", body.get("state", body))
+        if not isinstance(workspace_state, dict):
+            raise HTTPException(status_code=400, detail="workspace_state must be an object")
+        try:
+            return API.update_workspace_state(
+                session_id,
+                workspace_state=workspace_state,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/v1/sessions/{session_id}/stage-audit")
     async def stage_audit_session(session_id: str, request: Request):
         try:
@@ -239,6 +258,7 @@ def create_app():
             return API.stage_audit_session(
                 session_id,
                 context=context,
+                persist_context=bool(body.get("persist_context", False)),
                 owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
@@ -457,6 +477,7 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "DELETE", "path": "/v1/sessions/{session_id}", "description": "Delete session"},
         {"method": "POST", "path": "/v1/sessions/{session_id}/step", "description": "Run one step"},
         {"method": "POST", "path": "/v1/sessions/{session_id}/reframe", "description": "Update frame version"},
+        {"method": "POST", "path": "/v1/sessions/{session_id}/workspace", "description": "Persist UI workspace state"},
         {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
         {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
         {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},

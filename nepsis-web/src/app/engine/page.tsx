@@ -188,6 +188,23 @@ type AuthSessionState = {
   user: string | null;
 };
 
+type EngineWorkspaceState = {
+  schema_version: "2026-05-19";
+  frame_locked: boolean;
+  report_locked: boolean;
+  report_corpus: string;
+  report_input: string;
+  last_evaluated_report_text: string;
+  contradictions_status: InterpretationContradictionsStatus;
+  contradictions_note: string;
+  threshold_decision: ThresholdDecision;
+  threshold_hold_reason: string;
+  report_result: EngineStepResponse | null;
+  stage_audit_context: StageAuditContextOverrides;
+};
+
+type EngineWorkspaceStateOverrides = Partial<Omit<EngineWorkspaceState, "schema_version">>;
+
 const MODEL_SNAPSHOT_STORAGE_PREFIX = "nepsis_engine_model_snapshots";
 
 const OBJECTIVE_OPTIONS = ["explain", "decide", "predict", "debug", "design", "sensemake"] as const;
@@ -402,6 +419,52 @@ function readStringArray(value: unknown): string[] {
 
 function packetMatchesCurrent(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function isContradictionsStatus(value: unknown): value is InterpretationContradictionsStatus {
+  return value === "unreviewed" || value === "none_identified" || value === "declared";
+}
+
+function isThresholdDecision(value: unknown): value is ThresholdDecision {
+  return value === "undecided" || value === "recommend" || value === "hold";
+}
+
+function isEngineStepResponse(value: unknown): value is EngineStepResponse {
+  const record = asRecord(value);
+  return Boolean(
+    record &&
+      typeof record.decision === "string" &&
+      typeof record.stage === "string" &&
+      asRecord(record.posterior) &&
+      asRecord(record.session),
+  );
+}
+
+function readWorkspaceState(value: unknown): Partial<EngineWorkspaceState> | null {
+  const record = asRecord(value);
+  if (!record || record.schema_version !== "2026-05-19") {
+    return null;
+  }
+  const stageAuditContext = asRecord(record.stage_audit_context);
+  return {
+    frame_locked: readBoolean(record.frame_locked, false),
+    report_locked: readBoolean(record.report_locked, false),
+    report_corpus: readString(record.report_corpus) ?? "",
+    report_input: readString(record.report_input) ?? "",
+    last_evaluated_report_text: readString(record.last_evaluated_report_text) ?? "",
+    contradictions_status: isContradictionsStatus(record.contradictions_status)
+      ? record.contradictions_status
+      : "unreviewed",
+    contradictions_note: readString(record.contradictions_note) ?? "",
+    threshold_decision: isThresholdDecision(record.threshold_decision) ? record.threshold_decision : "undecided",
+    threshold_hold_reason: readString(record.threshold_hold_reason) ?? "",
+    report_result: isEngineStepResponse(record.report_result) ? record.report_result : null,
+    stage_audit_context: stageAuditContext as StageAuditContextOverrides | undefined,
+  };
 }
 
 function stageEventLabel(event: string): string {
@@ -940,6 +1003,7 @@ export default function EnginePage() {
     reframe,
     refreshPackets,
     stageAudit,
+    updateWorkspaceState,
     lastAudit,
   } = useEngineSession();
 
@@ -1709,6 +1773,63 @@ export default function EnginePage() {
     ],
   );
 
+  const buildWorkspaceState = useCallback(
+    (overrides: EngineWorkspaceStateOverrides = {}): EngineWorkspaceState => {
+      const stageAuditContext: StageAuditContextOverrides =
+        overrides.stage_audit_context ?? {
+          frame: frameGate.packet as unknown as Record<string, unknown>,
+          interpretation: interpretationGate.packet as unknown as Record<string, unknown>,
+          threshold: {
+            ...(thresholdGate.packet as unknown as Record<string, unknown>),
+            decision: overrides.threshold_decision ?? thresholdDecision,
+            hold_reason: overrides.threshold_hold_reason ?? thresholdHoldReason,
+          },
+        };
+      return {
+        schema_version: "2026-05-19",
+        frame_locked: overrides.frame_locked ?? frameLocked,
+        report_locked: overrides.report_locked ?? reportLocked,
+        report_corpus: overrides.report_corpus ?? reportCorpus,
+        report_input: overrides.report_input ?? reportInput,
+        last_evaluated_report_text: overrides.last_evaluated_report_text ?? lastEvaluatedReportText,
+        contradictions_status: overrides.contradictions_status ?? contradictionsStatus,
+        contradictions_note: overrides.contradictions_note ?? contradictionsNote,
+        threshold_decision: overrides.threshold_decision ?? thresholdDecision,
+        threshold_hold_reason: overrides.threshold_hold_reason ?? thresholdHoldReason,
+        report_result: "report_result" in overrides ? (overrides.report_result ?? null) : reportResult,
+        stage_audit_context: stageAuditContext,
+      };
+    },
+    [
+      contradictionsNote,
+      contradictionsStatus,
+      frameGate.packet,
+      frameLocked,
+      interpretationGate.packet,
+      lastEvaluatedReportText,
+      reportCorpus,
+      reportInput,
+      reportLocked,
+      reportResult,
+      thresholdDecision,
+      thresholdGate.packet,
+      thresholdHoldReason,
+    ],
+  );
+
+  const persistWorkspaceState = useCallback(
+    async (overrides: EngineWorkspaceStateOverrides = {}, sessionId?: string) => {
+      const targetId = sessionId ?? activeSession?.session_id;
+      if (!targetId) {
+        return undefined;
+      }
+      return updateWorkspaceState(targetId, {
+        workspace_state: buildWorkspaceState(overrides) as unknown as Record<string, unknown>,
+      });
+    },
+    [activeSession?.session_id, buildWorkspaceState, updateWorkspaceState],
+  );
+
   useEffect(() => {
     if (!activeSession?.session_id || typeof window === "undefined") {
       return;
@@ -1724,6 +1845,31 @@ export default function EnginePage() {
     };
   }, [activeSession?.session_id, frameLocked, lastEvaluatedReportText, reportLocked, reportResult, stageAudit]);
 
+  useEffect(() => {
+    if (!activeSession?.session_id || typeof window === "undefined" || !frameLocked) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void persistWorkspaceState();
+    }, 700);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [
+    activeSession?.session_id,
+    contradictionsNote,
+    contradictionsStatus,
+    frameLocked,
+    lastEvaluatedReportText,
+    persistWorkspaceState,
+    reportCorpus,
+    reportInput,
+    reportLocked,
+    reportResult,
+    thresholdDecision,
+    thresholdHoldReason,
+  ]);
+
   async function handleOpenSession() {
     clearAllErrors();
     if (!sessionToOpen) {
@@ -1734,26 +1880,44 @@ export default function EnginePage() {
     if (!opened) {
       return;
     }
+    const workspace = readWorkspaceState(opened.workspace_state);
+    const restoredReportResult = workspace?.report_result ?? null;
+    const restoredReportCorpus = workspace?.report_corpus ?? "";
+    const restoredReportInput = workspace?.report_input ?? "";
+    const restoredReportLocked = Boolean(workspace?.report_locked && restoredReportResult);
+    const restoredFrameLocked = workspace?.frame_locked ?? opened.stage !== "draft";
     setFamily(opened.family);
     setFrameDraft(hydrateFrameDraft(opened.frame));
     setNextFrameDraft(hydrateNextFrameDraft(opened.frame));
-    setFrameLocked(opened.stage !== "draft");
-    setReportLocked(false);
-    setFrameCollapsed(opened.stage !== "draft");
-    setReportResult(null);
+    setFrameLocked(restoredFrameLocked);
+    setReportLocked(restoredReportLocked);
+    setFrameCollapsed(restoredFrameLocked);
+    setReportResult(restoredReportResult);
     setFrameChat([
       FRAME_STARTER_MESSAGE,
-      createMessage("nepsis", `Loaded session ${shortSession(opened.session_id)} at stage ${opened.stage}.`),
+      createMessage(
+        "nepsis",
+        workspace
+          ? `Loaded session ${shortSession(opened.session_id)} with saved gate context.`
+          : `Loaded session ${shortSession(opened.session_id)} at stage ${opened.stage}.`,
+      ),
     ]);
     setReportChat([REPORT_STARTER_MESSAGE]);
-    setPosteriorChat([POSTERIOR_STARTER_MESSAGE]);
-    setReportCorpus("");
-    setReportInput("");
-    setLastEvaluatedReportText("");
-    setContradictionsStatus("unreviewed");
-    setContradictionsNote("");
-    setThresholdDecision("undecided");
-    setThresholdHoldReason("");
+    setPosteriorChat(
+      restoredReportResult
+        ? [
+            POSTERIOR_STARTER_MESSAGE,
+            createMessage("nepsis", "Restored the last evaluated report and threshold context."),
+          ]
+        : [POSTERIOR_STARTER_MESSAGE],
+    );
+    setReportCorpus(restoredReportCorpus);
+    setReportInput(restoredReportInput);
+    setLastEvaluatedReportText(workspace?.last_evaluated_report_text ?? "");
+    setContradictionsStatus(workspace?.contradictions_status ?? "unreviewed");
+    setContradictionsNote(workspace?.contradictions_note ?? "");
+    setThresholdDecision(workspace?.threshold_decision ?? "undecided");
+    setThresholdHoldReason(workspace?.threshold_hold_reason ?? "");
     const initialBranchId = opened.branch_id ?? `${sessionBranchContext(opened.session_id)}-b1`;
     setActiveBranchId(initialBranchId);
     setBranchCounter(parseBranchCounter(initialBranchId));
@@ -2018,6 +2182,24 @@ export default function EnginePage() {
       });
       setNextFrameDraft(hydrateNextFrameDraft(resultingFrame));
     }
+    await persistWorkspaceState(
+      {
+        frame_locked: true,
+        report_locked: false,
+        report_corpus: "",
+        report_input: "",
+        last_evaluated_report_text: "",
+        contradictions_status: "unreviewed",
+        contradictions_note: "",
+        threshold_decision: "undecided",
+        threshold_hold_reason: "",
+        report_result: null,
+        stage_audit_context: {
+          frame: frameGate.packet as unknown as Record<string, unknown>,
+        },
+      },
+      sessionId,
+    );
   }
 
   function handleUnlockFrame() {
@@ -2043,6 +2225,19 @@ export default function EnginePage() {
     setFrameLocked(false);
     setFrameCollapsed(false);
     resetDownstreamStages();
+    void persistWorkspaceState({
+      frame_locked: false,
+      report_locked: false,
+      report_corpus: "",
+      report_input: "",
+      last_evaluated_report_text: "",
+      contradictions_status: "unreviewed",
+      contradictions_note: "",
+      threshold_decision: "undecided",
+      threshold_hold_reason: "",
+      report_result: null,
+      stage_audit_context: {},
+    });
   }
 
   async function handleRunReport() {
@@ -2090,8 +2285,8 @@ export default function EnginePage() {
           ? result.governance.p_bad >= result.governance.theta
           : null,
       recommendation: result.governance?.recommended_action ?? result.decision,
-      decision: thresholdDecision,
-      holdReason: thresholdHoldReason,
+      decision: "undecided",
+      holdReason: "",
     });
     const interpretationCoachAfterEval = buildInterpretationCoach(evaluatedInterpretationGate);
     const thresholdCoachAfterEval = buildThresholdCoach(evaluatedThresholdGate);
@@ -2104,12 +2299,21 @@ export default function EnginePage() {
         },
         threshold: {
           ...evaluatedThresholdGate.packet,
-          decision: thresholdDecision,
-          hold_reason: thresholdHoldReason,
+          decision: "undecided",
+          hold_reason: "",
         },
       },
     });
 
+    const persistedStageContext: StageAuditContextOverrides = {
+      frame: frameGate.packet as unknown as Record<string, unknown>,
+      interpretation: evaluatedInterpretationGate.packet as unknown as Record<string, unknown>,
+      threshold: {
+        ...(evaluatedThresholdGate.packet as unknown as Record<string, unknown>),
+        decision: "undecided",
+        hold_reason: "",
+      },
+    };
     setReportResult(result);
     setLastEvaluatedReportText(evaluatedReportText);
     setThresholdDecision("undecided");
@@ -2126,6 +2330,22 @@ export default function EnginePage() {
     pushPosteriorMessage(
       "nepsis",
       coachMessage(selectCoach("threshold", thresholdCoachAfterEval, audit ?? lastAudit)),
+    );
+    await persistWorkspaceState(
+      {
+        frame_locked: true,
+        report_locked: false,
+        report_corpus: evaluatedReportText,
+        report_input: "",
+        last_evaluated_report_text: evaluatedReportText,
+        contradictions_status: contradictionsStatus,
+        contradictions_note: contradictionsNote,
+        threshold_decision: "undecided",
+        threshold_hold_reason: "",
+        report_result: result,
+        stage_audit_context: persistedStageContext,
+      },
+      result.session.session_id,
     );
     await refreshPackets(result.session.session_id);
     await refreshSessions();
@@ -2164,12 +2384,25 @@ export default function EnginePage() {
           `Governance recommendation: ${reportResult.governance?.recommended_action}`,
       }));
     }
+    await persistWorkspaceState({
+      report_locked: true,
+      stage_audit_context: {
+        frame: frameGate.packet as unknown as Record<string, unknown>,
+        interpretation: interpretationGate.packet as unknown as Record<string, unknown>,
+        threshold: {
+          ...(thresholdGate.packet as unknown as Record<string, unknown>),
+          decision: thresholdDecision,
+          hold_reason: thresholdHoldReason,
+        },
+      },
+    });
   }
 
   function handleUnlockReport() {
     clearAllErrors();
     setReportLocked(false);
     pushReportMessage("nepsis", "Report unlocked for more testing. Threshold stage will require a new pass.");
+    void persistWorkspaceState({ report_locked: false });
   }
 
   async function handleCommitIteration() {
@@ -2240,6 +2473,22 @@ export default function EnginePage() {
     setPendingBranchParentFrameId(null);
     pushPosteriorMessage("nepsis", "Iteration committed. Priors stage reopened for the next cycle.");
     pushFrameMessage("nepsis", `Frame v${updatedFrame.frame_version} is now the working prior.`);
+    await persistWorkspaceState(
+      {
+        frame_locked: false,
+        report_locked: false,
+        report_corpus: "",
+        report_input: "",
+        last_evaluated_report_text: "",
+        contradictions_status: "unreviewed",
+        contradictions_note: "",
+        threshold_decision: "undecided",
+        threshold_hold_reason: "",
+        report_result: null,
+        stage_audit_context: {},
+      },
+      activeSession.session_id,
+    );
     await refreshSessions();
     await requestBackendStageAudit({
       sessionId: activeSession.session_id,
@@ -2272,7 +2521,9 @@ export default function EnginePage() {
   const activeStage = activeSession?.stage ?? "none";
   const backendAuditSource = lastAudit
     ? lastAudit.source.context_applied
-      ? "preview context"
+      ? lastAudit.source.context_source === "session"
+        ? "saved session context"
+        : "preview context"
       : "canonical session"
     : "n/a";
   const engineAccessLabel =
@@ -2285,11 +2536,64 @@ export default function EnginePage() {
         : "sign in required";
   const llmKeyLabel =
     hasConnectedKey == null ? "checking key" : hasConnectedKey ? "browser key stored" : "no browser key";
-  const whyNotConverging = governance?.why_not_converging ?? [];
+  const whyNotConverging = useMemo(
+    () => governance?.why_not_converging ?? [],
+    [governance?.why_not_converging],
+  );
   const topInterpretation = posteriorRows[0] ?? null;
   const secondInterpretation = posteriorRows[1] ?? null;
   const topMargin =
     topInterpretation && secondInterpretation ? Math.max(0, topInterpretation[1] - secondInterpretation[1]) : null;
+  const finalDecisionBrief = useMemo(() => {
+    if (
+      !reportResult ||
+      displayFrameGateStatus !== "PASS" ||
+      displayInterpretationGateStatus !== "PASS" ||
+      displayThresholdGateStatus !== "PASS"
+    ) {
+      return null;
+    }
+    const evidence = parseLineList(lastEvaluatedReportText || reportDraftText).slice(0, 4);
+    const decisionLabel =
+      thresholdDecision === "hold"
+        ? "Hold for clarification"
+        : thresholdDecision === "recommend"
+          ? "Recommend action"
+          : "Undecided";
+    return {
+      decisionLabel,
+      frame: frameDraft.text || "n/a",
+      redBoundary: frameDraft.red_definition || "n/a",
+      topInterpretation: topInterpretation?.[0] ?? "n/a",
+      topWeight: formatPct(topInterpretation?.[1]),
+      warningLevel: governance?.warning_level ?? "n/a",
+      recommendedAction: governance?.recommended_action ?? reportResult.decision,
+      rationale:
+        thresholdDecision === "hold"
+          ? thresholdHoldReason || "Hold selected; clarification rationale is not specified."
+          : `Proceed with ${governance?.recommended_action ?? reportResult.decision}.`,
+      evidence,
+      nextDiscriminator:
+        whyNotConverging[0]?.next_discriminator ||
+        thresholdHoldReason ||
+        "Monitor for new evidence that changes the red boundary or posterior.",
+    };
+  }, [
+    displayFrameGateStatus,
+    displayInterpretationGateStatus,
+    displayThresholdGateStatus,
+    frameDraft.red_definition,
+    frameDraft.text,
+    governance?.recommended_action,
+    governance?.warning_level,
+    lastEvaluatedReportText,
+    reportDraftText,
+    reportResult,
+    thresholdDecision,
+    thresholdHoldReason,
+    topInterpretation,
+    whyNotConverging,
+  ]);
   const showReportPanel = showOperatorControls || currentStageStep >= 2;
   const showPosteriorPanel = showOperatorControls || currentStageStep >= 3;
   const showTimeline = showOperatorControls || currentStageStep >= 3;
@@ -3192,6 +3496,55 @@ export default function EnginePage() {
                   </label>
                 </div>
               </div>
+
+              {finalDecisionBrief && (
+                <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold text-emerald-100">Final decision brief</div>
+                    <span className="rounded-full border border-emerald-400/40 px-2 py-0.5 text-[11px] text-emerald-100">
+                      PASS/PASS/PASS
+                    </span>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div>
+                      <div className="text-nepsis-muted">Decision</div>
+                      <div className="text-nepsis-text">{finalDecisionBrief.decisionLabel}</div>
+                    </div>
+                    <div>
+                      <div className="text-nepsis-muted">Recommended action</div>
+                      <div className="text-nepsis-text">{finalDecisionBrief.recommendedAction}</div>
+                    </div>
+                    <div>
+                      <div className="text-nepsis-muted">Top interpretation</div>
+                      <div className="text-nepsis-text">
+                        {finalDecisionBrief.topInterpretation} · {finalDecisionBrief.topWeight}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-nepsis-muted">Warning level</div>
+                      <div className="text-nepsis-text">{finalDecisionBrief.warningLevel}</div>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-nepsis-muted">Frame</div>
+                  <div className="text-nepsis-text">{finalDecisionBrief.frame}</div>
+                  <div className="mt-2 text-nepsis-muted">Red boundary</div>
+                  <div className="text-nepsis-text">{finalDecisionBrief.redBoundary}</div>
+                  {finalDecisionBrief.evidence.length > 0 && (
+                    <>
+                      <div className="mt-2 text-nepsis-muted">Evidence used</div>
+                      <ul className="list-inside list-disc space-y-0.5 text-nepsis-text">
+                        {finalDecisionBrief.evidence.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  <div className="mt-2 text-nepsis-muted">Rationale</div>
+                  <div className="text-nepsis-text">{finalDecisionBrief.rationale}</div>
+                  <div className="mt-2 text-nepsis-muted">Next discriminator</div>
+                  <div className="text-nepsis-text">{finalDecisionBrief.nextDiscriminator}</div>
+                </div>
+              )}
 
               <div id="threshold-posterior" className="rounded-lg border border-nepsis-border bg-black/20 p-3">
                 <div className="mb-2 text-xs text-nepsis-muted">Posterior distribution</div>

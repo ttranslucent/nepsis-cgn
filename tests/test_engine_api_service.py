@@ -172,6 +172,78 @@ def test_stage_audit_accepts_context_and_can_pass_all_stages() -> None:
     assert audit["threshold"]["coach"]["summary"].startswith("Threshold contract")
 
 
+def test_stage_audit_can_persist_gate_context_for_canonical_reads() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={
+            "text": "Assess whether to escalate.",
+            "time_horizon": "short",
+            "constraints_hard": ["No policy breach"],
+            "constraints_soft": ["Keep response latency low"],
+            "rationale_for_change": "Red channel: avoid catastrophic miss | Blue channel: optimize utility | Uncertainty: signal quality",
+        },
+    )
+    sid = created["session_id"]
+    svc.step_session(sid, sign={"critical_signal": True, "policy_violation": False})
+
+    context = {
+        "frame": {
+            "problem_statement": "Assess whether to escalate now.",
+            "catastrophic_outcome": "Miss a catastrophic event.",
+            "optimization_goal": "Maximize safety while minimizing disruption.",
+            "decision_horizon": "short",
+            "key_uncertainty": "Signal reliability from first report.",
+            "hard_constraints": ["No policy breach"],
+            "soft_constraints": ["Keep response latency low"],
+        },
+        "interpretation": {
+            "report_text": "obs: critical signal present\nobs: no policy violation",
+            "evidence_count": 2,
+            "report_synced": True,
+            "contradictions_status": "none_identified",
+            "contradictions_note": "",
+        },
+        "threshold": {
+            "decision": "hold",
+            "hold_reason": "Need one additional discriminator before recommendation.",
+        },
+    }
+
+    preview = svc.stage_audit_session(sid, context=context, persist_context=True)
+    canonical = svc.stage_audit_session(sid)
+
+    assert preview["threshold"]["status"] == "PASS"
+    assert canonical["frame"]["status"] == "PASS"
+    assert canonical["interpretation"]["status"] == "PASS"
+    assert canonical["threshold"]["status"] == "PASS"
+    assert canonical["source"]["context_applied"] is True
+    assert canonical["source"]["context_source"] == "session"
+    assert svc.get_session(sid)["workspace_state"]["stage_audit_context"]["threshold"]["decision"] == "hold"
+
+
+def test_workspace_state_persists_in_json_store(tmp_path) -> None:
+    store_path = tmp_path / "sessions.json"
+    svc = EngineApiService(store_path=str(store_path))
+    created = svc.create_session(family="safety", frame={"text": "Assess whether to escalate."})
+    sid = created["session_id"]
+
+    updated = svc.update_workspace_state(
+        sid,
+        workspace_state={
+            "schema_version": "2026-05-19",
+            "frame_locked": True,
+            "report_locked": False,
+            "stage_audit_context": {"frame": {"problem_statement": "Assess whether to escalate."}},
+        },
+    )
+
+    assert updated["workspace_state"]["frame_locked"] is True
+    restored = EngineApiService(store_path=str(store_path))
+    assert restored.get_session(sid)["workspace_state"]["frame_locked"] is True
+
+
 def test_stage_audit_workflow_blocks_and_unblocks_across_stages() -> None:
     svc = EngineApiService()
     created = svc.create_session(

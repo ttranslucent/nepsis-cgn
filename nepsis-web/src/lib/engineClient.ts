@@ -43,7 +43,10 @@ export type EngineSessionSummary = {
   lineage_version: number | null;
   parent_frame_id: string | null;
   frame_ref?: string | null;
+  workspace_state?: EngineWorkspaceState | null;
 };
+
+export type EngineWorkspaceState = Record<string, unknown>;
 
 export type EngineCreateSessionPayload = {
   family: EngineFamily;
@@ -159,6 +162,11 @@ export type EngineStageAuditContext = {
 
 export type EngineStageAuditPayload = {
   context?: EngineStageAuditContext;
+  persist_context?: boolean;
+};
+
+export type EngineWorkspacePayload = {
+  workspace_state: EngineWorkspaceState;
 };
 
 export type EngineStageAuditPolicy = {
@@ -178,6 +186,7 @@ export type EngineStageAuditResponse = {
     latest_packet_id: string | null;
     latest_iteration: number | null;
     context_applied: boolean;
+    context_source?: "request" | "session" | null;
   };
 };
 
@@ -426,6 +435,16 @@ export const engineClient = {
     return requestEngine<EnginePacketResponse>(`/sessions/${encodeURIComponent(sessionId)}/packets`, {
       method: "GET",
     });
+  },
+
+  updateWorkspaceState(
+    sessionId: string,
+    payload: EngineWorkspacePayload,
+  ): Promise<EngineSessionSummary> {
+    return requestEngine<EngineSessionSummary>(
+      `/sessions/${encodeURIComponent(sessionId)}/workspace`,
+      jsonRequest("POST", payload),
+    );
   },
 
   stageAuditSession(

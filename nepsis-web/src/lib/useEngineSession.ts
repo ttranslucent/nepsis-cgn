@@ -15,6 +15,7 @@ import {
   type EngineSessionSummary,
   type EngineStepPayload,
   type EngineStepResponse,
+  type EngineWorkspacePayload,
   engineClient,
 } from "@/lib/engineClient";
 
@@ -236,6 +237,31 @@ export function useEngineSession() {
     [run, state.activeSession],
   );
 
+  const updateWorkspaceState = useCallback(
+    async (sessionId: string, payload: EngineWorkspacePayload): Promise<EngineSessionSummary | undefined> => {
+      try {
+        const session = await engineClient.updateWorkspaceState(sessionId, payload);
+        setState((prev) => ({
+          ...prev,
+          activeSession:
+            prev.activeSession?.session_id === session.session_id ? session : prev.activeSession,
+          sessions: upsertSession(prev.sessions, session),
+        }));
+        return session;
+      } catch (error) {
+        const message =
+          error instanceof EngineClientError && error.status === 401
+            ? "Sign in to access engine session controls."
+            : error instanceof Error
+              ? error.message
+              : "Workspace state update failed";
+        setState((prev) => ({ ...prev, error: message }));
+        return undefined;
+      }
+    },
+    [],
+  );
+
   const deleteSession = useCallback(
     async (sessionId?: string): Promise<EngineDeleteSessionResponse | undefined> => {
       const targetId = sessionId ?? state.activeSession?.session_id;
@@ -301,6 +327,7 @@ export function useEngineSession() {
     refreshPackets,
     deleteSession,
     stageAudit,
+    updateWorkspaceState,
   };
 }
 

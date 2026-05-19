@@ -165,7 +165,9 @@ export function evaluateFrameGate(input: FrameGateInput): GateResult<FramePacket
       key: "problem_statement",
       label: "Problem statement",
       status: textPresent(packet.problem_statement) ? "pass" : "block",
-      detail: textPresent(packet.problem_statement) ? "Defined." : "Required before frame lock.",
+      detail: textPresent(packet.problem_statement)
+        ? "Defined."
+        : "Fill Question with one sentence: 'Should we ... given ...?'",
     },
     {
       key: "catastrophic_outcome",
@@ -173,7 +175,7 @@ export function evaluateFrameGate(input: FrameGateInput): GateResult<FramePacket
       status: textPresent(packet.catastrophic_outcome) ? "pass" : "block",
       detail: textPresent(packet.catastrophic_outcome)
         ? "Red-channel risk defined."
-        : "Define what must not happen.",
+        : "Fill Red boundary with the bad outcome the system must prevent.",
     },
     {
       key: "optimization_goal",
@@ -181,7 +183,7 @@ export function evaluateFrameGate(input: FrameGateInput): GateResult<FramePacket
       status: textPresent(packet.optimization_goal) ? "pass" : "block",
       detail: textPresent(packet.optimization_goal)
         ? "Blue-channel objective defined."
-        : "Define what success should optimize for.",
+        : "Fill Blue goal with what success should optimize after red risk is controlled.",
     },
     {
       key: "decision_horizon",
@@ -189,7 +191,7 @@ export function evaluateFrameGate(input: FrameGateInput): GateResult<FramePacket
       status: textPresent(packet.decision_horizon) ? "pass" : "block",
       detail: textPresent(packet.decision_horizon)
         ? "Time horizon declared."
-        : "Set the operating horizon.",
+        : "Select the decision horizon for this pass.",
     },
     {
       key: "key_uncertainty",
@@ -197,13 +199,16 @@ export function evaluateFrameGate(input: FrameGateInput): GateResult<FramePacket
       status: textPresent(packet.key_uncertainty) ? "pass" : "block",
       detail: textPresent(packet.key_uncertainty)
         ? "Uncertainty source declared."
-        : "Declare the dominant uncertainty source.",
+        : "Fill Key uncertainty with the fact that could most change the decision.",
     },
     {
       key: "constraint_structure",
       label: "Constraint structure",
       status: totalConstraints > 0 ? "pass" : "block",
-      detail: totalConstraints > 0 ? `${totalConstraints} constraints captured.` : "Add at least one hard/soft constraint.",
+      detail:
+        totalConstraints > 0
+          ? `${totalConstraints} constraints captured.`
+          : "Add at least one line under Hard constraints or Soft constraints.",
     },
   ];
 
@@ -251,7 +256,9 @@ export function evaluateInterpretationGate(input: InterpretationGateInput): Gate
       key: "report_text",
       label: "Evidence narrative",
       status: textPresent(packet.report_text) ? "pass" : "block",
-      detail: textPresent(packet.report_text) ? "Evidence text captured." : "Add observations before evaluation.",
+      detail: textPresent(packet.report_text)
+        ? "Evidence text captured."
+        : "Add at least one evidence sentence in Report notes.",
     },
     {
       key: "hypothesis_count",
@@ -260,7 +267,7 @@ export function evaluateInterpretationGate(input: InterpretationGateInput): Gate
       detail:
         packet.hypothesis_count > 0
           ? `${packet.hypothesis_count} candidate interpretations generated.`
-          : "Run evaluation to generate at least one interpretation.",
+          : "Click Run CALL + REPORT to generate candidate interpretations.",
     },
     {
       key: "evidence_count",
@@ -269,7 +276,7 @@ export function evaluateInterpretationGate(input: InterpretationGateInput): Gate
       detail:
         packet.evidence_count > 0
           ? `${packet.evidence_count} evidence lines captured.`
-          : "Link at least one evidence item to proceed.",
+          : "Add each observation as its own evidence line before running the report.",
     },
     {
       key: "evaluation_freshness",
@@ -277,7 +284,7 @@ export function evaluateInterpretationGate(input: InterpretationGateInput): Gate
       status: packet.report_synced ? "pass" : "block",
       detail: packet.report_synced
         ? "Current evidence has been evaluated."
-        : "Evidence changed since last evaluation. Run CALL + REPORT again.",
+        : "Click Run CALL + REPORT again because the evidence text changed.",
     },
     {
       key: "contradictions_declared",
@@ -285,14 +292,14 @@ export function evaluateInterpretationGate(input: InterpretationGateInput): Gate
       status: contradictionDeclared ? "pass" : "block",
       detail: contradictionDeclared
         ? "Contradiction status declared."
-        : "Set contradiction status or add contradiction notes.",
+        : "Set contradiction status to none identified, or choose declared and add a contradiction note.",
     },
     {
       key: "contradiction_density",
       label: "Contradiction density",
       status: highContradictionDensity ? "warn" : "pass",
       detail: highContradictionDensity
-        ? "High contradiction density. Consider gathering more evidence."
+        ? "High contradiction density. Add disambiguating evidence or state what conflicts."
         : "Contradiction density within expected range.",
     },
   ];
@@ -345,38 +352,42 @@ export function evaluateThresholdGate(input: ThresholdGateInput): GateResult<Thr
       detail:
         packet.hypothesis_count > 0
           ? `${packet.hypothesis_count} posterior hypotheses available.`
-          : "Posterior missing. Run interpretation first.",
+          : "Posterior missing. Run CALL + REPORT first.",
     },
     {
       key: "loss_asymmetry",
       label: "Loss asymmetry defined",
       status: lossAsymmetryDefined ? "pass" : "block",
-      detail: lossAsymmetryDefined ? "Threshold costs are defined." : "Loss asymmetry is required for threshold gating.",
+      detail: lossAsymmetryDefined
+        ? "Threshold costs are defined."
+        : "Lock a frame with a risk posture so false-positive and false-negative costs exist.",
     },
     {
       key: "red_override_metadata",
       label: "Red override check",
       status: redGateMetadataReady ? "pass" : "block",
-      detail: redGateMetadataReady ? "Gate metadata available." : "Missing red-gate metadata (warning level / p_bad vs theta).",
+      detail: redGateMetadataReady
+        ? "Gate metadata available."
+        : "Run CALL + REPORT so warning level and p_bad vs theta are available.",
     },
     {
       key: "decision_declared",
       label: "Decision declaration",
       status: decisionDeclared ? "pass" : "block",
-      detail: decisionDeclared ? `Decision marked as ${packet.decision}.` : "Choose recommend or hold.",
+      detail: decisionDeclared ? `Decision marked as ${packet.decision}.` : "Choose recommend action or hold for clarification.",
     },
     {
       key: "hold_reason",
       label: "Hold rationale",
       status: holdReasonReady ? "pass" : "block",
-      detail: holdReasonReady ? "Hold rationale complete." : "Provide hold rationale before continuing.",
+      detail: holdReasonReady ? "Hold rationale complete." : "Add a Hold rationale sentence naming the missing discriminator.",
     },
     {
       key: "red_override_enforced",
       label: "Red override enforcement",
       status: redOverrideViolation ? "block" : "pass",
       detail: redOverrideViolation
-        ? "Red gate crossed. Recommendation is blocked until decision is hold."
+        ? "Red gate crossed. Choose hold or reframe; recommendation cannot proceed while red risk is active."
         : "Red override discipline satisfied.",
     },
   ];

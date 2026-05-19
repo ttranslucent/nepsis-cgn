@@ -22,8 +22,9 @@ from ..manifolds.red_blue import SafetySign
 
 Family = Literal["puzzle", "clinical", "safety"]
 _STORE_SCHEMA_ID = "nepsis.engine_api_sessions"
-_STORE_SCHEMA_VERSION = "1.2.0"
-_SQLITE_SCHEMA_VERSION = 3
+_STORE_SCHEMA_VERSION = "1.3.0"
+_SQLITE_SCHEMA_VERSION = 4
+_WORKSPACE_STATE_MAX_BYTES = 64 * 1024
 _STAGE_AUDIT_POLICY = {
     "name": "nepsis_cgn.stage_audit",
     "version": "2026-03-10",
@@ -53,6 +54,7 @@ class EngineSession:
     lineage_version: int = 1
     parent_frame_id: Optional[str] = None
     owner_id: Optional[str] = None
+    workspace_state: Dict[str, Any] = field(default_factory=dict)
 
 
 class EngineApiService:
@@ -106,6 +108,7 @@ class EngineApiService:
                 lineage_version=max(1, _frame_lineage_version(nav.frame)),
                 parent_frame_id=None,
                 owner_id=normalized_owner_id,
+                workspace_state={},
             )
             self._persist_sessions()
             return self.get_session(session_id)
@@ -213,11 +216,21 @@ class EngineApiService:
         session_id: str,
         *,
         context: Optional[Dict[str, Any]] = None,
+        persist_context: bool = False,
         owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._require_session(session_id, owner_id=owner_id)
+            context_source = "request" if context is not None else "session"
+            if context is None:
+                context = _stored_stage_audit_context(session.workspace_state)
             normalized_context = _normalize_stage_audit_context(context)
+            if persist_context and normalized_context:
+                session.workspace_state = _merge_workspace_state(
+                    session.workspace_state,
+                    {"stage_audit_context": normalized_context},
+                )
+                self._persist_sessions()
             latest_packet = _latest_iteration_packet(session)
 
             frame_packet = _build_frame_stage_packet(session, normalized_context.get("frame"))
@@ -261,8 +274,22 @@ class EngineApiService:
                     "latest_packet_id": _packet_meta_value(latest_packet, "packet_id"),
                     "latest_iteration": _packet_meta_value(latest_packet, "iteration"),
                     "context_applied": bool(normalized_context),
+                    "context_source": context_source if normalized_context else None,
                 },
             }
+
+    def update_workspace_state(
+        self,
+        session_id: str,
+        *,
+        workspace_state: Dict[str, Any],
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require_session(session_id, owner_id=owner_id)
+            session.workspace_state = _normalize_workspace_state(workspace_state)
+            self._persist_sessions()
+            return self._session_summary(session)
 
     def delete_session(self, session_id: str, *, owner_id: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
@@ -445,6 +472,7 @@ class EngineApiService:
             "lineage_version": session.lineage_version,
             "parent_frame_id": session.parent_frame_id,
             "owner_id": session.owner_id,
+            "workspace_state": _json_copy(session.workspace_state) or {},
             "storage": "disk" if self._store_path is not None else "memory",
             "manifest_path": session.manifest_path,
             "governance": _serialize_governance_costs(session.governance_costs),
@@ -500,7 +528,7 @@ class EngineApiService:
                     """
                     SELECT session_id, family, created_at, steps, manifest_path, emit_packet,
                            governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
-                           branch_id, lineage_version, parent_frame_id, owner_id
+                           branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json
                     FROM engine_sessions
                     """
                 ).fetchall()
@@ -526,6 +554,7 @@ class EngineApiService:
                 "lineage_version": row[11],
                 "parent_frame_id": row[12],
                 "owner_id": row[13],
+                "workspace_state": _json_loads_or_none(row[14], encrypted=True) or {},
             }
             restored = self._restore_session(payload)
             self._sessions[restored.session_id] = restored
@@ -573,6 +602,7 @@ class EngineApiService:
             lineage_version=max(1, _frame_lineage_version(nav.frame)),
             parent_frame_id=None,
             owner_id=owner_id,
+            workspace_state=_normalize_workspace_state(payload.get("workspace_state") or {}),
         )
 
         actions = payload.get("actions")
@@ -653,8 +683,8 @@ class EngineApiService:
                         INSERT INTO engine_sessions(
                             session_id, family, created_at, steps, manifest_path, emit_packet,
                             governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
-                            branch_id, lineage_version, parent_frame_id, owner_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             row["session_id"],
@@ -671,6 +701,7 @@ class EngineApiService:
                             int(row["lineage_version"]),
                             row["parent_frame_id"],
                             row["owner_id"],
+                            _json_dumps_or_none(row.get("workspace_state"), encrypted=True),
                         ),
                     )
 
@@ -706,7 +737,8 @@ class EngineApiService:
                 branch_id TEXT,
                 lineage_version INTEGER NOT NULL DEFAULT 1,
                 parent_frame_id TEXT,
-                owner_id TEXT
+                owner_id TEXT,
+                workspace_state_json TEXT
             )
             """
         )
@@ -719,6 +751,8 @@ class EngineApiService:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN parent_frame_id TEXT")
         if "owner_id" not in columns:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN owner_id TEXT")
+        if "workspace_state_json" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN workspace_state_json TEXT")
         conn.execute(
             """
             INSERT INTO engine_store_meta(key, value)
@@ -754,6 +788,7 @@ class EngineApiService:
             "lineage_version": int(session.lineage_version),
             "parent_frame_id": session.parent_frame_id,
             "owner_id": session.owner_id,
+            "workspace_state": _json_copy(session.workspace_state) or {},
         }
 
 
@@ -1036,6 +1071,29 @@ def _normalize_stage_audit_context(context: Optional[Dict[str, Any]]) -> Dict[st
     return normalized
 
 
+def _normalize_workspace_state(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("workspace_state must be an object.")
+    normalized = _json_copy(value)
+    raw = json.dumps(normalized, sort_keys=True)
+    if len(raw.encode("utf-8")) > _WORKSPACE_STATE_MAX_BYTES:
+        raise ValueError("workspace_state is too large.")
+    return normalized
+
+
+def _merge_workspace_state(existing: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    merged = _json_copy(existing) or {}
+    merged.update(_json_copy(update) or {})
+    return _normalize_workspace_state(merged)
+
+
+def _stored_stage_audit_context(workspace_state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    context = workspace_state.get("stage_audit_context") if isinstance(workspace_state, dict) else None
+    return context if isinstance(context, dict) else None
+
+
 def _latest_iteration_packet(session: EngineSession) -> Optional[Dict[str, Any]]:
     if not session.packets:
         return None
@@ -1288,7 +1346,9 @@ def _evaluate_frame_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "key": "problem_statement",
             "label": "Problem statement",
             "status": "pass" if _text_present(packet["problem_statement"]) else "block",
-            "detail": "Defined." if _text_present(packet["problem_statement"]) else "Required before frame lock.",
+            "detail": "Defined."
+            if _text_present(packet["problem_statement"])
+            else "Fill Question with one sentence: 'Should we ... given ...?'",
         },
         {
             "key": "catastrophic_outcome",
@@ -1296,7 +1356,7 @@ def _evaluate_frame_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if _text_present(packet["catastrophic_outcome"]) else "block",
             "detail": "Red-channel risk defined."
             if _text_present(packet["catastrophic_outcome"])
-            else "Define what must not happen.",
+            else "Fill Red boundary with the bad outcome the system must prevent.",
         },
         {
             "key": "optimization_goal",
@@ -1304,7 +1364,7 @@ def _evaluate_frame_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if _text_present(packet["optimization_goal"]) else "block",
             "detail": "Blue-channel objective defined."
             if _text_present(packet["optimization_goal"])
-            else "Define what success should optimize for.",
+            else "Fill Blue goal with what success should optimize after red risk is controlled.",
         },
         {
             "key": "decision_horizon",
@@ -1312,7 +1372,7 @@ def _evaluate_frame_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if _text_present(packet["decision_horizon"]) else "block",
             "detail": "Time horizon declared."
             if _text_present(packet["decision_horizon"])
-            else "Set the operating horizon.",
+            else "Select the decision horizon for this pass.",
         },
         {
             "key": "key_uncertainty",
@@ -1320,7 +1380,7 @@ def _evaluate_frame_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if _text_present(packet["key_uncertainty"]) else "block",
             "detail": "Uncertainty source declared."
             if _text_present(packet["key_uncertainty"])
-            else "Declare the dominant uncertainty source.",
+            else "Fill Key uncertainty with the fact that could most change the decision.",
         },
         {
             "key": "constraint_structure",
@@ -1328,7 +1388,7 @@ def _evaluate_frame_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if total_constraints > 0 else "block",
             "detail": f"{total_constraints} constraints captured."
             if total_constraints > 0
-            else "Add at least one hard/soft constraint.",
+            else "Add at least one line under Hard constraints or Soft constraints.",
         },
     ]
 
@@ -1347,7 +1407,7 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
             "status": "pass" if _text_present(packet["report_text"]) else "block",
             "detail": "Evidence text captured."
             if _text_present(packet["report_text"])
-            else "Add observations before evaluation.",
+            else "Add at least one evidence sentence in Report notes.",
         },
         {
             "key": "hypothesis_count",
@@ -1355,7 +1415,7 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
             "status": "pass" if packet["hypothesis_count"] > 0 else "block",
             "detail": f"{packet['hypothesis_count']} candidate interpretations generated."
             if packet["hypothesis_count"] > 0
-            else "Run evaluation to generate at least one interpretation.",
+            else "Click Run CALL + REPORT to generate candidate interpretations.",
         },
         {
             "key": "evidence_count",
@@ -1363,7 +1423,7 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
             "status": "pass" if packet["evidence_count"] > 0 else "block",
             "detail": f"{packet['evidence_count']} evidence lines captured."
             if packet["evidence_count"] > 0
-            else "Link at least one evidence item to proceed.",
+            else "Add each observation as its own evidence line before running the report.",
         },
         {
             "key": "evaluation_freshness",
@@ -1371,7 +1431,7 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
             "status": "pass" if packet["report_synced"] else "block",
             "detail": "Current evidence has been evaluated."
             if packet["report_synced"]
-            else "Evidence changed since last evaluation. Run CALL + REPORT again.",
+            else "Click Run CALL + REPORT again because the evidence text changed.",
         },
         {
             "key": "contradictions_declared",
@@ -1379,13 +1439,13 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
             "status": "pass" if contradiction_declared else "block",
             "detail": "Contradiction status declared."
             if contradiction_declared
-            else "Set contradiction status or add contradiction notes.",
+            else "Set contradiction status to none identified, or choose declared and add a contradiction note.",
         },
         {
             "key": "contradiction_density",
             "label": "Contradiction density",
             "status": "warn" if high_contradiction_density else "pass",
-            "detail": "High contradiction density. Consider gathering more evidence."
+            "detail": "High contradiction density. Add disambiguating evidence or state what conflicts."
             if high_contradiction_density
             else "Contradiction density within expected range.",
         },
@@ -1406,7 +1466,7 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if packet["hypothesis_count"] > 0 else "block",
             "detail": f"{packet['hypothesis_count']} posterior hypotheses available."
             if packet["hypothesis_count"] > 0
-            else "Posterior missing. Run interpretation first.",
+            else "Posterior missing. Run CALL + REPORT first.",
         },
         {
             "key": "loss_asymmetry",
@@ -1414,7 +1474,7 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if loss_asymmetry_defined else "block",
             "detail": "Threshold costs are defined."
             if loss_asymmetry_defined
-            else "Loss asymmetry is required for threshold gating.",
+            else "Lock a frame with a risk posture so false-positive and false-negative costs exist.",
         },
         {
             "key": "red_override_metadata",
@@ -1422,7 +1482,7 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if red_gate_metadata_ready else "block",
             "detail": "Gate metadata available."
             if red_gate_metadata_ready
-            else "Missing red-gate metadata (warning level / p_bad vs theta).",
+            else "Run CALL + REPORT so warning level and p_bad vs theta are available.",
         },
         {
             "key": "decision_declared",
@@ -1430,7 +1490,7 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if decision_declared else "block",
             "detail": f"Decision marked as {packet['decision']}."
             if decision_declared
-            else "Choose recommend or hold.",
+            else "Choose recommend action or hold for clarification.",
         },
         {
             "key": "hold_reason",
@@ -1438,13 +1498,13 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": "pass" if hold_reason_ready else "block",
             "detail": "Hold rationale complete."
             if hold_reason_ready
-            else "Provide hold rationale before continuing.",
+            else "Add a Hold rationale sentence naming the missing discriminator.",
         },
         {
             "key": "red_override_enforced",
             "label": "Red override enforcement",
             "status": "block" if red_override_violation else "pass",
-            "detail": "Red gate crossed. Recommendation is blocked until decision is hold."
+            "detail": "Red gate crossed. Choose hold or reframe; recommendation cannot proceed while red risk is active."
             if red_override_violation
             else "Red override discipline satisfied.",
         },
