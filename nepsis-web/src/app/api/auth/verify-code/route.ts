@@ -4,7 +4,9 @@ import {
   LOGIN_SESSION_TTL_SECONDS,
   NEPSIS_LOGIN_CHALLENGE_COOKIE,
   NEPSIS_USER_COOKIE,
+  checkLoginRateLimit,
   cookieOptions,
+  createLoginSession,
   normalizeEmail,
   readCookieFromHeader,
   verifyLoginChallenge,
@@ -25,6 +27,14 @@ export async function POST(req: Request) {
   const code = typeof rawCode === "string" ? rawCode.trim() : "";
   if (!email || !code) {
     return NextResponse.json({ error: "Email and code required" }, { status: 400 });
+  }
+
+  const rateLimit = checkLoginRateLimit("verify-code", req, email);
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      { error: rateLimit.error, retryAfterSeconds: rateLimit.retryAfterSeconds },
+      { status: 429 },
+    );
   }
 
   const challenge = readCookieFromHeader(
@@ -48,10 +58,20 @@ export async function POST(req: Request) {
     return response;
   }
 
+  let sessionToken: string;
+  try {
+    sessionToken = createLoginSession(email);
+  } catch (error) {
+    return NextResponse.json(
+      { error: (error as Error)?.message ?? "Login is unavailable in this environment." },
+      { status: 503 },
+    );
+  }
+
   const response = NextResponse.json({ ok: true, user: email });
   response.cookies.set(
     NEPSIS_USER_COOKIE,
-    email,
+    sessionToken,
     cookieOptions(LOGIN_SESSION_TTL_SECONDS),
   );
   response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));

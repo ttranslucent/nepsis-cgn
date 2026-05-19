@@ -22,8 +22,8 @@ from ..manifolds.red_blue import SafetySign
 
 Family = Literal["puzzle", "clinical", "safety"]
 _STORE_SCHEMA_ID = "nepsis.engine_api_sessions"
-_STORE_SCHEMA_VERSION = "1.1.0"
-_SQLITE_SCHEMA_VERSION = 2
+_STORE_SCHEMA_VERSION = "1.2.0"
+_SQLITE_SCHEMA_VERSION = 3
 _STAGE_AUDIT_POLICY = {
     "name": "nepsis_cgn.stage_audit",
     "version": "2026-03-10",
@@ -52,6 +52,7 @@ class EngineSession:
     branch_id: str = ""
     lineage_version: int = 1
     parent_frame_id: Optional[str] = None
+    owner_id: Optional[str] = None
 
 
 class EngineApiService:
@@ -71,9 +72,11 @@ class EngineApiService:
         governance_calibration: Optional[Dict[str, Any]] = None,
         emit_packet: bool = True,
         frame: Optional[Dict[str, Any]] = None,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             session_id = str(uuid4())
+            normalized_owner_id = _normalize_owner_id(owner_id)
             costs = _parse_governance_costs(governance_costs)
             calibration = _parse_governance_calibration(governance_calibration)
             seed_frame_payload = _json_copy(frame)
@@ -102,14 +105,25 @@ class EngineApiService:
                 branch_id=_initial_branch_id(session_id),
                 lineage_version=max(1, _frame_lineage_version(nav.frame)),
                 parent_frame_id=None,
+                owner_id=normalized_owner_id,
             )
             self._persist_sessions()
             return self.get_session(session_id)
 
-    def list_sessions(self, *, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    def list_sessions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
             page_limit, page_offset = _normalize_pagination(limit=limit, offset=offset)
-            summaries = [self._session_summary(s) for s in self._sessions.values()]
+            normalized_owner_id = _normalize_owner_id(owner_id)
+            sessions = self._sessions.values()
+            if normalized_owner_id is not None:
+                sessions = [s for s in sessions if s.owner_id == normalized_owner_id]
+            summaries = [self._session_summary(s) for s in sessions]
             paged = summaries[page_offset : page_offset + page_limit]
             return {
                 "sessions": paged,
@@ -120,9 +134,9 @@ class EngineApiService:
                 },
             }
 
-    def get_session(self, session_id: str) -> Dict[str, Any]:
+    def get_session(self, session_id: str, *, owner_id: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
-            session = self._require_session(session_id)
+            session = self._require_session(session_id, owner_id=owner_id)
             return self._session_summary(session)
 
     def reframe_session(
@@ -132,9 +146,10 @@ class EngineApiService:
         frame: Dict[str, Any],
         branch_id: Optional[str] = None,
         parent_frame_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
-            session = self._require_session(session_id)
+            session = self._require_session(session_id, owner_id=owner_id)
             response = self._reframe_session_internal(
                 session,
                 frame=frame,
@@ -154,9 +169,10 @@ class EngineApiService:
         user_decision: Optional[str] = None,
         override_reason: Optional[str] = None,
         carry_forward: Optional[Dict[str, Any]] = None,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
-            session = self._require_session(session_id)
+            session = self._require_session(session_id, owner_id=owner_id)
             return self._step_session_internal(
                 session,
                 sign=sign,
@@ -168,9 +184,16 @@ class EngineApiService:
                 persist=True,
             )
 
-    def get_packets(self, session_id: str, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    def get_packets(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
-            session = self._require_session(session_id)
+            session = self._require_session(session_id, owner_id=owner_id)
             page_limit, page_offset = _normalize_pagination(limit=limit, offset=offset)
             total = len(session.packets)
             paged = list(session.packets)[page_offset : page_offset + page_limit]
@@ -190,9 +213,10 @@ class EngineApiService:
         session_id: str,
         *,
         context: Optional[Dict[str, Any]] = None,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
-            session = self._require_session(session_id)
+            session = self._require_session(session_id, owner_id=owner_id)
             normalized_context = _normalize_stage_audit_context(context)
             latest_packet = _latest_iteration_packet(session)
 
@@ -240,9 +264,9 @@ class EngineApiService:
                 },
             }
 
-    def delete_session(self, session_id: str) -> Dict[str, Any]:
+    def delete_session(self, session_id: str, *, owner_id: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
-            session = self._require_session(session_id)
+            session = self._require_session(session_id, owner_id=owner_id)
             del self._sessions[session_id]
             self._persist_sessions()
             return {
@@ -257,6 +281,7 @@ class EngineApiService:
         *,
         max_age_seconds: float,
         dry_run: bool = False,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if max_age_seconds <= 0:
             raise ValueError("max_age_seconds must be > 0.")
@@ -265,8 +290,11 @@ class EngineApiService:
             now = datetime.now(timezone.utc)
             cutoff = now.timestamp() - float(max_age_seconds)
             to_delete: list[str] = []
+            normalized_owner_id = _normalize_owner_id(owner_id)
 
             for sid, session in self._sessions.items():
+                if normalized_owner_id is not None and session.owner_id != normalized_owner_id:
+                    continue
                 created = _parse_iso8601(session.created_at)
                 if created.timestamp() <= cutoff:
                     to_delete.append(sid)
@@ -416,16 +444,21 @@ class EngineApiService:
             "branch_id": session.branch_id,
             "lineage_version": session.lineage_version,
             "parent_frame_id": session.parent_frame_id,
+            "owner_id": session.owner_id,
             "storage": "disk" if self._store_path is not None else "memory",
             "manifest_path": session.manifest_path,
             "governance": _serialize_governance_costs(session.governance_costs),
             "calibration": _serialize_governance_calibration(session.governance_calibration),
         }
 
-    def _require_session(self, session_id: str) -> EngineSession:
+    def _require_session(self, session_id: str, *, owner_id: Optional[str] = None) -> EngineSession:
         if session_id not in self._sessions:
             raise KeyError(f"Unknown session_id: {session_id}")
-        return self._sessions[session_id]
+        session = self._sessions[session_id]
+        normalized_owner_id = _normalize_owner_id(owner_id)
+        if normalized_owner_id is not None and session.owner_id != normalized_owner_id:
+            raise PermissionError("Session is not owned by the authenticated identity.")
+        return session
 
     def _load_sessions(self) -> None:
         if self._store_path is None or not self._store_path.exists():
@@ -467,7 +500,7 @@ class EngineApiService:
                     """
                     SELECT session_id, family, created_at, steps, manifest_path, emit_packet,
                            governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
-                           branch_id, lineage_version, parent_frame_id
+                           branch_id, lineage_version, parent_frame_id, owner_id
                     FROM engine_sessions
                     """
                 ).fetchall()
@@ -492,6 +525,7 @@ class EngineApiService:
                 "branch_id": row[10],
                 "lineage_version": row[11],
                 "parent_frame_id": row[12],
+                "owner_id": row[13],
             }
             restored = self._restore_session(payload)
             self._sessions[restored.session_id] = restored
@@ -507,6 +541,7 @@ class EngineApiService:
         session_id = str(payload.get("session_id") or uuid4())
         created_at = str(payload.get("created_at") or _now_iso8601())
         manifest_path = payload.get("manifest_path")
+        owner_id = _normalize_owner_id(payload.get("owner_id"))
         emit_packet = bool(payload.get("emit_packet", True))
         costs = _parse_governance_costs(payload.get("governance_costs"))
         calibration = _parse_governance_calibration(payload.get("governance_calibration"))
@@ -537,6 +572,7 @@ class EngineApiService:
             branch_id=_initial_branch_id(session_id),
             lineage_version=max(1, _frame_lineage_version(nav.frame)),
             parent_frame_id=None,
+            owner_id=owner_id,
         )
 
         actions = payload.get("actions")
@@ -617,8 +653,8 @@ class EngineApiService:
                         INSERT INTO engine_sessions(
                             session_id, family, created_at, steps, manifest_path, emit_packet,
                             governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
-                            branch_id, lineage_version, parent_frame_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            branch_id, lineage_version, parent_frame_id, owner_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             row["session_id"],
@@ -634,6 +670,7 @@ class EngineApiService:
                             row["branch_id"],
                             int(row["lineage_version"]),
                             row["parent_frame_id"],
+                            row["owner_id"],
                         ),
                     )
 
@@ -668,7 +705,8 @@ class EngineApiService:
                 actions_json TEXT NOT NULL,
                 branch_id TEXT,
                 lineage_version INTEGER NOT NULL DEFAULT 1,
-                parent_frame_id TEXT
+                parent_frame_id TEXT,
+                owner_id TEXT
             )
             """
         )
@@ -679,6 +717,8 @@ class EngineApiService:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN lineage_version INTEGER NOT NULL DEFAULT 1")
         if "parent_frame_id" not in columns:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN parent_frame_id TEXT")
+        if "owner_id" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN owner_id TEXT")
         conn.execute(
             """
             INSERT INTO engine_store_meta(key, value)
@@ -713,6 +753,7 @@ class EngineApiService:
             "branch_id": session.branch_id,
             "lineage_version": int(session.lineage_version),
             "parent_frame_id": session.parent_frame_id,
+            "owner_id": session.owner_id,
         }
 
 
@@ -807,6 +848,19 @@ def _parse_governance_costs(payload: Optional[Dict[str, float]]) -> Optional[Gov
     if "c_fp" not in payload or "c_fn" not in payload:
         raise ValueError("Governance costs must include c_fp and c_fn.")
     return GovernanceCosts(c_fp=float(payload["c_fp"]), c_fn=float(payload["c_fn"]))
+
+
+def _normalize_owner_id(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("owner_id must be a string when provided.")
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if len(normalized) > 256:
+        raise ValueError("owner_id must be 256 characters or fewer.")
+    return normalized
 
 
 def _parse_governance_calibration(payload: Optional[Dict[str, Any]]) -> Optional[GovernanceCalibration]:

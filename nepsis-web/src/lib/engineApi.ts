@@ -1,6 +1,7 @@
 import { readNepsisUserFromRequest } from "@/lib/nepsisAuth";
 
 const DEFAULT_ENGINE_BASE_URL = "http://127.0.0.1:8787";
+const ENGINE_SESSION_OWNER_HEADER = "X-Nepsis-Session-Owner";
 
 class EngineConfigurationError extends Error {
   constructor(message: string) {
@@ -27,18 +28,33 @@ function configuredEngineToken(): string | null {
   return token && token.length > 0 ? token : null;
 }
 
-function withEngineAuthHeaders(input?: HeadersInit): Headers {
+function envFlag(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+export function anonymousEngineControlsAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" && envFlag("NEPSIS_ENGINE_ALLOW_ANON");
+}
+
+export function engineControlOwner(request: Request): string | null {
+  return readNepsisUserFromRequest(request);
+}
+
+function withEngineAuthHeaders(input?: HeadersInit, owner?: string | null): Headers {
   const headers = new Headers(input);
   const token = configuredEngineToken();
   if (token && !headers.has("Authorization") && !headers.has("X-API-Key")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+  if (owner && !headers.has(ENGINE_SESSION_OWNER_HEADER)) {
+    headers.set(ENGINE_SESSION_OWNER_HEADER, owner);
+  }
   return headers;
 }
 
 export function requireEngineControlAuth(request: Request): Response | null {
-  const allowAnonymous = process.env.NEPSIS_ENGINE_ALLOW_ANON === "true";
-  if (allowAnonymous || readNepsisUserFromRequest(request)) {
+  if (anonymousEngineControlsAllowed() || engineControlOwner(request)) {
     return null;
   }
   return Response.json(
@@ -50,11 +66,15 @@ export function requireEngineControlAuth(request: Request): Response | null {
   );
 }
 
-export async function proxyEngineRequest(path: string, init?: RequestInit): Promise<Response> {
+export async function proxyEngineRequest(
+  path: string,
+  init?: RequestInit,
+  options?: { owner?: string | null },
+): Promise<Response> {
   const base = engineBaseUrl().replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const target = `${base}${normalizedPath}`;
-  const headers = withEngineAuthHeaders(init?.headers);
+  const headers = withEngineAuthHeaders(init?.headers, options?.owner);
   return fetch(target, { ...init, headers });
 }
 

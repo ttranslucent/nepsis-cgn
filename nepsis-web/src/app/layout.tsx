@@ -5,7 +5,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
-import { NEPSIS_USER_COOKIE } from "@/lib/nepsisAuth";
+import { NEPSIS_USER_COOKIE, readNepsisUserFromCookieValue } from "@/lib/nepsisAuth";
 
 const nepsisSans = Space_Grotesk({
   subsets: ["latin"],
@@ -47,7 +47,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const cookieStore = await cookies();
-  const signedInUser = cookieStore.get(NEPSIS_USER_COOKIE)?.value ?? null;
+  const signedInUser = readNepsisUserFromCookieValue(cookieStore.get(NEPSIS_USER_COOKIE)?.value);
 
   return (
     <html lang="en" className={`${nepsisSans.variable} ${nepsisMono.variable}`}>
@@ -105,6 +105,15 @@ export default async function RootLayout({
                   </Link>
                 )}
               </nav>
+            </div>
+            <div className="border-t border-nepsis-border/60 bg-black/20 px-4 py-2 text-xs text-nepsis-muted md:px-6">
+              <div className="mx-auto flex w-full max-w-[1380px] flex-wrap items-center gap-x-4 gap-y-1">
+                <span>
+                  Demo mode: <strong className="text-nepsis-text">/mvp</strong> is deterministic and frozen.
+                </span>
+                <span>Playground/model calls require OpenAI key configuration.</span>
+                <span>Engine sessions are experimental operator tools.</span>
+              </div>
             </div>
           </header>
 

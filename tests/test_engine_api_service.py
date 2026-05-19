@@ -35,6 +35,28 @@ def test_create_and_step_safety_session_with_governance() -> None:
     assert step["session"]["packet_count"] == 1
 
 
+def test_session_owner_limits_cross_user_access() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(family="safety", owner_id="Alice@Example.com")
+    sid = created["session_id"]
+
+    assert created["owner_id"] == "alice@example.com"
+    assert svc.get_session(sid, owner_id="alice@example.com")["session_id"] == sid
+    assert svc.get_session(sid)["session_id"] == sid
+    assert svc.list_sessions(owner_id="alice@example.com")["pagination"]["total"] == 1
+    assert svc.list_sessions(owner_id="bob@example.com")["pagination"]["total"] == 0
+
+    with pytest.raises(PermissionError):
+        svc.get_session(sid, owner_id="bob@example.com")
+
+    with pytest.raises(PermissionError):
+        svc.step_session(
+            sid,
+            sign={"critical_signal": True, "policy_violation": False},
+            owner_id="bob@example.com",
+        )
+
+
 def test_reframe_increments_frame_version() -> None:
     svc = EngineApiService()
     created = svc.create_session(

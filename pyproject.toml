@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nepsis-cgn"
-version = "0.0.1"
+version = "0.3.0"
 description = "Nepsis Constraint Geometry Navigation (NepsisCGN) – interpretant-aware constraint solver."
 authors = [{ name = "Trent Thorn" }]
 readme = "README.md"

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   LOGIN_CODE_TTL_SECONDS,
   NEPSIS_LOGIN_CHALLENGE_COOKIE,
+  checkLoginRateLimit,
   cookieOptions,
   createLoginChallenge,
   deliverLoginCode,
@@ -23,6 +24,14 @@ export async function POST(req: Request) {
   const email = normalizeEmail((body as { email?: unknown } | null)?.email);
   if (!email) {
     return NextResponse.json({ error: "Valid email required" }, { status: 400 });
+  }
+
+  const rateLimit = checkLoginRateLimit("request-code", req, email);
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      { error: rateLimit.error, retryAfterSeconds: rateLimit.retryAfterSeconds },
+      { status: 429 },
+    );
   }
 
   const code = generateLoginCode();

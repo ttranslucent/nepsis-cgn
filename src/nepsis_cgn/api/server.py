@@ -57,7 +57,7 @@ ROUTES = (
 
 
 class EngineApiHandler(BaseHTTPRequestHandler):
-    server_version = "NepsisApi/0.2"
+    server_version = "NepsisApi/0.3"
 
     def setup(self) -> None:  # noqa: D401
         super().setup()
@@ -96,7 +96,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         m_session = re.fullmatch(r"/v1/sessions/([^/]+)", path)
         if m_session:
             session_id = m_session.group(1)
-            self._safe(lambda: API.get_session(session_id))
+            self._safe(lambda: API.get_session(session_id, owner_id=_handler_owner_id(self)))
             return
 
         m_packets = re.fullmatch(r"/v1/sessions/([^/]+)/packets", path)
@@ -108,7 +108,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         m_stage_audit = re.fullmatch(r"/v1/sessions/([^/]+)/stage-audit", path)
         if m_stage_audit:
             session_id = m_stage_audit.group(1)
-            self._safe(lambda: API.stage_audit_session(session_id))
+            self._safe(lambda: API.stage_audit_session(session_id, owner_id=_handler_owner_id(self)))
             return
 
         self._send_json(404, {"error": "Not found"})
@@ -166,7 +166,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         m_session = re.fullmatch(r"/v1/sessions/([^/]+)", path)
         if m_session:
             session_id = m_session.group(1)
-            self._safe(lambda: API.delete_session(session_id))
+            self._safe(lambda: API.delete_session(session_id, owner_id=_handler_owner_id(self)))
             return
         self._send_json(404, {"error": "Not found"})
 
@@ -188,6 +188,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             governance_calibration=calibration,
             emit_packet=bool(body.get("emit_packet", True)),
             frame=body.get("frame"),
+            owner_id=_handler_owner_id(self),
         )
 
     def _step_session(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -201,6 +202,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             user_decision=body.get("user_decision"),
             override_reason=body.get("override_reason"),
             carry_forward=body.get("carry_forward"),
+            owner_id=_handler_owner_id(self),
         )
 
     def _reframe_session(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -218,6 +220,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             frame=frame,
             branch_id=branch_id.strip() if isinstance(branch_id, str) else None,
             parent_frame_id=parent_frame_id.strip() if isinstance(parent_frame_id, str) else None,
+            owner_id=_handler_owner_id(self),
         )
 
     def _stage_audit_session(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -228,7 +231,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             if not isinstance(raw_context, dict):
                 raise ValueError("stage-audit payload 'context' must be an object when provided")
             context = raw_context
-        return API.stage_audit_session(session_id, context=context)
+        return API.stage_audit_session(session_id, context=context, owner_id=_handler_owner_id(self))
 
     def _run_mvp(self, body: dict[str, Any]) -> dict[str, Any]:
         case_id = body.get("case_id", body.get("case", "jailing"))
@@ -242,17 +245,21 @@ class EngineApiHandler(BaseHTTPRequestHandler):
     def _list_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=50)
         offset = _query_optional_int(query, "offset", default=0)
-        return API.list_sessions(limit=limit, offset=offset)
+        return API.list_sessions(limit=limit, offset=offset, owner_id=_handler_owner_id(self))
 
     def _get_packets(self, session_id: str, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=100)
         offset = _query_optional_int(query, "offset", default=0)
-        return API.get_packets(session_id, limit=limit, offset=offset)
+        return API.get_packets(session_id, limit=limit, offset=offset, owner_id=_handler_owner_id(self))
 
     def _purge_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         max_age_seconds = _query_required_float(query, "max_age_seconds")
         dry_run = _query_optional_bool(query, "dry_run", default=False)
-        return API.purge_sessions(max_age_seconds=max_age_seconds, dry_run=dry_run)
+        return API.purge_sessions(
+            max_age_seconds=max_age_seconds,
+            dry_run=dry_run,
+            owner_id=_handler_owner_id(self),
+        )
 
     def _safe(self, op: Callable[[], dict[str, Any]]) -> None:
         try:
@@ -260,6 +267,8 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             self._send_json(200, payload)
         except KeyError as exc:
             self._send_json(404, {"error": str(exc)})
+        except PermissionError as exc:
+            self._send_json(403, {"error": str(exc)})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception:  # pragma: no cover
@@ -498,6 +507,22 @@ def _request_api_token(headers: Any) -> str | None:
     return None
 
 
+def _request_owner_id(headers: Any) -> str | None:
+    owner_id = headers.get("X-Nepsis-Session-Owner")
+    if not isinstance(owner_id, str):
+        return None
+    normalized = owner_id.strip().lower()
+    if not normalized:
+        return None
+    if len(normalized) > 256:
+        raise ValueError("X-Nepsis-Session-Owner must be 256 characters or fewer.")
+    return normalized
+
+
+def _handler_owner_id(handler: Any) -> str | None:
+    return _request_owner_id(getattr(handler, "headers", {}))
+
+
 def _query_required_float(query: dict[str, list[str]], name: str) -> float:
     values = query.get(name)
     if not values:
@@ -662,7 +687,7 @@ def openapi_spec() -> dict[str, Any]:
         "openapi": "3.1.0",
         "info": {
             "title": "NepsisCGN Engine API",
-            "version": "0.2.0",
+            "version": "0.3.0",
             "description": "Engine control API for NepsisCGN session lifecycle and governance.",
         },
         "paths": paths,

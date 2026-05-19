@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { getStoredOpenAiKey } from "@/lib/clientStorage";
+import { getStoredOpenAiKey, hasStoredOpenAiKey } from "@/lib/clientStorage";
 
 type PackOption = {
   id: "jailing_jingall" | "utf8_clean";
@@ -29,6 +29,31 @@ export default function PlaygroundPage() {
   const [evaluation, setEvaluation] = useState<ProtoEvaluation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasBrowserKey, setHasBrowserKey] = useState<boolean | null>(null);
+  const [hasServerKey, setHasServerKey] = useState<boolean | null>(null);
+  const keyReady = hasBrowserKey === true || hasServerKey === true;
+
+  useEffect(() => {
+    setHasBrowserKey(hasStoredOpenAiKey());
+    let cancelled = false;
+    async function loadKeyState() {
+      try {
+        const res = await fetch("/api/playground-nepsis", { method: "GET" });
+        const data = await res.json();
+        if (!cancelled) {
+          setHasServerKey(Boolean(data.hasServerKey));
+        }
+      } catch {
+        if (!cancelled) {
+          setHasServerKey(false);
+        }
+      }
+    }
+    void loadKeyState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function runNepsis() {
     setLoading(true);
@@ -39,6 +64,12 @@ export default function PlaygroundPage() {
     if (!prompt.trim()) {
       setLoading(false);
       setError("Please enter a prompt before running NepsisCGN.");
+      return;
+    }
+
+    if (!keyReady) {
+      setLoading(false);
+      setError("OpenAI key required. Add a browser-local key in Settings or configure a server-side key.");
       return;
     }
 
@@ -75,6 +106,16 @@ export default function PlaygroundPage() {
         <div className="mb-2 text-xs text-nepsis-muted">
           Status: Ready – NepsisCGN will evaluate the selected constraint pack against every run.
         </div>
+        <div className="mb-2 text-xs text-nepsis-muted">
+          OpenAI key:{" "}
+          {hasBrowserKey === null || hasServerKey === null
+            ? "checking..."
+            : keyReady
+              ? hasBrowserKey
+                ? "browser local key available"
+                : "server key configured"
+              : "missing"}
+        </div>
         <p className="mb-4 text-sm text-nepsis-muted">
           Enter a prompt, run your LLM through NepsisCGN, and inspect the output and constraint
           evaluation side-by-side.
@@ -104,10 +145,16 @@ export default function PlaygroundPage() {
 
         <button
           onClick={runNepsis}
-          className="mt-2 rounded-full bg-nepsis-accent px-4 py-2 text-sm font-medium text-black hover:bg-nepsis-accentSoft focus:outline-none focus:ring-2 focus:ring-nepsis-accent"
+          disabled={loading || !keyReady}
+          className="mt-2 rounded-full bg-nepsis-accent px-4 py-2 text-sm font-medium text-black hover:bg-nepsis-accentSoft focus:outline-none focus:ring-2 focus:ring-nepsis-accent disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Running..." : "Run with NepsisCGN"}
         </button>
+        {!keyReady && hasBrowserKey !== null && hasServerKey !== null && (
+          <a href="/settings" className="ml-3 text-xs font-semibold text-nepsis-accent hover:underline">
+            Open Settings
+          </a>
+        )}
 
         {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
       </div>

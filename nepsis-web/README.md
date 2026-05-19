@@ -31,6 +31,7 @@ Development defaults:
 
 - `/api/engine/*` proxies to `http://127.0.0.1:8787` when `NEPSIS_API_BASE_URL` is unset.
 - Login codes can fall back to on-screen preview in non-production environments.
+- `/api/engine/mvp` is the deterministic v0.3 demo path; session, engine, and LLM flows are experimental.
 
 ## Engine Proxy Routes
 
@@ -62,7 +63,7 @@ Engine connectivity:
 
 - `NEPSIS_API_BASE_URL`: Required in production. Public base URL of the Nepsis API that Vercel should reach.
 - `NEPSIS_API_TOKEN`: Optional bearer token forwarded to the Nepsis API.
-- `NEPSIS_ENGINE_ALLOW_ANON`: Optional local/demo override to bypass browser login for engine session controls.
+- `NEPSIS_ENGINE_ALLOW_ANON`: Optional local/demo override to bypass browser login for engine session controls. Ignored in production.
 
 Passwordless auth:
 
@@ -79,6 +80,10 @@ OpenAI-backed playground routes:
 - `OPENAI_MODEL`: Optional default model. Defaults to `gpt-4.1-mini`.
 - `OPENAI_API_URL`: Optional override for the Responses API endpoint.
 
+Browser-local OpenAI key storage in `/settings` is local-demo only. Do not use it
+as a shared deployment secret flow; prefer server-side environment variables for
+reviewed deployments.
+
 Local proto-puzzle overrides:
 
 - `NEPSIS_PYTHON`
@@ -92,6 +97,7 @@ Production behavior is intentionally strict:
 - If `NEPSIS_API_BASE_URL` is missing, `/api/engine/*` returns `503` and `/engine` shows `Engine backend not configured`.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
 - If email delivery is not configured, `/login` either shows a preview code when preview is enabled or tells the operator which auth env vars are missing.
+- Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside production.
 
 Recommended deployment sequence:
 

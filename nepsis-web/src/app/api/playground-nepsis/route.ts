@@ -3,6 +3,7 @@ import {
   DEFAULT_OPENAI_MODEL,
   createOpenAiClient,
   extractOpenAiText,
+  hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
 import { buildProtoStateFromOutput, extractJingallCandidate, letterDelta } from "@/lib/protoPuzzleFromLlm";
 import { evaluateProtoPuzzleTs, type ProtoEvaluation } from "@/lib/protoPuzzle";
@@ -18,6 +19,13 @@ type PlaygroundRequest = {
   model?: string;
 };
 
+export async function GET() {
+  return NextResponse.json({
+    hasServerKey: hasConfiguredOpenAiKey(),
+    defaultModel: DEFAULT_OPENAI_MODEL,
+  });
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   if (!body) {
@@ -32,6 +40,17 @@ export async function POST(req: Request) {
 
   if (!packId || typeof packId !== "string" || !PLAYGROUND_PACKS.has(packId)) {
     return NextResponse.json({ error: "Pack is not available in Playground" }, { status: 400 });
+  }
+
+  if (!apiKey?.trim() && !hasConfiguredOpenAiKey()) {
+    return NextResponse.json(
+      {
+        error: "OpenAI key required",
+        detail:
+          "Add a local browser key in Settings or configure OPENAI_API_KEY/NEPSIS_OPENAI_API_KEY on the server before running Playground.",
+      },
+      { status: 428 },
+    );
   }
 
   try {

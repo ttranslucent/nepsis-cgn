@@ -31,6 +31,17 @@ The MVP demonstrates:
 
 The v0.3 MVP is not a medical diagnostic tool, not a live clinical decision support system, and not a replacement for clinician judgment. The demo packets are deterministic proof artifacts showing the governance architecture, not autonomous model conclusions.
 
+## Supported Runtime Matrix
+
+| Component | Supported runtime | Notes |
+| --- | --- | --- |
+| Python package/API | CPython 3.11 | Use `.venv/bin/python`; install with `.[dev,api]`. |
+| Next UI | Node.js 20 LTS with npm lockfile | Use `npm ci` from `nepsis-web`. |
+| MVP demo | Python 3.11 backend plus local Next UI | Frozen deterministic v0.3 path. |
+| Engine/session/LLM flows | Experimental | Keep behind auth and do not treat as the MVP proof path. |
+
+See [docs/runtime-matrix.md](docs/runtime-matrix.md) for the smoke path and deployment notes.
+
 ## Quickstart
 
 Clone and enter the repo:
@@ -44,8 +55,17 @@ One-time dependency setup:
 
 ```bash
 python3.11 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev,api]'
-cd nepsis-web && npm ci && cd ..
+cd nepsis-web
+npm ci
+cd ..
+```
+
+Full reproducibility smoke path from the repo root:
+
+```bash
+scripts/smoke.sh
 ```
 
 ## CLI Demo
@@ -131,6 +151,10 @@ Open `http://localhost:3000/mvp`, choose `Jailing` or `Clinical`, then click `Ru
 
 Runtime architecture also includes the triage → projection → validation supervisor, reference manifolds, manifest loader, tension-aware manifold governor, and LLM provider registry. Runtime `nepsis.iteration_packet` output includes `still` as the finalization interlock for session/API runs.
 
+These broader engine/session/LLM flows are experimental in v0.3. Keep `/mvp`,
+`POST /v1/mvp`, and `POST /api/engine/mvp` as the frozen deterministic demo
+path.
+
 ## Tests and Environment Notes
 
 Run the backend tests:
@@ -152,14 +176,18 @@ Environment notes:
 - Python must be >=3.11.
 - Use `.venv/bin/python`; system `python3` may be Python 3.9.
 - `OPENAI_API_KEY` is required only for real model calls.
+- Browser-stored OpenAI keys are local-demo only; do not use them as shared deployment secrets.
 - The simulated provider exercises red-channel repair without external model access.
 - The OpenAI provider maps the `openai` alias to `gpt-4o` unless a specific `gpt-*` model is supplied.
+- Security policy: [SECURITY.md](SECURITY.md).
+- License: [LICENSE](LICENSE).
 
 ## Known Limitations
 
 - Runtime State Feedback is not implemented; current State Feedback is deterministic MVP packet scaffolding.
 - API session packets and MVP packets are separate shapes.
 - LLM integration is not part of the deterministic MVP demo path.
+- Engine sessions, playground/model sandbox calls, and browser-stored OpenAI keys are experimental.
 - system `python3` may be Python 3.9; use `.venv/bin/python`.
 - `pytest -q` alone may fail unless the package/environment is installed correctly.
 
@@ -194,5 +222,6 @@ The canonical v0.3 MVP command is `.venv/bin/python -m nepsis_cgn.cli.main --jso
 ## Handoff Notes
 
 - March continuity, deployment/auth notes, local machine paths, and side-branch notes were moved to `docs/handoff.md`.
+- Operator rehearsal checklist: `docs/operator-runbook.md`.
 - The manifest loader uses `data/manifests/manifest_definitions.yaml`; pass `--manifest /path/to/manifest_definitions.yaml` for a custom manifest.
 - Governance draft: `briefs/nepsis_governance_spec_v1.md`.

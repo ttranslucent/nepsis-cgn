@@ -59,6 +59,10 @@ export function createOpenAiClient(apiKeyOverride?: string | null): SimpleOpenAi
   return new SimpleOpenAiClient(apiKey, API_URL);
 }
 
+export function hasConfiguredOpenAiKey(): boolean {
+  return normalizeApiKey(ENV_API_KEY).length > 0;
+}
+
 export function extractOpenAiText(payload: Record<string, unknown> | null | undefined): string {
   if (!payload) {
     return "";

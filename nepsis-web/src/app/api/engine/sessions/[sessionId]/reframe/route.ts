@@ -1,4 +1,5 @@
 import {
+  engineControlOwner,
   engineErrorResponse,
   proxyEngineRequest,
   proxyJsonResponse,
@@ -14,6 +15,7 @@ export async function POST(req: Request, { params }: RouteParams) {
   if (unauthorized) {
     return unauthorized;
   }
+  const owner = engineControlOwner(req);
   const { sessionId } = await params;
   const body = await req.text();
   try {
@@ -21,7 +23,7 @@ export async function POST(req: Request, { params }: RouteParams) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
-    });
+    }, { owner });
     return proxyJsonResponse(upstream);
   } catch (error) {
     return engineErrorResponse(error);

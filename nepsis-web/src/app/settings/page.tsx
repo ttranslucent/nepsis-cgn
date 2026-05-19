@@ -83,7 +83,7 @@ export default function SettingsPage() {
 
           <p className="text-sm text-nepsis-muted">
             Add an OpenAI API key to enable live calls in Playground and Engine. For MVP this key is stored locally in
-            your browser.
+            your browser for local demos only; use server-side environment variables for shared deployments.
           </p>
 
           <label className="mt-5 block text-xs uppercase tracking-[0.14em] text-nepsis-muted">OpenAI API Key</label>
@@ -140,7 +140,7 @@ export default function SettingsPage() {
               <div className="mt-1 font-mono text-sm text-nepsis-accent">{hasKey ? maskKey(apiKey) : "none"}</div>
             </div>
             <div className="rounded-xl border border-nepsis-border bg-black/20 p-3 text-xs text-nepsis-muted">
-              Use a non-production key for demos. Rotate it after public testing.
+              Local-demo only. Use a non-production key and rotate it after public testing.
             </div>
           </div>
         </aside>

@@ -5,6 +5,11 @@ export const NEPSIS_LOGIN_CHALLENGE_COOKIE = "nepsis_login_challenge";
 export const LOGIN_CODE_TTL_SECONDS = 10 * 60;
 export const LOGIN_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const RESEND_REQUEST_TIMEOUT_MS = 8000;
+const LOGIN_REQUEST_WINDOW_SECONDS = 15 * 60;
+const LOGIN_REQUEST_MAX_ATTEMPTS = 5;
+const LOGIN_VERIFY_WINDOW_SECONDS = 10 * 60;
+const LOGIN_VERIFY_MAX_ATTEMPTS = 10;
+const RATE_LIMIT_STATE = new Map<string, number[]>();
 
 type LoginChallengePayload = {
   email: string;
@@ -12,10 +17,21 @@ type LoginChallengePayload = {
   expiresAt: number;
 };
 
+type LoginSessionPayload = {
+  email: string;
+  issuedAt: number;
+  expiresAt: number;
+};
+
 type LoginCodeDelivery =
   | { delivery: "email" }
   | { delivery: "preview"; previewCode: string }
   | { delivery: "unavailable"; error: string };
+
+type LoginRateLimitScope = "request-code" | "verify-code";
+type LoginRateLimitResult =
+  | { ok: true }
+  | { ok: false; retryAfterSeconds: number; error: string };
 
 function envFlag(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase();
@@ -50,38 +66,164 @@ function signValue(payload: string): string {
   return crypto.createHmac("sha256", authSecret()).update(payload).digest("base64url");
 }
 
-function encodeChallenge(payload: LoginChallengePayload): string {
+function encodeSignedPayload(payload: object): string {
   const encoded = Buffer.from(JSON.stringify(payload), "utf-8").toString("base64url");
   const signature = signValue(encoded);
   return `${encoded}.${signature}`;
 }
 
-function decodeChallenge(token: string): LoginChallengePayload | null {
+function signatureMatches(encoded: string, signature: string): boolean {
+  const expected = signValue(encoded);
+  const actualBuffer = Buffer.from(signature, "base64url");
+  const expectedBuffer = Buffer.from(expected, "base64url");
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function decodeSignedPayload(token: string): unknown | null {
   const [encoded, signature] = token.split(".", 2);
   if (!encoded || !signature) {
     return null;
   }
-  if (signValue(encoded) !== signature) {
+  if (!signatureMatches(encoded, signature)) {
     return null;
   }
   try {
-    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf-8"));
-    if (
-      typeof parsed?.email !== "string" ||
-      typeof parsed?.hash !== "string" ||
-      typeof parsed?.expiresAt !== "number" ||
-      !Number.isFinite(parsed.expiresAt)
-    ) {
-      return null;
-    }
-    return {
-      email: parsed.email,
-      hash: parsed.hash,
-      expiresAt: parsed.expiresAt,
-    };
+    return JSON.parse(Buffer.from(encoded, "base64url").toString("utf-8"));
   } catch {
     return null;
   }
+}
+
+function decodeChallenge(token: string): LoginChallengePayload | null {
+  const parsed = decodeSignedPayload(token);
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    typeof (parsed as LoginChallengePayload).email === "string" &&
+    typeof (parsed as LoginChallengePayload).hash === "string" &&
+    typeof (parsed as LoginChallengePayload).expiresAt === "number" &&
+    Number.isFinite((parsed as LoginChallengePayload).expiresAt)
+  ) {
+    return {
+      email: (parsed as LoginChallengePayload).email,
+      hash: (parsed as LoginChallengePayload).hash,
+      expiresAt: (parsed as LoginChallengePayload).expiresAt,
+    };
+  }
+  return null;
+}
+
+function decodeSession(token: string): LoginSessionPayload | null {
+  const parsed = decodeSignedPayload(token);
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    typeof (parsed as LoginSessionPayload).email === "string" &&
+    typeof (parsed as LoginSessionPayload).issuedAt === "number" &&
+    typeof (parsed as LoginSessionPayload).expiresAt === "number" &&
+    Number.isFinite((parsed as LoginSessionPayload).issuedAt) &&
+    Number.isFinite((parsed as LoginSessionPayload).expiresAt)
+  ) {
+    return {
+      email: (parsed as LoginSessionPayload).email,
+      issuedAt: (parsed as LoginSessionPayload).issuedAt,
+      expiresAt: (parsed as LoginSessionPayload).expiresAt,
+    };
+  }
+  return null;
+}
+
+function loginRateLimitPolicy(scope: LoginRateLimitScope): { windowSeconds: number; maxAttempts: number } {
+  if (scope === "request-code") {
+    return {
+      windowSeconds: LOGIN_REQUEST_WINDOW_SECONDS,
+      maxAttempts: LOGIN_REQUEST_MAX_ATTEMPTS,
+    };
+  }
+  return {
+    windowSeconds: LOGIN_VERIFY_WINDOW_SECONDS,
+    maxAttempts: LOGIN_VERIFY_MAX_ATTEMPTS,
+  };
+}
+
+function rateLimitBucket(key: string, now: number, windowMs: number): number[] {
+  const cutoff = now - windowMs;
+  return (RATE_LIMIT_STATE.get(key) ?? []).filter((timestamp) => timestamp >= cutoff);
+}
+
+function clientIpFromRequest(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded?.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return request.headers.get("x-real-ip")?.trim() || "unknown";
+}
+
+export function checkLoginRateLimit(
+  scope: LoginRateLimitScope,
+  request: Request,
+  email: string,
+): LoginRateLimitResult {
+  const { windowSeconds, maxAttempts } = loginRateLimitPolicy(scope);
+  const windowMs = windowSeconds * 1000;
+  const now = Date.now();
+  const clientIp = clientIpFromRequest(request);
+  const keys = [`${scope}:ip:${clientIp}`, `${scope}:email:${email}`];
+
+  for (const key of keys) {
+    const bucket = rateLimitBucket(key, now, windowMs);
+    if (bucket.length >= maxAttempts) {
+      RATE_LIMIT_STATE.set(key, bucket);
+      return {
+        ok: false,
+        retryAfterSeconds: Math.max(Math.ceil((windowMs - (now - bucket[0])) / 1000), 1),
+        error: "Too many login attempts. Try again later.",
+      };
+    }
+  }
+
+  for (const key of keys) {
+    const bucket = rateLimitBucket(key, now, windowMs);
+    bucket.push(now);
+    RATE_LIMIT_STATE.set(key, bucket);
+  }
+
+  return { ok: true };
+}
+
+export function createLoginSession(email: string): string {
+  const now = Date.now();
+  return encodeSignedPayload({
+    email,
+    issuedAt: now,
+    expiresAt: now + LOGIN_SESSION_TTL_SECONDS * 1000,
+  });
+}
+
+export function readNepsisUserFromCookieValue(token: string | null | undefined): string | null {
+  if (!token) {
+    return null;
+  }
+  let session: LoginSessionPayload | null;
+  try {
+    session = decodeSession(token);
+  } catch {
+    return null;
+  }
+  if (!session) {
+    return null;
+  }
+  const email = normalizeEmail(session.email);
+  if (!email) {
+    return null;
+  }
+  if (Date.now() > session.expiresAt) {
+    return null;
+  }
+  return email;
 }
 
 export function normalizeEmail(value: unknown): string | null {
@@ -104,7 +246,7 @@ export function hashLoginCode(code: string): string {
 }
 
 export function createLoginChallenge(email: string, code: string): string {
-  return encodeChallenge({
+  return encodeSignedPayload({
     email,
     hash: hashLoginCode(code),
     expiresAt: Date.now() + LOGIN_CODE_TTL_SECONDS * 1000,
@@ -151,7 +293,7 @@ export function readCookieFromHeader(cookieHeader: string, cookieName: string): 
 
 export function readNepsisUserFromRequest(request: Request): string | null {
   const cookieHeader = request.headers.get("cookie") ?? "";
-  return readCookieFromHeader(cookieHeader, NEPSIS_USER_COOKIE);
+  return readNepsisUserFromCookieValue(readCookieFromHeader(cookieHeader, NEPSIS_USER_COOKIE));
 }
 
 export function cookieOptions(maxAge: number) {

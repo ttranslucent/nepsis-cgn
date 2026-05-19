@@ -38,7 +38,15 @@ def create_app():
             "FastAPI runtime is not installed. Install optional deps: pip install 'nepsis-cgn[api]'"
         ) from exc
 
-    app = FastAPI(title="NepsisCGN API", version="0.2.0")
+    app = FastAPI(title="NepsisCGN API", version="0.3.0")
+
+    @app.exception_handler(ValueError)
+    async def value_error_handler(request: Request, exc: ValueError):  # noqa: ARG001
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.exception_handler(PermissionError)
+    async def permission_error_handler(request: Request, exc: PermissionError):  # noqa: ARG001
+        return JSONResponse({"error": str(exc)}, status_code=403)
 
     @app.middleware("http")
     async def security_middleware(request: Request, call_next):  # type: ignore[override]
@@ -112,8 +120,8 @@ def create_app():
         return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
 
     @app.get("/v1/sessions")
-    async def list_sessions(limit: int = 50, offset: int = 0):
-        return API.list_sessions(limit=limit, offset=offset)
+    async def list_sessions(request: Request, limit: int = 50, offset: int = 0):
+        return API.list_sessions(limit=limit, offset=offset, owner_id=_request_owner_id(dict(request.headers)))
 
     @app.post("/v1/sessions")
     async def create_session(request: Request):
@@ -135,21 +143,26 @@ def create_app():
             governance_calibration=calibration,
             emit_packet=bool(body.get("emit_packet", True)),
             frame=body.get("frame"),
+            owner_id=_request_owner_id(dict(request.headers)),
         )
 
     @app.get("/v1/sessions/{session_id}")
-    async def get_session(session_id: str):
+    async def get_session(session_id: str, request: Request):
         try:
-            return API.get_session(session_id)
+            return API.get_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.delete("/v1/sessions/{session_id}")
-    async def delete_session(session_id: str):
+    async def delete_session(session_id: str, request: Request):
         try:
-            return API.delete_session(session_id)
+            return API.delete_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.post("/v1/sessions/{session_id}/step")
     async def step_session(session_id: str, request: Request):
@@ -165,9 +178,12 @@ def create_app():
                 user_decision=body.get("user_decision"),
                 override_reason=body.get("override_reason"),
                 carry_forward=body.get("carry_forward"),
+                owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -189,18 +205,23 @@ def create_app():
                 frame=frame,
                 branch_id=branch_id.strip() if isinstance(branch_id, str) else None,
                 parent_frame_id=parent_frame_id.strip() if isinstance(parent_frame_id, str) else None,
+                owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/v1/sessions/{session_id}/stage-audit")
-    async def stage_audit_session(session_id: str):
+    async def stage_audit_session(session_id: str, request: Request):
         try:
-            return API.stage_audit_session(session_id)
+            return API.stage_audit_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -215,23 +236,40 @@ def create_app():
                 raise HTTPException(status_code=400, detail="stage-audit payload 'context' must be an object when provided")
             context = raw_context
         try:
-            return API.stage_audit_session(session_id, context=context)
+            return API.stage_audit_session(
+                session_id,
+                context=context,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/v1/sessions/{session_id}/packets")
-    async def packets(session_id: str, limit: int = 100, offset: int = 0):
+    async def packets(session_id: str, request: Request, limit: int = 100, offset: int = 0):
         try:
-            return API.get_packets(session_id, limit=limit, offset=offset)
+            return API.get_packets(
+                session_id,
+                limit=limit,
+                offset=offset,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.delete("/v1/sessions")
-    async def purge_sessions(max_age_seconds: float, dry_run: bool = False):
+    async def purge_sessions(request: Request, max_age_seconds: float, dry_run: bool = False):
         try:
-            return API.purge_sessions(max_age_seconds=max_age_seconds, dry_run=dry_run)
+            return API.purge_sessions(
+                max_age_seconds=max_age_seconds,
+                dry_run=dry_run,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -262,6 +300,18 @@ def _request_api_token(headers: dict[str, Any]) -> str | None:
         if token:
             return token
     return None
+
+
+def _request_owner_id(headers: dict[str, Any]) -> str | None:
+    owner_id = headers.get("x-nepsis-session-owner") or headers.get("X-Nepsis-Session-Owner")
+    if not isinstance(owner_id, str):
+        return None
+    normalized = owner_id.strip().lower()
+    if not normalized:
+        return None
+    if len(normalized) > 256:
+        raise ValueError("X-Nepsis-Session-Owner must be 256 characters or fewer.")
+    return normalized
 
 
 def _allowed_origins() -> set[str]:
@@ -437,7 +487,7 @@ def openapi_spec() -> dict[str, Any]:
         "openapi": "3.1.0",
         "info": {
             "title": "NepsisCGN Engine API",
-            "version": "0.2.0",
+            "version": "0.3.0",
             "description": "Engine control API for NepsisCGN session lifecycle and governance.",
         },
         "paths": paths,

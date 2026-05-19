@@ -7,7 +7,7 @@ type Evaluation = {
   packName: string;
   distance: number;
   isValid: boolean;
-  violations: { id: string; severity: string; description: string }[];
+  violations: { code: string; severity: string; message: string }[];
 };
 
 const PACK_OPTIONS = [
@@ -147,8 +147,8 @@ export default function ProtoPuzzlePage() {
             ) : (
               <ul className="mt-2 space-y-2 text-sm text-nepsis-muted">
                 {evaluation.violations.map((violation) => (
-                  <li key={violation.id} className="rounded border border-nepsis-border px-3 py-2">
-                    <span className="font-semibold">[{violation.severity.toUpperCase()}]</span> {violation.description}
+                  <li key={violation.code} className="rounded border border-nepsis-border px-3 py-2">
+                    <span className="font-semibold">[{violation.severity.toUpperCase()}]</span> {violation.message}
                   </li>
                 ))}
               </ul>

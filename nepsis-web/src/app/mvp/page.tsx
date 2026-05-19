@@ -59,6 +59,7 @@ export default function MvpDemoPage() {
             </h1>
             <p className="mt-3 text-sm text-nepsis-muted md:text-base">
               Run a deterministic canonical case through the backend packet builder and inspect the structured result.
+              Clinical packets are governance demos only, not medical advice or clinical decision support.
             </p>
           </div>
 

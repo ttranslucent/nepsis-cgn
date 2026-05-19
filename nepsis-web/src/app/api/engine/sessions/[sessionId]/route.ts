@@ -1,4 +1,5 @@
 import {
+  engineControlOwner,
   engineErrorResponse,
   proxyEngineRequest,
   proxyJsonResponse,
@@ -14,11 +15,12 @@ export async function GET(req: Request, { params }: RouteParams) {
   if (unauthorized) {
     return unauthorized;
   }
+  const owner = engineControlOwner(req);
   const { sessionId } = await params;
   try {
     const upstream = await proxyEngineRequest(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
       method: "GET",
-    });
+    }, { owner });
     return proxyJsonResponse(upstream);
   } catch (error) {
     return engineErrorResponse(error);
@@ -30,11 +32,12 @@ export async function DELETE(req: Request, { params }: RouteParams) {
   if (unauthorized) {
     return unauthorized;
   }
+  const owner = engineControlOwner(req);
   const { sessionId } = await params;
   try {
     const upstream = await proxyEngineRequest(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
-    });
+    }, { owner });
     return proxyJsonResponse(upstream);
   } catch (error) {
     return engineErrorResponse(error);

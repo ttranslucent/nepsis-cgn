@@ -276,7 +276,7 @@ const POSTERIOR_STARTER_MESSAGE: ChatMessage = {
 const DETACHED_STARTER: DetachedMessage = {
   id: "detached-start",
   role: "assistant",
-  text: "Model sandbox is detached from Nepsis state. It uses the browser-stored OpenAI key when available.",
+  text: "Model sandbox is detached from Nepsis state. Browser-stored OpenAI keys are for local demos only.",
   at: "",
   model: "gpt-4.1",
   source: null,
@@ -348,6 +348,36 @@ function containsAny(haystack: string, terms: readonly string[]): boolean {
   return terms.some((term) => haystack.includes(term));
 }
 
+function containsAffirmedAny(haystack: string, terms: readonly string[]): boolean {
+  return terms.some((term) => containsAffirmedTerm(haystack, term));
+}
+
+function containsAffirmedTerm(haystack: string, term: string): boolean {
+  let start = 0;
+  while (start < haystack.length) {
+    const index = haystack.indexOf(term, start);
+    if (index === -1) {
+      return false;
+    }
+    if (!isNegatedEvidenceWindow(haystack, index, term.length)) {
+      return true;
+    }
+    start = index + term.length;
+  }
+  return false;
+}
+
+function isNegatedEvidenceWindow(text: string, termIndex: number, termLength: number): boolean {
+  const before = text.slice(Math.max(0, termIndex - 72), termIndex);
+  const after = text.slice(termIndex + termLength, termIndex + termLength + 48);
+  const around = `${before}${text.slice(termIndex, termIndex + termLength)}${after}`;
+  return (
+    /\b(no|not|without|none|denies|denied|absent|negative for|unconfirmed)\b/.test(before) ||
+    /\bnot\s+(confirmed|present|observed|identified|established)\b/.test(after) ||
+    /\b(no|not|without)\b[^.!?\n;]{0,80}\b(confirmed|present|observed|identified|established|yet)\b/.test(around)
+  );
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -368,6 +398,10 @@ function readStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function packetMatchesCurrent(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function stageEventLabel(event: string): string {
@@ -433,7 +467,7 @@ function deriveSafetySign(text: string): SignBuildResult {
   const policyFromTag = parseBoolTag(text, "policy_violation");
   const critical_signal =
     criticalFromTag ??
-    containsAny(lower, [
+    containsAffirmedAny(lower, [
       "critical",
       "catastrophic",
       "ruin",
@@ -443,7 +477,8 @@ function deriveSafetySign(text: string): SignBuildResult {
       "unsafe",
       "severe",
     ]);
-  const policy_violation = policyFromTag ?? containsAny(lower, ["policy", "violation", "non-compliant"]);
+  const policy_violation =
+    policyFromTag ?? containsAffirmedAny(lower, ["policy violation", "violation", "non-compliant"]);
   return {
     sign: {
       critical_signal,
@@ -1236,7 +1271,7 @@ export default function EnginePage() {
   );
   const frameGateView = useMemo<GateResult<unknown>>(() => {
     const status = normalizeGateStatus(lastAudit?.frame?.status);
-    if (!lastAudit?.frame || status == null) {
+    if (!lastAudit?.frame || status == null || !packetMatchesCurrent(lastAudit.frame.packet, frameGate.packet)) {
       return frameGate as unknown as GateResult<unknown>;
     }
     return {
@@ -1249,7 +1284,11 @@ export default function EnginePage() {
   }, [lastAudit, frameGate]);
   const interpretationGateView = useMemo<GateResult<unknown>>(() => {
     const status = normalizeGateStatus(lastAudit?.interpretation?.status);
-    if (!lastAudit?.interpretation || status == null) {
+    if (
+      !lastAudit?.interpretation ||
+      status == null ||
+      !packetMatchesCurrent(lastAudit.interpretation.packet, interpretationGate.packet)
+    ) {
       return interpretationGate as unknown as GateResult<unknown>;
     }
     return {
@@ -1262,7 +1301,7 @@ export default function EnginePage() {
   }, [lastAudit, interpretationGate]);
   const thresholdGateView = useMemo<GateResult<unknown>>(() => {
     const status = normalizeGateStatus(lastAudit?.threshold?.status);
-    if (!lastAudit?.threshold || status == null) {
+    if (!lastAudit?.threshold || status == null || !packetMatchesCurrent(lastAudit.threshold.packet, thresholdGate.packet)) {
       return thresholdGate as unknown as GateResult<unknown>;
     }
     return {
@@ -1674,16 +1713,16 @@ export default function EnginePage() {
     if (!activeSession?.session_id || typeof window === "undefined") {
       return;
     }
+    if (frameLocked || reportResult || reportLocked || lastEvaluatedReportText.trim()) {
+      return;
+    }
     const timeout = window.setTimeout(() => {
-      void requestBackendStageAudit({
-        sessionId: activeSession.session_id,
-        mode: "canonical",
-      });
+      void stageAudit(undefined, activeSession.session_id);
     }, 450);
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activeSession?.session_id, requestBackendStageAudit]);
+  }, [activeSession?.session_id, frameLocked, lastEvaluatedReportText, reportLocked, reportResult, stageAudit]);
 
   async function handleOpenSession() {
     clearAllErrors();
@@ -2434,7 +2473,7 @@ export default function EnginePage() {
 
         {userMode && hasConnectedKey === false && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-            <span>OpenAI browser key powers live playground requests and sandbox model calls when the server has no API key configured.</span>
+            <span>OpenAI browser keys are local-demo only. Use server-side API key configuration for shared deployments.</span>
             <a href="/settings" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
               Open Model Settings
             </a>
@@ -2961,6 +3000,10 @@ export default function EnginePage() {
                       2,
                     )}
                   </pre>
+                  <div className="mt-2 text-[11px] text-nepsis-muted">
+                    Override extraction with explicit tags like <code>critical_signal:false</code> or{" "}
+                    <code>policy_violation:false</code>.
+                  </div>
                 </div>
 
                 {reportResult && (

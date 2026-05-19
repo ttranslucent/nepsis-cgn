@@ -1,4 +1,5 @@
 import {
+  engineControlOwner,
   engineErrorResponse,
   proxyEngineRequest,
   proxyJsonResponse,
@@ -14,13 +15,14 @@ export async function GET(req: Request, { params }: RouteParams) {
   if (unauthorized) {
     return unauthorized;
   }
+  const owner = engineControlOwner(req);
   const { sessionId } = await params;
   const url = new URL(req.url);
   const suffix = url.search
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/packets${url.search}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/packets`;
   try {
-    const upstream = await proxyEngineRequest(suffix, { method: "GET" });
+    const upstream = await proxyEngineRequest(suffix, { method: "GET" }, { owner });
     return proxyJsonResponse(upstream);
   } catch (error) {
     return engineErrorResponse(error);

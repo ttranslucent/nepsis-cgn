@@ -4,6 +4,10 @@ from nepsis_cgn.core.mvp import MVP_PACKET_SCHEMA_ID, build_nepsis_mvp_packet
 
 
 MINIMUM_PACKET_FIELDS = {
+    "schema_id",
+    "schema_version",
+    "packet_id",
+    "created_at",
     "case_id",
     "input_text",
     "observations",
@@ -20,6 +24,12 @@ MINIMUM_PACKET_FIELDS = {
     "audit_trace",
     "final_output",
 }
+
+
+def test_mvp_packet_top_level_schema_is_stable() -> None:
+    packet = build_nepsis_mvp_packet(case_id="jailing")
+
+    assert set(packet) == MINIMUM_PACKET_FIELDS
 
 
 def test_jailing_mvp_packet_preserves_constraint_and_retessellates() -> None:

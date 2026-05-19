@@ -23,9 +23,27 @@ from nepsis_cgn.api.server import (
     _rate_limit_window_seconds,
     _request_timeout_seconds,
     _request_api_token,
+    _request_owner_id,
     _validated_manifest_path,
     route_manifest,
 )
+
+
+def _start_test_server() -> tuple[api_server.ThreadingHTTPServer, threading.Thread, int]:
+    try:
+        httpd = api_server.ThreadingHTTPServer(("127.0.0.1", 0), api_server.EngineApiHandler)
+    except OSError as exc:
+        pytest.skip(f"local bind unavailable in this environment: {exc}")
+
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, thread, int(httpd.server_address[1])
+
+
+def _stop_test_server(httpd: api_server.ThreadingHTTPServer, thread: threading.Thread) -> None:
+    httpd.shutdown()
+    httpd.server_close()
+    thread.join(timeout=2)
 
 
 def test_bind_error_message_contains_actionable_steps() -> None:
@@ -55,6 +73,10 @@ def test_request_api_token_supports_bearer() -> None:
 def test_request_api_token_supports_x_api_key() -> None:
     token = _request_api_token({"X-API-Key": "secret-token"})
     assert token == "secret-token"
+
+
+def test_request_owner_id_normalizes_header() -> None:
+    assert _request_owner_id({"X-Nepsis-Session-Owner": " Alice@Example.com "}) == "alice@example.com"
 
 
 def test_configured_api_token_none_when_empty(monkeypatch) -> None:
@@ -105,6 +127,21 @@ def test_validated_manifest_path_allows_env_root(tmp_path, monkeypatch) -> None:
     allowed.write_text("manifests: []", encoding="utf-8")
     monkeypatch.setenv("NEPSIS_API_ALLOWED_MANIFEST_ROOTS", str(allowed_root))
     assert _validated_manifest_path(str(allowed)) == str(allowed.resolve())
+
+
+def test_validated_manifest_path_rejects_symlink_escape(tmp_path, monkeypatch) -> None:
+    allowed_root = tmp_path / "manifests"
+    outside_root = tmp_path / "outside"
+    allowed_root.mkdir(parents=True)
+    outside_root.mkdir(parents=True)
+    outside = outside_root / "demo.yaml"
+    outside.write_text("manifests: []", encoding="utf-8")
+    link = allowed_root / "linked.yaml"
+    link.symlink_to(outside)
+    monkeypatch.setenv("NEPSIS_API_ALLOWED_MANIFEST_ROOTS", str(allowed_root))
+
+    with pytest.raises(ValueError):
+        _validated_manifest_path(str(link))
 
 
 def test_request_limit_env_parsers(monkeypatch) -> None:
@@ -228,6 +265,125 @@ def test_stage_audit_post_handler_rejects_non_object_context(monkeypatch) -> Non
             sid,
             {"context": "invalid"},
         )
+
+
+def test_http_rejects_missing_api_token(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "secret-token")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/mvp",
+            body=json.dumps({"case_id": "jailing"}),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        body = response.read()
+        conn.close()
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert response.status == 401
+    assert json.loads(body.decode("utf-8"))["error"] == "Unauthorized"
+
+
+def test_http_owner_header_blocks_cross_owner_session_access(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/sessions",
+            body=json.dumps({"family": "safety"}),
+            headers={
+                "Content-Type": "application/json",
+                "X-Nepsis-Session-Owner": "alice@example.com",
+            },
+        )
+        created_response = conn.getresponse()
+        created_body = created_response.read()
+        conn.close()
+
+        created = json.loads(created_body.decode("utf-8"))
+        sid = created["session_id"]
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "GET",
+            f"/v1/sessions/{sid}",
+            headers={"X-Nepsis-Session-Owner": "bob@example.com"},
+        )
+        blocked_response = conn.getresponse()
+        blocked_body = blocked_response.read()
+        conn.close()
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert created_response.status == 200
+    assert created["owner_id"] == "alice@example.com"
+    assert blocked_response.status == 403
+    assert "not owned" in json.loads(blocked_body.decode("utf-8"))["error"]
+
+
+def test_http_rate_limit_returns_429(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_API_RATE_LIMIT_MAX_REQUESTS", "1")
+    monkeypatch.setenv("NEPSIS_API_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+    api_server._RATE_LIMIT_STATE.clear()
+
+    httpd, thread, port = _start_test_server()
+    try:
+        statuses: list[int] = []
+        for _ in range(2):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/mvp",
+                body=json.dumps({"case_id": "jailing"}),
+                headers={"Content-Type": "application/json"},
+            )
+            response = conn.getresponse()
+            response.read()
+            statuses.append(response.status)
+            conn.close()
+    finally:
+        _stop_test_server(httpd, thread)
+        api_server._RATE_LIMIT_STATE.clear()
+
+    assert statuses == [200, 429]
+
+
+def test_http_request_body_limit_returns_413(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_API_MAX_REQUEST_BODY_BYTES", "8")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/mvp",
+            body=json.dumps({"case_id": "jailing"}),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        body = response.read()
+        conn.close()
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert response.status == 413
+    assert "too large" in json.loads(body.decode("utf-8"))["error"].lower()
 
 
 def test_stage_audit_http_post_route_accepts_context_payload(monkeypatch) -> None:

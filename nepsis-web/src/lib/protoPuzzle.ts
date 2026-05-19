@@ -4,9 +4,17 @@ import path from "path";
 export const SUPPORTED_PACK_IDS = ["jailing_jingall", "utf8_clean", "terminal_bench"] as const;
 const PACK_ID_SET = new Set(SUPPORTED_PACK_IDS);
 
-const PYTHON_BIN = process.env.NEPSIS_PYTHON ?? "python3";
-const PROJECT_ROOT = process.env.NEPSIS_PROJECT_ROOT ?? path.resolve(process.cwd(), "..");
-const CLI_MODULE = process.env.NEPSIS_PROTO_PUZZLE_CLI ?? "nepsis_cgn.cli.proto_puzzle_cli";
+function envValue(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value || undefined;
+}
+
+const PROJECT_ROOT = envValue("NEPSIS_PROJECT_ROOT") ?? "..";
+const LOCAL_VENV_PYTHON = path.isAbsolute(PROJECT_ROOT)
+  ? path.join(PROJECT_ROOT, ".venv", "bin", "python")
+  : path.join(".venv", "bin", "python");
+const CONFIGURED_PYTHON_BIN = envValue("NEPSIS_PYTHON");
+const CLI_MODULE = envValue("NEPSIS_PROTO_PUZZLE_CLI") ?? "nepsis_cgn.cli.proto_puzzle_cli";
 
 export type ProtoPackId = (typeof SUPPORTED_PACK_IDS)[number];
 export type ProtoState = Record<string, unknown>;
@@ -30,14 +38,21 @@ type CliReport = {
   hints: string[];
 };
 
-function runProtoPuzzleCli(packId: ProtoPackId, state: ProtoState) {
+function projectSrcPath(): string {
+  return path.isAbsolute(PROJECT_ROOT) ? path.join(PROJECT_ROOT, "src") : "src";
+}
+
+function runProtoPuzzleCliWithPython(pythonBin: string, packId: ProtoPackId, state: ProtoState) {
   return new Promise<CliReport>((resolve, reject) => {
     const stateJson = JSON.stringify(state);
     const args = ["-m", CLI_MODULE, "--pack", packId, "--json", "--state-json", stateJson];
 
-    const child = spawn(PYTHON_BIN, args, {
+    const child = spawn(pythonBin, args, {
       cwd: PROJECT_ROOT,
-      env: process.env,
+      env: {
+        ...process.env,
+        PYTHONPATH: [projectSrcPath(), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      },
     });
 
     let stdout = "";
@@ -67,6 +82,18 @@ function runProtoPuzzleCli(packId: ProtoPackId, state: ProtoState) {
       }
     });
   });
+}
+
+async function runProtoPuzzleCli(packId: ProtoPackId, state: ProtoState) {
+  const primaryPython = CONFIGURED_PYTHON_BIN ?? LOCAL_VENV_PYTHON;
+  try {
+    return await runProtoPuzzleCliWithPython(primaryPython, packId, state);
+  } catch (error) {
+    if (!CONFIGURED_PYTHON_BIN && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return runProtoPuzzleCliWithPython("python3", packId, state);
+    }
+    throw error;
+  }
 }
 
 export function isSupportedProtoPack(value: string): value is ProtoPackId {
