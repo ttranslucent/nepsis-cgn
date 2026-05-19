@@ -1,4 +1,5 @@
-import { engineErrorResponse, proxyEngineRequest, proxyJsonResponse } from "@/lib/engineApi";
+import { engineErrorResponse, isEngineConfigurationError, proxyEngineRequest, proxyJsonResponse } from "@/lib/engineApi";
+import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,9 @@ export async function POST(req: Request) {
     });
     return proxyJsonResponse(upstream);
   } catch (error) {
+    if (isEngineConfigurationError(error)) {
+      return buildBundledMvpFallbackResponse(body);
+    }
     return engineErrorResponse(error);
   }
 }

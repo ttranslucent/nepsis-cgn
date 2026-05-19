@@ -113,6 +113,9 @@ The public site posture is intentionally narrow:
 - `/status` shows backend, auth, model-route, and MCP readiness.
 - `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
 - Production should not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` unless a separate protected operator deployment has been reviewed.
+- `POST /api/engine/mvp` uses the FastAPI backend when configured and falls back
+  to bundled frozen v0.3 packets when production has no backend URL, so the
+  public demo remains usable while backend deployment is completed.
 
 Deploy the existing FastAPI backend as the API service. `render.yaml` defines a
 Render web service that installs `.[api]`, starts `nepsiscgn-api-asgi`, binds to

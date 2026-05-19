@@ -1,0 +1,601 @@
+{
+  "clinical": {
+    "audit_trace": [
+      {
+        "order": 1,
+        "stage": "signal_intake",
+        "summary": "Parsed pain narrative and red-flag observations."
+      },
+      {
+        "order": 2,
+        "stage": "red_channel",
+        "summary": "Screened must-not-miss neurologic hazards before BLUE."
+      },
+      {
+        "order": 3,
+        "stage": "still_checkpoint_1",
+        "summary": "Preserved RED escalation before bounded BLUE analysis."
+      },
+      {
+        "order": 4,
+        "stage": "blue_channel",
+        "summary": "Compared benign and catastrophic hypotheses inside RED boundary."
+      },
+      {
+        "order": 5,
+        "stage": "contradiction_monitor",
+        "summary": "Classified benign closure vs red flags as action-threshold contradiction."
+      },
+      {
+        "order": 6,
+        "stage": "denominator_collapse",
+        "summary": "Detected omitted emergency class if only benign spasm is considered."
+      },
+      {
+        "order": 7,
+        "stage": "non_quiescence",
+        "summary": "Marked wrong-manifold risk from benign closure."
+      },
+      {
+        "order": 8,
+        "stage": "still_checkpoint_2",
+        "summary": "Set commitment readiness to retessellate."
+      },
+      {
+        "order": 9,
+        "stage": "retessellation",
+        "summary": "Rebuilt hypothesis space to include compressive neurologic emergency."
+      },
+      {
+        "order": 10,
+        "stage": "zeroback",
+        "summary": "Reset from benign-pain manifold to must-not-miss emergency frame."
+      },
+      {
+        "order": 11,
+        "stage": "voronoi_commitment",
+        "summary": "Committed to escalation/hold based on consequence-weighted threshold."
+      },
+      {
+        "order": 12,
+        "stage": "state_feedback",
+        "summary": "Declared next-state observations and failure conditions for the active frame."
+      }
+    ],
+    "blue_channel": {
+      "contradicting_features": [
+        "saddle_anesthesia",
+        "bladder_dysfunction"
+      ],
+      "hypotheses": [
+        {
+          "action_threshold": "treat only after red flags addressed",
+          "contradicting_features": [
+            "saddle_anesthesia",
+            "bladder_dysfunction"
+          ],
+          "id": "benign_radicular_spasm",
+          "label": "Mechanical/radicular spasm",
+          "likelihood": "plausible_but_red_bounded",
+          "needed_discriminators": [
+            "neuro exam",
+            "post-void residual"
+          ],
+          "supporting_features": [
+            "radicular pain",
+            "spasm narrative"
+          ]
+        },
+        {
+          "action_threshold": "escalate before benign closure",
+          "contradicting_features": [],
+          "id": "cauda_equina",
+          "label": "Cauda equina / compressive neurologic emergency",
+          "likelihood": "action_dominant_by_consequence",
+          "needed_discriminators": [
+            "urgent MRI / specialist pathway"
+          ],
+          "supporting_features": [
+            "saddle_anesthesia",
+            "bladder_dysfunction"
+          ]
+        }
+      ],
+      "needed_discriminators": [
+        "post-void residual",
+        "focused neurologic exam"
+      ],
+      "supporting_features": [
+        "radicular pain",
+        "spasm"
+      ],
+      "weights": {
+        "benign_radicular_spasm": "medium",
+        "cauda_equina": "red-action-dominant"
+      }
+    },
+    "case_id": "clinical",
+    "constraints": [
+      "Hard constraint: cauda equina red flags cannot be set aside as benign spasm.",
+      "Must-not-miss hazard: neurologic compromise with bladder/saddle symptoms.",
+      "Blue optimization may only run after red flags are escalated or explicitly ruled out."
+    ],
+    "contradiction_monitor": {
+      "contradiction_density": 0.5,
+      "contradictions": [
+        {
+          "conflicts_with": "RED escalation threshold crossed by consequence",
+          "observation": "benign spasm narrative competes with red flags",
+          "type": "action-threshold contradiction"
+        }
+      ],
+      "stability_status": "hold_for_discriminator"
+    },
+    "created_at": "__RUNTIME_CREATED_AT__",
+    "denominator_collapse": {
+      "detected": true,
+      "missing_hypothesis_classes": [
+        "compressive neurologic emergency"
+      ],
+      "retessellation_required": true
+    },
+    "final_output": {
+      "caveats": [
+        "Deterministic MVP scaffold; not medical advice or a diagnosis."
+      ],
+      "concise_recommendation": "Do not close as benign spasm. Escalate or obtain the red-flag discriminators now.",
+      "required_next_discriminators": [
+        "post-void residual",
+        "focused saddle sensory exam",
+        "motor/reflex exam",
+        "urgent imaging/specialist decision"
+      ]
+    },
+    "input_text": "Clinical demo: back pain with radicular spasm plus saddle anesthesia and new bladder dysfunction.",
+    "non_quiescence": {
+      "next_required_move": "Gather discriminators or escalate; do not calmly finalize.",
+      "reason": "Benign spasm manifold cannot absorb bladder/saddle red flags without contradiction.",
+      "wrong_manifold_possible": true
+    },
+    "observations": [
+      "radicular pain/spasm narrative present",
+      "red_flag=saddle_anesthesia",
+      "red_flag=bladder_dysfunction"
+    ],
+    "packet_id": "__RUNTIME_PACKET_ID__",
+    "red_channel": {
+      "active_hazards": [
+        {
+          "features": [
+            "saddle_anesthesia",
+            "bladder_dysfunction"
+          ],
+          "hazard": "Potential cauda equina syndrome.",
+          "id": "cauda_equina_must_not_miss",
+          "severity": "red"
+        }
+      ],
+      "escalation_required": true,
+      "missing_discriminators": [
+        "post-void residual",
+        "focused saddle sensory exam",
+        "lower-extremity motor/reflex exam",
+        "urgent imaging pathway availability"
+      ],
+      "rationale": "RED runs first because neurologic red flags dominate action threshold under uncertainty.",
+      "ruled_out_hazards": []
+    },
+    "schema_id": "nepsis.mvp_packet",
+    "schema_version": "0.1.3",
+    "state_feedback": {
+      "audit_events": [
+        "Declared expected next-state trajectory for high-consequence red-flag uncertainty.",
+        "Defined failure conditions that would force hold, retessellation, or ZeroBack."
+      ],
+      "current_state": {
+        "active_constraints": [
+          "red flags cannot be set aside as benign spasm",
+          "BLUE optimization cannot downgrade unresolved RED hazard"
+        ],
+        "active_frame": "high-consequence red-flag clinical uncertainty",
+        "active_hazards": [
+          "cauda_equina_must_not_miss"
+        ],
+        "current_commitment": "Escalate red-flag pathway; do not finalize as benign spasm yet.",
+        "timestamp_or_phase": "mvp_post_commitment_packet",
+        "uncertainty_level": "high_consequence_unresolved"
+      },
+      "delta_analysis": {
+        "confidence_delta": "pending",
+        "contradiction_delta": "pending",
+        "matches_prediction": "pending",
+        "reason": "No observed next state is available in the MVP; the next clinical state must be checked against unresolved RED hazards."
+      },
+      "loop_decision": {
+        "next_observation_required": "Obtain and compare red-flag discriminators against the expected trajectory.",
+        "rationale": "Current RED hazard and denominator collapse require retessellation before benign closure.",
+        "status": "retessellate"
+      },
+      "observed_next_state": {
+        "placeholder_reason": "The MVP packet declares the expected next-state check but does not run a live feedback loop.",
+        "status": "not_observed_in_mvp"
+      },
+      "predicted_next_state": {
+        "expected_changes": [
+          "discriminating data stabilizes benign frame only if red flags are resolved",
+          "RED remains active while bladder/saddle findings are unresolved"
+        ],
+        "expected_discriminators": [
+          "post-void residual",
+          "focused saddle sensory exam",
+          "lower-extremity motor/reflex exam",
+          "urgent imaging or specialist decision"
+        ],
+        "expected_resolution_signs": [
+          "red-flag discriminators documented",
+          "benign closure occurs only after RED hazard is ruled out"
+        ],
+        "expected_time_window": "next discriminator collection step",
+        "failure_conditions": [
+          "worsening vitals or neurologic state",
+          "unresolved red flags",
+          "missing discriminator",
+          "benign closure despite active RED hazard"
+        ]
+      }
+    },
+    "still": {
+      "audit_events": [
+        {
+          "order": 1,
+          "stage": "still_checkpoint_1",
+          "summary": "Checked permission to enter BLUE without clearing RED."
+        },
+        {
+          "order": 2,
+          "stage": "still_checkpoint_2",
+          "summary": "Set commitment readiness to retessellate."
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "STILL Checkpoint 1",
+          "position": "after_red_before_blue",
+          "reason": "High-consequence RED hazard remains active; BLUE cannot downgrade escalation.",
+          "required_before_commitment": [
+            "red flags explicitly escalated or ruled out",
+            "RED hazard status preserved through BLUE reasoning"
+          ],
+          "trigger_status": "escalation_preserved"
+        },
+        {
+          "name": "STILL Checkpoint 2",
+          "position": "after_blue_before_commitment",
+          "reason": "Red-flag contradiction and denominator collapse require retessellation.",
+          "required_before_commitment": [
+            "post-void residual reviewed",
+            "focused neurologic exam reviewed",
+            "compressive neurologic emergency represented in hypothesis set"
+          ],
+          "trigger_status": "retessellate"
+        }
+      ],
+      "commitment_readiness": {
+        "rationale": "Hypothesis space is undercomplete; rebuild before commitment.",
+        "status": "retessellate"
+      },
+      "definition": "Strategic Time-in-Loop for Learning",
+      "learning_notes": [
+        "Benign narrative cannot close while red-flag discriminators remain unresolved.",
+        "High-consequence uncertainty keeps RED authority active through BLUE reasoning."
+      ],
+      "name": "STILL"
+    },
+    "voronoi_commitment": {
+      "consequence_weighting": "Missed neurologic emergency dominates unnecessary escalation cost.",
+      "recommended_action": "Escalate red-flag pathway; do not finalize as benign spasm yet.",
+      "threshold_basis": "Consequence-weighted threshold, not most-likely diagnosis."
+    },
+    "zeroback": {
+      "reason": "Reset from benign-pain manifold to must-not-miss neurologic emergency frame.",
+      "reset_scope": "Keep symptoms and red flags; reset priors and rebuild hypotheses.",
+      "triggered": true
+    }
+  },
+  "jailing": {
+    "audit_trace": [
+      {
+        "order": 1,
+        "stage": "signal_intake",
+        "summary": "Parsed source token, candidate token, and governing rule."
+      },
+      {
+        "order": 2,
+        "stage": "red_channel",
+        "summary": "Applied exact-token hard constraint before optimization."
+      },
+      {
+        "order": 3,
+        "stage": "still_checkpoint_1",
+        "summary": "Held naive BLUE entry; allowed bounded BLUE for audit only."
+      },
+      {
+        "order": 4,
+        "stage": "blue_channel",
+        "summary": "Compared constraint-preserving and fluent-word hypotheses inside RED boundary."
+      },
+      {
+        "order": 5,
+        "stage": "contradiction_monitor",
+        "summary": "Classified candidate/source mismatch as constraint contradiction."
+      },
+      {
+        "order": 6,
+        "stage": "denominator_collapse",
+        "summary": "Detected missing proper-token hypothesis class."
+      },
+      {
+        "order": 7,
+        "stage": "non_quiescence",
+        "summary": "Marked wrong-manifold risk from fluent-word reasoning."
+      },
+      {
+        "order": 8,
+        "stage": "still_checkpoint_2",
+        "summary": "Set commitment readiness to retessellate."
+      },
+      {
+        "order": 9,
+        "stage": "retessellation",
+        "summary": "Rebuilt hypothesis space around exact source-token preservation."
+      },
+      {
+        "order": 10,
+        "stage": "zeroback",
+        "summary": "Reset from plausible-word completion to governed-token comparison."
+      },
+      {
+        "order": 11,
+        "stage": "voronoi_commitment",
+        "summary": "Selected action by hard constraint and consequence, not by fluency."
+      },
+      {
+        "order": 12,
+        "stage": "state_feedback",
+        "summary": "Declared next-state observations and failure conditions for the active frame."
+      }
+    ],
+    "blue_channel": {
+      "contradicting_features": [
+        "candidate changes governed token"
+      ],
+      "hypotheses": [
+        {
+          "action_threshold": "commit only after exact-token match",
+          "contradicting_features": [
+            "candidate answer used JAILING"
+          ],
+          "id": "constraint_preserving_token",
+          "label": "JINGALL is the required answer.",
+          "likelihood": "dominant_after_red_constraint",
+          "needed_discriminators": [
+            "source-token verification"
+          ],
+          "supporting_features": [
+            "source token is explicit",
+            "hard constraint names exact preservation"
+          ]
+        },
+        {
+          "action_threshold": "blocked by RED",
+          "contradicting_features": [
+            "violates exact source-token constraint"
+          ],
+          "id": "plausible_word_collapse",
+          "label": "JAILING is a fluent but invalid normalization.",
+          "likelihood": "rejected_by_constraint",
+          "needed_discriminators": [
+            "none; hard constraint already decides"
+          ],
+          "supporting_features": [
+            "candidate is a familiar English word"
+          ]
+        }
+      ],
+      "needed_discriminators": [
+        "exact source-token comparison"
+      ],
+      "supporting_features": [
+        "exact source token exists",
+        "candidate mismatch is observable"
+      ],
+      "weights": {
+        "constraint_preserving_token": "high",
+        "plausible_word_collapse": "blocked"
+      }
+    },
+    "case_id": "jailing",
+    "constraints": [
+      "Hard constraint: preserve the source token JINGALL exactly.",
+      "Hard constraint: do not normalize a proper token into a plausible nearby word.",
+      "Must-not-miss hazard: cosmetic fluency cannot override source identity."
+    ],
+    "contradiction_monitor": {
+      "contradiction_density": 0.66,
+      "contradictions": [
+        {
+          "conflicts_with": "Hard constraint requires JINGALL",
+          "observation": "candidate_token=JAILING",
+          "type": "constraint contradiction"
+        },
+        {
+          "conflicts_with": "hypothesis set omitted exact proper-token preservation",
+          "observation": "BLUE initially considered fluent word completion",
+          "type": "missing-denominator contradiction"
+        }
+      ],
+      "stability_status": "unstable_retest_required"
+    },
+    "created_at": "__RUNTIME_CREATED_AT__",
+    "denominator_collapse": {
+      "detected": true,
+      "missing_hypothesis_classes": [
+        "proper-token preservation",
+        "orthographic trap / near-word substitution"
+      ],
+      "retessellation_required": true
+    },
+    "final_output": {
+      "caveats": [
+        "This demo is deterministic and constraint-scaffolded; it is not an LLM answer."
+      ],
+      "concise_recommendation": "Do not accept JAILING. Return or preserve JINGALL unless source verification changes.",
+      "required_next_discriminators": [
+        "source-token verification",
+        "character-level candidate comparison"
+      ]
+    },
+    "input_text": "Canonical Jailing/Jingall case: source constraint says the required name is JINGALL, but the candidate answer collapses to the familiar word JAILING.",
+    "non_quiescence": {
+      "next_required_move": "Retessellate around exact-token preservation before final answer.",
+      "reason": "A fluent-word manifold explains JAILING but cannot satisfy the source-token constraint.",
+      "wrong_manifold_possible": true
+    },
+    "observations": [
+      "source_token=JINGALL",
+      "candidate_token=JAILING",
+      "candidate looks like a plausible common word"
+    ],
+    "packet_id": "__RUNTIME_PACKET_ID__",
+    "red_channel": {
+      "active_hazards": [
+        {
+          "constraint": "source token must be preserved exactly",
+          "hazard": "Candidate changes JINGALL into JAILING.",
+          "id": "proper_token_substitution",
+          "severity": "hard_stop"
+        }
+      ],
+      "escalation_required": true,
+      "missing_discriminators": [
+        "Confirm source spelling from the prompt or authoritative record.",
+        "Compare candidate token character-by-character against the governed token."
+      ],
+      "rationale": "RED runs first because source-token preservation is a hard constraint, not a style preference.",
+      "ruled_out_hazards": []
+    },
+    "schema_id": "nepsis.mvp_packet",
+    "schema_version": "0.1.3",
+    "state_feedback": {
+      "audit_events": [
+        "Declared expected next-state constraint for governed-token preservation.",
+        "Defined failure conditions that would force hold or retessellation."
+      ],
+      "current_state": {
+        "active_constraints": [
+          "preserve source token JINGALL exactly",
+          "do not substitute fluent plausibility for source identity"
+        ],
+        "active_frame": "governed token constraint",
+        "active_hazards": [
+          "proper_token_substitution"
+        ],
+        "current_commitment": "Reject JAILING; preserve JINGALL as the governed answer.",
+        "timestamp_or_phase": "mvp_post_commitment_packet",
+        "uncertainty_level": "constraint_conflict_active"
+      },
+      "delta_analysis": {
+        "confidence_delta": "pending",
+        "contradiction_delta": "pending",
+        "matches_prediction": "pending",
+        "reason": "No observed next state is available in the MVP; future output must be checked against source-token preservation."
+      },
+      "loop_decision": {
+        "next_observation_required": "Verify whether the produced output preserves JINGALL exactly.",
+        "rationale": "Current contradiction and denominator collapse require retessellation before closure.",
+        "status": "retessellate"
+      },
+      "observed_next_state": {
+        "placeholder_reason": "The MVP packet declares the expected next-state check but does not run a live feedback loop.",
+        "status": "not_observed_in_mvp"
+      },
+      "predicted_next_state": {
+        "expected_changes": [
+          "valid output preserves source-token identity",
+          "fluent near-word substitution remains blocked"
+        ],
+        "expected_discriminators": [
+          "source-token verification",
+          "character-level candidate comparison"
+        ],
+        "expected_resolution_signs": [
+          "output token equals JINGALL",
+          "audit trace keeps exact-token constraint active"
+        ],
+        "expected_time_window": "next response or source-token verification step",
+        "failure_conditions": [
+          "response rewrites JINGALL",
+          "response overwrites the governed token",
+          "response treats fluent plausibility as permission"
+        ]
+      }
+    },
+    "still": {
+      "audit_events": [
+        {
+          "order": 1,
+          "stage": "still_checkpoint_1",
+          "summary": "Checked permission to enter BLUE without clearing RED."
+        },
+        {
+          "order": 2,
+          "stage": "still_checkpoint_2",
+          "summary": "Set commitment readiness to retessellate."
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "STILL Checkpoint 1",
+          "position": "after_red_before_blue",
+          "reason": "Source-token constraint risk remains active; BLUE may explain but cannot clear RED.",
+          "required_before_commitment": [
+            "source token verified",
+            "RED source-preservation constraint preserved"
+          ],
+          "trigger_status": "hold_or_bounded_blue"
+        },
+        {
+          "name": "STILL Checkpoint 2",
+          "position": "after_blue_before_commitment",
+          "reason": "Constraint contradiction and denominator collapse require retessellation.",
+          "required_before_commitment": [
+            "candidate token matches governed token exactly",
+            "retessellated hypothesis set includes proper-token preservation",
+            "no cosmetic rename hypothesis remains live"
+          ],
+          "trigger_status": "retessellate"
+        }
+      ],
+      "commitment_readiness": {
+        "rationale": "Hypothesis space is undercomplete; rebuild before commitment.",
+        "status": "retessellate"
+      },
+      "definition": "Strategic Time-in-Loop for Learning",
+      "learning_notes": [
+        "Fluent plausibility is not permission to overwrite governed tokens.",
+        "Exact source constraints must survive BLUE optimization."
+      ],
+      "name": "STILL"
+    },
+    "voronoi_commitment": {
+      "consequence_weighting": "False acceptance violates the core case rule; false rejection is repairable.",
+      "recommended_action": "Reject JAILING; preserve JINGALL as the governed answer.",
+      "threshold_basis": "Hard constraint beats fluency and likelihood."
+    },
+    "zeroback": {
+      "reason": "Reset from plausible-word completion to governed-token comparison.",
+      "reset_scope": "Keep observations and hard constraints; rebuild hypotheses and discard cosmetic rename.",
+      "triggered": true
+    }
+  }
+}

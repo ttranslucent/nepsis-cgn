@@ -18,8 +18,9 @@ Supported `case_id` values are `jailing` and `clinical`. The response is the
 canonical frozen v0.3 `nepsis.mvp_packet`.
 
 If the backend is not configured, the web UI shows a public-safe status message
-and links to `/status` instead of exposing raw environment names as the main
-user path.
+and `POST /api/engine/mvp` serves bundled frozen v0.3 packets for the canonical
+`jailing` and `clinical` cases. `/status` still reports the backend as
+unconfigured so operators know the FastAPI service remains to be deployed.
 
 ## Direct FastAPI
 

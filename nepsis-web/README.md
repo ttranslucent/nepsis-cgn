@@ -116,7 +116,11 @@ Local proto-puzzle overrides:
 
 Production behavior is intentionally strict:
 
-- If `NEPSIS_API_BASE_URL` is missing, `/api/engine/*` returns `503` and `/mvp` links users to `/status`.
+- If `NEPSIS_API_BASE_URL` is missing, most `/api/engine/*` routes return `503`
+  and affected pages link users to `/status`.
+- Exception: `POST /api/engine/mvp` serves bundled frozen v0.3 packets when the
+  backend URL is missing, so the public demo remains runnable while `/status`
+  reports the backend gap.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
 - If email delivery is not configured, `/login` either shows a preview code when preview is enabled or tells the operator which auth env vars are missing.
 - Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside production.

@@ -34,6 +34,9 @@ npm run dev
 - `/mvp` is the frozen deterministic demo path.
 - `/status` is the first stop for deployment health, auth, model-route, and MCP
   readiness.
+- `POST /api/engine/mvp` should prefer the FastAPI backend. If the public web
+  deployment has no backend URL, it serves bundled frozen v0.3 packets as a
+  public-demo safety net and `/status` still reports the backend gap.
 - `/engine`, session APIs, playground routes, and LLM/model sandbox flows are
   experimental operator tools.
 - Clinical demo packets are not medical advice, not diagnosis, and not clinical

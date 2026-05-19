@@ -10,6 +10,10 @@ class EngineConfigurationError extends Error {
   }
 }
 
+export function isEngineConfigurationError(error: unknown): error is EngineConfigurationError {
+  return error instanceof EngineConfigurationError;
+}
+
 export function engineBaseUrl(): string {
   const configured = process.env.NEPSIS_API_BASE_URL?.trim();
   if (configured && configured.length > 0) {
@@ -79,7 +83,7 @@ export async function proxyEngineRequest(
 }
 
 export function engineErrorResponse(error: unknown): Response {
-  if (error instanceof EngineConfigurationError) {
+  if (isEngineConfigurationError(error)) {
     return Response.json(
       {
         error: error.message,
