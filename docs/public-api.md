@@ -14,8 +14,10 @@ Content-Type: application/json
 {"case_id":"jailing"}
 ```
 
-Supported `case_id` values are `jailing` and `clinical`. The response is the
-canonical frozen v0.3 `nepsis.mvp_packet`.
+Supported `case_id` values are `jailing` and `clinical`. Include optional
+`input_text` to run a visitor query through the selected deterministic MVP
+scaffold. The response is the frozen v0.3 `nepsis.mvp_packet` shape and is not a
+live model response.
 
 If the backend is not configured, the web UI shows a public-safe status message
 and `POST /api/engine/mvp` serves bundled frozen v0.3 packets for the canonical

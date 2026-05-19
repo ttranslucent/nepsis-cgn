@@ -37,6 +37,7 @@ function userFacingMvpError(err: unknown): string {
 
 export default function MvpDemoPage() {
   const [caseId, setCaseId] = useState<NepsisMvpCaseId>("jailing");
+  const [queryText, setQueryText] = useState("");
   const [packet, setPacket] = useState<NepsisMvpPacket | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +46,11 @@ export default function MvpDemoPage() {
     setIsRunning(true);
     setError(null);
     try {
-      const result = await engineClient.runMvp({ case_id: caseId });
+      const trimmedQuery = queryText.trim();
+      const result = await engineClient.runMvp({
+        case_id: caseId,
+        input_text: trimmedQuery.length > 0 ? trimmedQuery : undefined,
+      });
       setPacket(result);
     } catch (err) {
       setError(userFacingMvpError(err));
@@ -66,8 +71,8 @@ export default function MvpDemoPage() {
               RED &rarr; STILL &rarr; BLUE &rarr; STILL &rarr; commitment &rarr; state feedback &rarr; audit
             </h1>
             <p className="mt-3 text-sm text-nepsis-muted md:text-base">
-              Run a deterministic canonical case through the backend packet builder and inspect the structured result.
-              Clinical packets are governance demos only, not medical advice or clinical decision support.
+              Run a deterministic case or paste a short query through the MVP scaffold and inspect the structured
+              result. Clinical packets are governance demos only, not medical advice or clinical decision support.
             </p>
           </div>
 
@@ -97,13 +102,32 @@ export default function MvpDemoPage() {
                 })}
               </div>
             </fieldset>
+            <label className="mt-4 block text-xs font-semibold uppercase tracking-[0.14em] text-nepsis-muted" htmlFor="mvp-query">
+              Visitor query
+            </label>
+            <textarea
+              id="mvp-query"
+              value={queryText}
+              maxLength={1200}
+              onChange={(event) => setQueryText(event.target.value)}
+              placeholder={
+                caseId === "jailing"
+                  ? "Optional: paste a token-conflict prompt, e.g. source says JINGALL but an answer says JAILING."
+                  : "Optional: paste a brief high-consequence scenario for RED-before-BLUE inspection."
+              }
+              className="mt-2 min-h-[104px] w-full resize-y rounded-xl border border-nepsis-border bg-black/30 px-3 py-2.5 text-sm text-nepsis-text placeholder:text-nepsis-muted/70 focus:border-nepsis-accent focus:outline-none"
+            />
+            <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-nepsis-muted">
+              <span>Model-free deterministic run; no API key required.</span>
+              <span>{queryText.length}/1200</span>
+            </div>
             <button
               type="button"
               onClick={runDemo}
               disabled={isRunning}
               className="mt-4 w-full rounded-full bg-nepsis-accent px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-nepsis-accentSoft disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isRunning ? "Running..." : "Run Demo"}
+              {isRunning ? "Running..." : queryText.trim() ? "Run Query" : "Run Demo"}
             </button>
           </div>
         </div>

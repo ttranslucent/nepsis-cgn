@@ -13,8 +13,9 @@ scripts/mvp-local.sh
 ```
 
 Open [http://127.0.0.1:3000/mvp](http://127.0.0.1:3000/mvp), choose `Jailing`
-or `Clinical`, and click `Run Demo`. Use `Ctrl-C` in the launcher terminal to
-stop both the backend and web UI.
+or `Clinical`, optionally paste a short query, and click `Run Demo` or
+`Run Query`. Use `Ctrl-C` in the launcher terminal to stop both the backend and
+web UI.
 
 For web-only development, start the Nepsis backend API from the repo root:
 

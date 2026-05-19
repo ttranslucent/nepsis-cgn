@@ -109,7 +109,7 @@ The local Next API proxy used by the UI is `/api/engine/mvp`, which forwards to 
 
 The public site posture is intentionally narrow:
 
-- `/mvp` is public, deterministic, and does not require login or model keys.
+- `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run the canonical cases or paste a short query into the selected MVP scaffold.
 - `/status` shows backend, auth, model-route, and MCP readiness.
 - `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
 - Production should not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` unless a separate protected operator deployment has been reviewed.

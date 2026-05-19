@@ -137,18 +137,26 @@ test.beforeEach(async ({ page }) => {
 
 test("public MVP can run without login or model key", async ({ page }) => {
   await page.route("**/api/engine/mvp", async (route) => {
+    const body = route.request().postDataJSON() as { input_text?: string } | null;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(mvpPacket),
+      body: JSON.stringify({
+        ...mvpPacket,
+        input_text: body?.input_text ?? mvpPacket.input_text,
+      }),
     });
   });
 
   await page.goto("/mvp");
   await expect(page.getByRole("heading", { name: /RED/i })).toBeVisible();
-  await page.getByRole("button", { name: "Run Demo" }).click();
+  await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
+  await page.getByRole("button", { name: "Run Query" }).click();
 
   await expect(page.getByText("nepsis.mvp_packet", { exact: true })).toBeVisible();
+  await expect(
+    page.locator("p").filter({ hasText: "Source says JINGALL, but a model answered JAILING." }),
+  ).toBeVisible();
   await expect(page.getByText("Hold and preserve JINGALL.", { exact: true })).toBeVisible();
 });
 
