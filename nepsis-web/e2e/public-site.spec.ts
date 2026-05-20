@@ -26,6 +26,33 @@ test("public MVP can run without login or model key", async ({ page }) => {
   await expect(page.getByText("Engine backend request failed", { exact: false })).toHaveCount(0);
 });
 
+test("public MVP exposes topology mode before raw telemetry", async ({ page }) => {
+  await page.goto("/mvp");
+  await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
+  await page.getByRole("button", { name: "Run Query" }).click();
+
+  await expect(page.getByRole("region", { name: "Visual topology mode" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Topology" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("RED Channel", { exact: true })).toBeVisible();
+  await expect(page.getByText("STILL 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("BLUE Channel", { exact: true })).toBeVisible();
+  await expect(page.getByText("STILL 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Commitment", { exact: true })).toBeVisible();
+  await expect(page.getByText("State feedback", { exact: true })).toBeVisible();
+  await expect(page.getByText("Audit", { exact: true })).toBeVisible();
+  await expect(page.getByText("Constraint conflict detected", { exact: true })).toBeVisible();
+  await expect(page.getByText("Retessellation required", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Telemetry" }).click();
+  await expect(page.getByRole("button", { name: "Telemetry" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
+  await expect(page.getByText("Raw JSON", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Visual topology mode" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Topology" }).click();
+  await expect(page.getByRole("region", { name: "Visual topology mode" })).toBeVisible();
+});
+
 test("public operator routes are gated and do not ask for browser API keys", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: /Operator settings/i })).toBeVisible();
