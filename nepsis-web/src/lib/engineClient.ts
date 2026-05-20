@@ -282,7 +282,13 @@ export type NepsisMvpPacket = {
       needed_discriminators: string[];
       action_threshold: string;
     }>;
-    weights: Record<string, string>;
+    evaluation_axes: Record<
+      string,
+      {
+        description: string;
+        by_hypothesis: Record<string, string>;
+      }
+    >;
     supporting_features: string[];
     contradicting_features: string[];
     needed_discriminators: string[];

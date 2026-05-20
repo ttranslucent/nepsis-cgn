@@ -9,7 +9,7 @@ from .still import build_still_pathway
 
 MvpCaseId = Literal["jailing", "clinical"]
 MVP_PACKET_SCHEMA_ID = "nepsis.mvp_packet"
-MVP_PACKET_SCHEMA_VERSION = "0.1.3"
+MVP_PACKET_SCHEMA_VERSION = "0.1.4"
 
 
 def build_nepsis_mvp_packet(
@@ -124,9 +124,21 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                         "action_threshold": "blocked by RED",
                     },
                 ],
-                "weights": {
-                    "constraint_preserving_token": "high",
-                    "plausible_word_collapse": "blocked",
+                "evaluation_axes": {
+                    "support": {
+                        "description": "Evidence or plausibility support only; not action priority.",
+                        "by_hypothesis": {
+                            "constraint_preserving_token": "high",
+                            "plausible_word_collapse": "surface_plausible_only",
+                        },
+                    },
+                    "action_priority": {
+                        "description": "RED/threshold action class only; not a likelihood magnitude.",
+                        "by_hypothesis": {
+                            "constraint_preserving_token": "commit_after_exact_token_match",
+                            "plausible_word_collapse": "blocked_by_red_boundary",
+                        },
+                    },
                 },
                 "supporting_features": ["exact source token exists", "candidate mismatch is observable"],
                 "contradicting_features": ["candidate changes governed token"],
@@ -336,9 +348,21 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                         "action_threshold": "escalate before benign closure",
                     },
                 ],
-                "weights": {
-                    "benign_radicular_spasm": "medium",
-                    "cauda_equina": "red-action-dominant" if red_active else "low",
+                "evaluation_axes": {
+                    "support": {
+                        "description": "Evidence or plausibility support only; not action priority.",
+                        "by_hypothesis": {
+                            "benign_radicular_spasm": "medium",
+                            "cauda_equina": "uncertain",
+                        },
+                    },
+                    "action_priority": {
+                        "description": "RED/threshold action class only; not a likelihood magnitude.",
+                        "by_hypothesis": {
+                            "benign_radicular_spasm": "bounded_until_red_flags_resolved",
+                            "cauda_equina": "red-action-dominant" if red_active else "low",
+                        },
+                    },
                 },
                 "supporting_features": ["radicular pain", "spasm"],
                 "contradicting_features": red_flags,

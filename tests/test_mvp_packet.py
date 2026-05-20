@@ -93,12 +93,26 @@ def test_mvp_still_audit_events_are_ordered() -> None:
     assert still_events[0]["order"] < still_events[1]["order"]
 
 
+def test_mvp_blue_channel_separates_support_and_action_axes() -> None:
+    packet = build_nepsis_mvp_packet(case_id="clinical")
+    blue_channel = packet["blue_channel"]
+    axes = blue_channel["evaluation_axes"]
+
+    assert "weights" not in blue_channel
+    assert axes["support"]["by_hypothesis"]["benign_radicular_spasm"] == "medium"
+    assert axes["support"]["by_hypothesis"]["cauda_equina"] == "uncertain"
+    assert axes["action_priority"]["by_hypothesis"]["cauda_equina"] == "red-action-dominant"
+    assert "red-action-dominant" not in axes["support"]["by_hypothesis"].values()
+
+
 def test_clinical_mvp_packet_holds_blue_inside_red_boundary() -> None:
     packet = build_nepsis_mvp_packet(case_id="clinical")
 
     assert packet["red_channel"]["active_hazards"][0]["id"] == "cauda_equina_must_not_miss"
     assert packet["red_channel"]["escalation_required"] is True
-    assert packet["blue_channel"]["weights"]["cauda_equina"] == "red-action-dominant"
+    assert packet["blue_channel"]["evaluation_axes"]["action_priority"]["by_hypothesis"]["cauda_equina"] == (
+        "red-action-dominant"
+    )
     assert packet["non_quiescence"]["wrong_manifold_possible"] is True
     assert packet["still"]["checkpoints"][0]["trigger_status"] == "escalation_preserved"
     assert packet["still"]["commitment_readiness"]["status"] == "retessellate"

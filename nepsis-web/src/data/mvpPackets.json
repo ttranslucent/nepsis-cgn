@@ -109,9 +109,21 @@
         "radicular pain",
         "spasm"
       ],
-      "weights": {
-        "benign_radicular_spasm": "medium",
-        "cauda_equina": "red-action-dominant"
+      "evaluation_axes": {
+        "support": {
+          "description": "Evidence or plausibility support only; not action priority.",
+          "by_hypothesis": {
+            "benign_radicular_spasm": "medium",
+            "cauda_equina": "uncertain"
+          }
+        },
+        "action_priority": {
+          "description": "RED/threshold action class only; not a likelihood magnitude.",
+          "by_hypothesis": {
+            "benign_radicular_spasm": "bounded_until_red_flags_resolved",
+            "cauda_equina": "red-action-dominant"
+          }
+        }
       }
     },
     "case_id": "clinical",
@@ -186,7 +198,7 @@
       "ruled_out_hazards": []
     },
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.3",
+    "schema_version": "0.1.4",
     "state_feedback": {
       "audit_events": [
         "Declared expected next-state trajectory for high-consequence red-flag uncertainty.",
@@ -409,9 +421,21 @@
         "exact source token exists",
         "candidate mismatch is observable"
       ],
-      "weights": {
-        "constraint_preserving_token": "high",
-        "plausible_word_collapse": "blocked"
+      "evaluation_axes": {
+        "support": {
+          "description": "Evidence or plausibility support only; not action priority.",
+          "by_hypothesis": {
+            "constraint_preserving_token": "high",
+            "plausible_word_collapse": "surface_plausible_only"
+          }
+        },
+        "action_priority": {
+          "description": "RED/threshold action class only; not a likelihood magnitude.",
+          "by_hypothesis": {
+            "constraint_preserving_token": "commit_after_exact_token_match",
+            "plausible_word_collapse": "blocked_by_red_boundary"
+          }
+        }
       }
     },
     "case_id": "jailing",
@@ -485,7 +509,7 @@
       "ruled_out_hazards": []
     },
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.3",
+    "schema_version": "0.1.4",
     "state_feedback": {
       "audit_events": [
         "Declared expected next-state constraint for governed-token preservation.",

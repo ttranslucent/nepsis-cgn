@@ -203,7 +203,7 @@ function PacketView({ packet }: { packet: NepsisMvpPacket }) {
       )}
 
       <Panel title="BLUE Channel" tone="blue">
-        <KeyValue label="Weights" value={formatWeights(packet.blue_channel.weights)} />
+        <KeyValue label="Evaluation axes" value={formatEvaluationAxes(packet.blue_channel.evaluation_axes)} />
         <div className="mt-4 grid gap-3 xl:grid-cols-2">
           {packet.blue_channel.hypotheses.map((hypothesis) => (
             <div key={hypothesis.id} className="rounded-2xl border border-nepsis-border bg-black/20 p-4">
@@ -478,10 +478,17 @@ function JsonList({ title, items }: { title: string; items: Record<string, unkno
   );
 }
 
-function formatWeights(weights: Record<string, string>): string {
-  const entries = Object.entries(weights);
+function formatEvaluationAxes(axes: NepsisMvpPacket["blue_channel"]["evaluation_axes"]): string {
+  const entries = Object.entries(axes);
   if (entries.length === 0) {
     return "None";
   }
-  return entries.map(([key, value]) => `${key}: ${value}`).join("; ");
+  return entries
+    .map(([axis, value]) => {
+      const byHypothesis = Object.entries(value.by_hypothesis)
+        .map(([key, rating]) => `${key}: ${rating}`)
+        .join(", ");
+      return `${axis}: ${byHypothesis}`;
+    })
+    .join("; ");
 }
