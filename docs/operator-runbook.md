@@ -57,7 +57,7 @@ npm run dev
 - Backend has `NEPSIS_API_HOST=0.0.0.0`, `NEPSIS_API_PORT=$PORT`,
   `NEPSIS_API_TOKEN`, `NEPSIS_API_ALLOWED_ORIGINS`, and, if sessions stay
   enabled, persistent `NEPSIS_API_STORE_PATH`.
-- Backend does not set `NEPSIS_API_ALLOW_ANON=true`.
+- Backend explicitly sets `NEPSIS_API_ALLOW_ANON=false`.
 - Web has `NEPSIS_API_BASE_URL=https://<render-service>` and matching
   `NEPSIS_API_TOKEN`.
 - Web has a long random `NEPSIS_AUTH_SECRET`.
@@ -79,10 +79,11 @@ After Vercel and Render are connected:
 NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
 ```
 
-The smoke checks the landing page, `/mvp`, backend health through the web proxy,
-the deterministic MVP POST, auth session shape, and the playground config
-endpoint. A failing `/api/engine/mvp` usually means `NEPSIS_API_BASE_URL`,
-`NEPSIS_API_TOKEN`, Render service health, or CORS origins are misconfigured.
+The smoke checks the landing page, `/mvp`, `/api/status`, backend health through
+the web proxy, the deterministic MVP POST, unauthenticated auth session shape,
+disabled model routes, and the playground config endpoint. A failing
+`/api/engine/mvp` usually means `NEPSIS_API_BASE_URL`, `NEPSIS_API_TOKEN`,
+Render service health, or CORS origins are misconfigured.
 
 ## Key Safety
 
