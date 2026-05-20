@@ -117,6 +117,7 @@ Local proto-puzzle overrides:
 Production behavior is intentionally strict:
 
 - If `NEPSIS_API_BASE_URL` is missing, `/api/engine/*` returns `503` and `/mvp` links users to `/status`.
+- `/api/status` checks the frozen MVP packet path in addition to backend health.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
 - If email delivery is not configured, `/login` either shows a preview code when preview is enabled or tells the operator which auth env vars are missing.
 - Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside production.
@@ -133,6 +134,7 @@ Recommended deployment sequence:
 6. Do not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` for public production.
 7. Set `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
 8. Verify `/mvp`, `/status`, `/login`, and gated `/engine` after the deployment is live.
+9. Run `NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh` from the repo root.
 
 ## Public API and MCP
 

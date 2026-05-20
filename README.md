@@ -116,8 +116,9 @@ The public site posture is intentionally narrow:
 
 Deploy the existing FastAPI backend as the API service. `render.yaml` defines a
 Render web service that installs `.[api]`, starts `nepsiscgn-api-asgi`, binds to
-`0.0.0.0:$PORT`, sets `NEPSIS_API_TOKEN`, configures CORS origins, and stores
-engine sessions under `/var/data` when sessions are enabled.
+`0.0.0.0:$PORT`, keeps anonymous backend access disabled, sets
+`NEPSIS_API_TOKEN`, configures CORS origins, and stores engine sessions under
+`/var/data` when sessions are enabled.
 
 Configure the Vercel web app with:
 
@@ -135,9 +136,9 @@ After deployment, run:
 NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
 ```
 
-The script uses Python stdlib HTTP calls and checks `/`, `/mvp`,
-`/api/engine/health`, `POST /api/engine/mvp`, auth session state, and the
-playground config endpoint.
+The script uses Python stdlib HTTP calls and checks `/`, `/mvp`, `/api/status`,
+`/api/engine/health`, `POST /api/engine/mvp`, unauthenticated auth session
+state, disabled public model routes, and the playground config endpoint.
 
 ## Public API and MCP
 

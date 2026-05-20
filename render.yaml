@@ -13,6 +13,8 @@ services:
         value: $PORT
       - key: NEPSIS_API_TOKEN
         sync: false
+      - key: NEPSIS_API_ALLOW_ANON
+        value: "false"
       - key: NEPSIS_API_ALLOWED_ORIGINS
         value: https://nepsis-cgn.vercel.app,https://www.nepsisai.com,https://nepsisai.com
       - key: NEPSIS_API_STORE_PATH

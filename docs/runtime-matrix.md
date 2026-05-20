@@ -44,6 +44,9 @@ The script defaults to `python3.11`. If that executable is unavailable, it uses
 - Public production should set `NEPSIS_API_BASE_URL`, matching
   `NEPSIS_API_TOKEN`, `NEPSIS_AUTH_SECRET`, `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`,
   and `NEPSIS_MODEL_ROUTES_ENABLED=false`.
+- Public backend deployment should keep `NEPSIS_API_ALLOW_ANON=false`; public
+  visitors reach the frozen MVP through the web proxy, not direct anonymous API
+  access.
 - Public production should not set server OpenAI keys unless model routes have
   auth and rate-limit review.
 - Treat engine sessions, LLM calls, and browser-stored OpenAI keys as

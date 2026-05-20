@@ -167,6 +167,25 @@ test("public operator routes are gated and do not ask for browser API keys", asy
   await expect(page.getByRole("link", { name: /Run MVP Demo/i })).toBeVisible();
 });
 
+test("public model API routes are disabled without provider keys", async ({ request }) => {
+  const playgroundStatus = await request.get("/api/playground-nepsis");
+  expect(playgroundStatus.ok()).toBeTruthy();
+  const playgroundPayload = await playgroundStatus.json();
+  expect(playgroundPayload.modelRoutesEnabled).toBe(false);
+  expect(playgroundPayload.hasServerKey).toBe(false);
+  expect(typeof playgroundPayload.defaultModel).toBe("string");
+
+  const playgroundRun = await request.post("/api/playground-nepsis", {
+    data: { prompt: "smoke", packId: "jailing_jingall" },
+  });
+  expect(playgroundRun.status()).toBe(403);
+
+  const detachedRun = await request.post("/api/run-with-nepsis", {
+    data: { prompt: "smoke" },
+  });
+  expect(detachedRun.status()).toBe(403);
+});
+
 test("status page exposes safe public system posture", async ({ page }) => {
   await page.route("**/api/status", async (route) => {
     await route.fulfill({
@@ -174,6 +193,12 @@ test("status page exposes safe public system posture", async ({ page }) => {
       contentType: "application/json",
       body: JSON.stringify({
         backend: { configured: false, reachable: false },
+        mvp: {
+          available: true,
+          status: 200,
+          schemaId: "nepsis.mvp_packet",
+          noLoginRequired: true,
+        },
         auth: { loginConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
         mcp: { available: true, publicTools: ["run_mvp", "health", "get_mvp_schema"] },
@@ -183,6 +208,9 @@ test("status page exposes safe public system posture", async ({ page }) => {
 
   await page.goto("/status");
   await expect(page.getByRole("heading", { name: /System Status/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Public MVP" })).toBeVisible();
+  await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
+  await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
   await expect(page.getByText("MCP Tools")).toBeVisible();
   await expect(page.getByText("No server OpenAI key configured")).toBeVisible();

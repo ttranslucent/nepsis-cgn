@@ -10,6 +10,13 @@ type StatusPayload = {
     status: number | null;
     detail?: string;
   };
+  mvp: {
+    available: boolean;
+    status: number | null;
+    schemaId: string | null;
+    noLoginRequired: boolean;
+    detail?: string;
+  };
   auth: {
     loginConfigured: boolean;
     emailConfigured?: boolean;
@@ -106,13 +113,34 @@ export default function StatusPage() {
 
       {status && (
         <div className="grid gap-4 md:grid-cols-2">
+          <StatusCard title="Public MVP" ok={status.mvp.available}>
+            <p>{status.mvp.available ? "Frozen /mvp packet is reachable." : "Frozen /mvp packet is not reachable."}</p>
+            <p>Schema: {status.mvp.schemaId ?? "unavailable"}</p>
+            <p>{status.mvp.noLoginRequired ? "No login required" : "Login required"}</p>
+            <p>Provider model keys not required.</p>
+            {status.mvp.status && <p>HTTP status: {status.mvp.status}</p>}
+          </StatusCard>
+
           <StatusCard title="Backend API" ok={status.backend.configured && status.backend.reachable}>
-            <p>{status.backend.configured ? "NEPSIS_API_BASE_URL is set." : "NEPSIS_API_BASE_URL is not configured."}</p>
-            <p>{status.backend.reachable ? "Backend health check is reachable." : "Backend health check is not reachable."}</p>
+            <p>
+              {status.backend.configured ? "NEPSIS_API_BASE_URL is set." : "NEPSIS_API_BASE_URL is not configured."}
+            </p>
+            <p>
+              {status.backend.reachable
+                ? "Backend health check is reachable."
+                : "Backend health check is not reachable."}
+            </p>
             {status.backend.status && <p>HTTP status: {status.backend.status}</p>}
           </StatusCard>
 
-          <StatusCard title="Login" ok={status.auth.loginConfigured && (status.auth.emailConfigured || status.auth.previewCodesEnabled)}>
+          <StatusCard
+            title="Operator Login"
+            ok={
+              status.mvp.noLoginRequired ||
+              (status.auth.loginConfigured && (status.auth.emailConfigured || status.auth.previewCodesEnabled))
+            }
+          >
+            <p>Public MVP access does not require login.</p>
             <p>{status.auth.loginConfigured ? "Auth secret configured." : "Auth secret missing."}</p>
             <p>{status.auth.emailConfigured ? "Email login configured." : "Email login not configured."}</p>
             <p>{status.auth.previewCodesEnabled ? "Preview codes enabled." : "Preview codes disabled."}</p>

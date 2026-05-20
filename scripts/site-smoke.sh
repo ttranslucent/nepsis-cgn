@@ -30,26 +30,82 @@ def request(path: str, *, method: str = "GET", body: dict | None = None) -> tupl
         return exc.code, exc.read().decode("utf-8", errors="replace")
 
 
-checks = [
-    ("/", "GET", None, {200}),
-    ("/mvp", "GET", None, {200}),
-    ("/api/auth/session", "GET", None, {200}),
-    ("/api/playground-nepsis", "GET", None, {200}),
-    ("/api/engine/health", "GET", None, {200}),
-    ("/api/engine/mvp", "POST", {"case_id": "jailing"}, {200}),
-]
-
 failed = False
-for path, method, body, expected in checks:
+
+
+def check(path: str, *, method: str = "GET", body: dict | None = None, expected: set[int] | None = None) -> tuple[int, str]:
+    global failed
+    expected = expected or {200}
     status, payload = request(path, method=method, body=body)
     ok = status in expected
     print(f"{method:4} {path:26} {status}")
     if not ok:
         failed = True
         print(payload[:500])
-    if path == "/api/engine/mvp" and status == 200 and "nepsis.mvp_packet" not in payload:
+    return status, payload
+
+
+def as_json(path: str, payload: str) -> dict:
+    global failed
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
         failed = True
-        print("MVP response did not include nepsis.mvp_packet")
+        print(f"{path} did not return JSON: {exc}")
+        return {}
+    if not isinstance(data, dict):
+        failed = True
+        print(f"{path} JSON response was not an object")
+        return {}
+    return data
+
+
+check("/")
+check("/mvp")
+
+status_code, payload = check("/api/status")
+if status_code == 200:
+    data = as_json("/api/status", payload)
+    mvp = data.get("mvp") if isinstance(data.get("mvp"), dict) else {}
+    models = data.get("models") if isinstance(data.get("models"), dict) else {}
+    if mvp.get("schemaId") != "nepsis.mvp_packet" or not mvp.get("available"):
+        failed = True
+        print("/api/status did not report the frozen MVP as available")
+    if mvp.get("noLoginRequired") is not True:
+        failed = True
+        print("/api/status did not report no-login MVP access")
+    if models.get("enabled") is not False or models.get("hasServerOpenAiKey") is not False:
+        failed = True
+        print("/api/status did not report model routes disabled without server provider keys")
+
+status_code, payload = check("/api/auth/session")
+if status_code == 200:
+    data = as_json("/api/auth/session", payload)
+    if data.get("authenticated") is not False:
+        failed = True
+        print("/api/auth/session unexpectedly reported an authenticated visitor")
+    if data.get("engineControlAllowed") is not False:
+        failed = True
+        print("/api/auth/session unexpectedly allowed anonymous engine controls")
+
+status_code, payload = check("/api/playground-nepsis")
+if status_code == 200:
+    data = as_json("/api/playground-nepsis", payload)
+    if data.get("modelRoutesEnabled") is not False:
+        failed = True
+        print("/api/playground-nepsis did not report disabled model routes")
+    if data.get("hasServerKey") is not False:
+        failed = True
+        print("/api/playground-nepsis reported a server provider key on the public site")
+
+check("/api/playground-nepsis", method="POST", body={"prompt": "smoke", "packId": "jailing_jingall"}, expected={403})
+check("/api/run-with-nepsis", method="POST", body={"prompt": "smoke"}, expected={403})
+check("/api/engine/health")
+
+status_code, payload = check("/api/engine/mvp", method="POST", body={"case_id": "jailing"})
+if status_code == 200 and "nepsis.mvp_packet" not in payload:
+    failed = True
+    print("MVP response did not include nepsis.mvp_packet")
 
 if failed:
     raise SystemExit(1)
