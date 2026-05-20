@@ -1,4 +1,5 @@
 import { readNepsisUserFromRequest } from "@/lib/nepsisAuth";
+import { publicSiteMode } from "@/lib/publicMode";
 
 const DEFAULT_ENGINE_BASE_URL = "http://127.0.0.1:8787";
 const ENGINE_SESSION_OWNER_HEADER = "X-Nepsis-Session-Owner";
@@ -19,7 +20,7 @@ export function engineBaseUrl(): string {
   if (configured && configured.length > 0) {
     return configured;
   }
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !publicSiteMode()) {
     return DEFAULT_ENGINE_BASE_URL;
   }
   throw new EngineConfigurationError(

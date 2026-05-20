@@ -100,6 +100,12 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mvp.noLoginRequired).toBe(true);
   expect(payload.models.enabled).toBe(false);
   expect(payload.models.hasServerOpenAiKey).toBe(false);
+
+  const engineHealth = await request.get("/api/engine/health");
+  expect(engineHealth.ok()).toBeTruthy();
+  const engineHealthPayload = await engineHealth.json();
+  expect(engineHealthPayload.ok).toBe(false);
+  expect(engineHealthPayload.configured).toBe(false);
 });
 
 test("status page exposes safe public system posture", async ({ page }) => {
