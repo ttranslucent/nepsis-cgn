@@ -61,3 +61,13 @@ Protected tools:
 MCP clients should authenticate to their own model provider separately. NepsisCGN
 does not proxy visitor OpenAI, Claude, or Gemini accounts through the public web
 site.
+
+## Public MVP Visual Topology Mode
+
+The `/mvp` page may render a Visual Topology Mode for stakeholder review. This
+is a browser-side view over the canonical `nepsis.mvp_packet` response.
+
+Visual Topology Mode does not add public API fields, does not require login,
+does not call provider models, and does not create runtime engine sessions. The
+raw telemetry and JSON packet remain available from the same page through the
+`Telemetry` result view.
