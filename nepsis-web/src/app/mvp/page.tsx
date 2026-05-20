@@ -221,6 +221,7 @@ function PacketView({ packet }: { packet: NepsisMvpPacket }) {
       <section className="grid gap-5 xl:grid-cols-2">
         <Panel title="Contradiction Monitor">
           <KeyValue label="Density" value={String(packet.contradiction_monitor.contradiction_density)} />
+          <KeyValue label="Density basis" value={formatDensityBasis(packet.contradiction_monitor.density_basis)} />
           <KeyValue label="Stability" value={packet.contradiction_monitor.stability_status} />
           <JsonList title="Contradictions" items={packet.contradiction_monitor.contradictions} />
         </Panel>
@@ -491,4 +492,9 @@ function formatEvaluationAxes(axes: NepsisMvpPacket["blue_channel"]["evaluation_
       return `${axis}: ${byHypothesis}`;
     })
     .join("; ");
+}
+
+function formatDensityBasis(basis: NepsisMvpPacket["contradiction_monitor"]["density_basis"]): string {
+  const runtimeRole = basis.runtime_gate_input ? "runtime gate input" : "demo-only";
+  return `${basis.model}: ${basis.formula}; n=${basis.contradiction_count}; ${runtimeRole}`;
 }

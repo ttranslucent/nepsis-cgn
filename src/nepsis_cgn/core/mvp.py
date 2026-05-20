@@ -9,7 +9,7 @@ from .still import build_still_pathway
 
 MvpCaseId = Literal["jailing", "clinical"]
 MVP_PACKET_SCHEMA_ID = "nepsis.mvp_packet"
-MVP_PACKET_SCHEMA_VERSION = "0.1.4"
+MVP_PACKET_SCHEMA_VERSION = "0.1.5"
 
 
 def build_nepsis_mvp_packet(
@@ -35,6 +35,35 @@ def _base_packet(*, case_id: MvpCaseId, input_text: str) -> dict[str, Any]:
     }
 
 
+def _contradiction_density_from_count(contradictions: list[dict[str, Any]]) -> float:
+    count = len(contradictions)
+    if count == 0:
+        return 0.0
+    return count / float(count + 1)
+
+
+def _build_contradiction_monitor(
+    *,
+    contradictions: list[dict[str, Any]],
+    stability_status: str,
+) -> dict[str, Any]:
+    return {
+        "contradictions": contradictions,
+        "contradiction_density": _contradiction_density_from_count(contradictions),
+        "density_basis": {
+            "model": "saturating_count_v1",
+            "formula": "contradiction_count / (contradiction_count + 1)",
+            "contradiction_count": len(contradictions),
+            "runtime_gate_input": False,
+            "runtime_gate_note": (
+                "Frozen MVP demo score only; runtime governance derives contradiction_density "
+                "from evaluated constraint violations."
+            ),
+        },
+        "stability_status": stability_status,
+    }
+
+
 def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
     text = input_text or (
         "Canonical Jailing/Jingall case: source constraint says the required name is JINGALL, "
@@ -43,6 +72,18 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
     candidate = "JAILING" if "JAILING" in text.upper() else "unknown_candidate"
     target = "JINGALL"
     contradiction = candidate != "unknown_candidate" and candidate != target
+    contradictions = [
+        {
+            "type": "constraint contradiction",
+            "observation": "candidate_token=JAILING",
+            "conflicts_with": "Hard constraint requires JINGALL",
+        },
+        {
+            "type": "missing-denominator contradiction",
+            "observation": "BLUE initially considered fluent word completion",
+            "conflicts_with": "hypothesis set omitted exact proper-token preservation",
+        },
+    ] if contradiction else []
 
     packet = _base_packet(case_id="jailing", input_text=text)
     packet.update(
@@ -144,24 +185,10 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 "contradicting_features": ["candidate changes governed token"],
                 "needed_discriminators": ["exact source-token comparison"],
             },
-            "contradiction_monitor": {
-                "contradictions": [
-                    {
-                        "type": "constraint contradiction",
-                        "observation": "candidate_token=JAILING",
-                        "conflicts_with": "Hard constraint requires JINGALL",
-                    },
-                    {
-                        "type": "missing-denominator contradiction",
-                        "observation": "BLUE initially considered fluent word completion",
-                        "conflicts_with": "hypothesis set omitted exact proper-token preservation",
-                    },
-                ]
-                if contradiction
-                else [],
-                "contradiction_density": 0.66 if contradiction else 0.0,
-                "stability_status": "unstable_retest_required" if contradiction else "stable",
-            },
+            "contradiction_monitor": _build_contradiction_monitor(
+                contradictions=contradictions,
+                stability_status="unstable_retest_required" if contradiction else "stable",
+            ),
             "denominator_collapse": {
                 "detected": contradiction,
                 "missing_hypothesis_classes": [
@@ -266,6 +293,13 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
         if present
     ]
     red_active = bool(red_flags)
+    contradictions = [
+        {
+            "type": "action-threshold contradiction",
+            "observation": "benign spasm narrative competes with red flags",
+            "conflicts_with": "RED escalation threshold crossed by consequence",
+        }
+    ] if red_active else []
 
     packet = _base_packet(case_id="clinical", input_text=text)
     packet.update(
@@ -368,19 +402,10 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 "contradicting_features": red_flags,
                 "needed_discriminators": ["post-void residual", "focused neurologic exam"],
             },
-            "contradiction_monitor": {
-                "contradictions": [
-                    {
-                        "type": "action-threshold contradiction",
-                        "observation": "benign spasm narrative competes with red flags",
-                        "conflicts_with": "RED escalation threshold crossed by consequence",
-                    }
-                ]
-                if red_active
-                else [],
-                "contradiction_density": 0.5 if red_active else 0.0,
-                "stability_status": "hold_for_discriminator" if red_active else "stable",
-            },
+            "contradiction_monitor": _build_contradiction_monitor(
+                contradictions=contradictions,
+                stability_status="hold_for_discriminator" if red_active else "stable",
+            ),
             "denominator_collapse": {
                 "detected": red_active,
                 "missing_hypothesis_classes": ["compressive neurologic emergency"] if red_active else [],

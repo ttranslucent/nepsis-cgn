@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from nepsis_cgn.core.mvp import MVP_PACKET_SCHEMA_ID, build_nepsis_mvp_packet
 
 
@@ -103,6 +105,26 @@ def test_mvp_blue_channel_separates_support_and_action_axes() -> None:
     assert axes["support"]["by_hypothesis"]["cauda_equina"] == "uncertain"
     assert axes["action_priority"]["by_hypothesis"]["cauda_equina"] == "red-action-dominant"
     assert "red-action-dominant" not in axes["support"]["by_hypothesis"].values()
+
+
+def test_mvp_contradiction_density_declares_saturating_count_basis() -> None:
+    jailing = build_nepsis_mvp_packet(case_id="jailing")
+    clinical = build_nepsis_mvp_packet(case_id="clinical")
+    clear = build_nepsis_mvp_packet(case_id="clinical", input_text="Clinical demo: radicular spasm only.")
+
+    assert jailing["contradiction_monitor"]["contradiction_density"] == pytest.approx(2 / 3)
+    assert clinical["contradiction_monitor"]["contradiction_density"] == pytest.approx(1 / 2)
+    assert clear["contradiction_monitor"]["contradiction_density"] == 0.0
+
+    for packet in (jailing, clinical, clear):
+        monitor = packet["contradiction_monitor"]
+        basis = monitor["density_basis"]
+        count = len(monitor["contradictions"])
+
+        assert basis["model"] == "saturating_count_v1"
+        assert basis["formula"] == "contradiction_count / (contradiction_count + 1)"
+        assert basis["contradiction_count"] == count
+        assert basis["runtime_gate_input"] is False
 
 
 def test_clinical_mvp_packet_holds_blue_inside_red_boundary() -> None:

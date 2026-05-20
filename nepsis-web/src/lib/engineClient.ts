@@ -296,6 +296,13 @@ export type NepsisMvpPacket = {
   contradiction_monitor: {
     contradictions: Record<string, unknown>[];
     contradiction_density: number;
+    density_basis: {
+      model: string;
+      formula: string;
+      contradiction_count: number;
+      runtime_gate_input: boolean;
+      runtime_gate_note?: string;
+    };
     stability_status: string;
   };
   denominator_collapse: {

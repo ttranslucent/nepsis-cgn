@@ -141,7 +141,14 @@
           "type": "action-threshold contradiction"
         }
       ],
-      "stability_status": "hold_for_discriminator"
+      "stability_status": "hold_for_discriminator",
+      "density_basis": {
+        "model": "saturating_count_v1",
+        "formula": "contradiction_count / (contradiction_count + 1)",
+        "contradiction_count": 1,
+        "runtime_gate_input": false,
+        "runtime_gate_note": "Frozen MVP demo score only; runtime governance derives contradiction_density from evaluated constraint violations."
+      }
     },
     "created_at": "__RUNTIME_CREATED_AT__",
     "denominator_collapse": {
@@ -198,7 +205,7 @@
       "ruled_out_hazards": []
     },
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.4",
+    "schema_version": "0.1.5",
     "state_feedback": {
       "audit_events": [
         "Declared expected next-state trajectory for high-consequence red-flag uncertainty.",
@@ -445,7 +452,7 @@
       "Must-not-miss hazard: cosmetic fluency cannot override source identity."
     ],
     "contradiction_monitor": {
-      "contradiction_density": 0.66,
+      "contradiction_density": 0.6666666666666666,
       "contradictions": [
         {
           "conflicts_with": "Hard constraint requires JINGALL",
@@ -458,7 +465,14 @@
           "type": "missing-denominator contradiction"
         }
       ],
-      "stability_status": "unstable_retest_required"
+      "stability_status": "unstable_retest_required",
+      "density_basis": {
+        "model": "saturating_count_v1",
+        "formula": "contradiction_count / (contradiction_count + 1)",
+        "contradiction_count": 2,
+        "runtime_gate_input": false,
+        "runtime_gate_note": "Frozen MVP demo score only; runtime governance derives contradiction_density from evaluated constraint violations."
+      }
     },
     "created_at": "__RUNTIME_CREATED_AT__",
     "denominator_collapse": {
@@ -509,7 +523,7 @@
       "ruled_out_hazards": []
     },
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.4",
+    "schema_version": "0.1.5",
     "state_feedback": {
       "audit_events": [
         "Declared expected next-state constraint for governed-token preservation.",
