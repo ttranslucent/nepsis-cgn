@@ -16,6 +16,8 @@ test("public MVP can run without login or model key", async ({ page }) => {
   await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
   await page.getByRole("button", { name: "Run Query" }).click();
 
+  await expect(page.getByRole("region", { name: "Visual topology mode" })).toBeVisible();
+  await page.getByRole("button", { name: "Telemetry" }).click();
   await expect(page.getByText("nepsis.mvp_packet", { exact: true })).toBeVisible();
   await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
   await expect(page.locator("main")).toContainText("action_priority");

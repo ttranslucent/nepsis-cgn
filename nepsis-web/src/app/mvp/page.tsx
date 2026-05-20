@@ -10,6 +10,8 @@ import {
   type NepsisMvpPacket,
 } from "@/lib/engineClient";
 
+import { VisualTopologyMode } from "./VisualTopologyMode";
+
 const CASES: Array<{ id: NepsisMvpCaseId; label: string; description: string }> = [
   {
     id: "jailing",
@@ -41,6 +43,7 @@ export default function MvpDemoPage() {
   const [packet, setPacket] = useState<NepsisMvpPacket | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resultView, setResultView] = useState<"topology" | "telemetry">("topology");
 
   async function runDemo() {
     setIsRunning(true);
@@ -51,6 +54,7 @@ export default function MvpDemoPage() {
         case_id: caseId,
         input_text: trimmedQuery.length > 0 ? trimmedQuery : undefined,
       });
+      setResultView("topology");
       setPacket(result);
     } catch (err) {
       setError(userFacingMvpError(err));
@@ -142,7 +146,11 @@ export default function MvpDemoPage() {
         )}
       </section>
 
-      {packet ? <PacketView packet={packet} /> : <EmptyState />}
+      {packet ? (
+        <PacketView packet={packet} resultView={resultView} onResultViewChange={setResultView} />
+      ) : (
+        <EmptyState />
+      )}
     </div>
   );
 }
@@ -155,7 +163,15 @@ function EmptyState() {
   );
 }
 
-function PacketView({ packet }: { packet: NepsisMvpPacket }) {
+function PacketView({
+  packet,
+  resultView,
+  onResultViewChange,
+}: {
+  packet: NepsisMvpPacket;
+  resultView: "topology" | "telemetry";
+  onResultViewChange: (value: "topology" | "telemetry") => void;
+}) {
   const contradictionTriggered = packet.contradiction_monitor.contradictions.length > 0;
   const retessellationTriggered = packet.denominator_collapse.retessellation_required;
   const zeroBackTriggered = packet.zeroback.triggered;
@@ -165,6 +181,32 @@ function PacketView({ packet }: { packet: NepsisMvpPacket }) {
 
   return (
     <div className="mt-5 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-nepsis-border bg-nepsis-panel p-3">
+        <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Result view</div>
+        <div className="inline-flex rounded-full border border-nepsis-border bg-black/20 p-1">
+          {(["topology", "telemetry"] as const).map((view) => {
+            const selected = resultView === view;
+            return (
+              <button
+                key={view}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onResultViewChange(view)}
+                className={`rounded-full px-4 py-2 text-sm font-semibold capitalize transition ${
+                  selected ? "bg-nepsis-accent text-black" : "text-nepsis-muted hover:text-nepsis-text"
+                }`}
+              >
+                {view}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {resultView === "topology" ? (
+        <VisualTopologyMode packet={packet} />
+      ) : (
+        <>
       <section className="rounded-3xl border border-nepsis-border bg-nepsis-panel p-5 md:p-6">
         <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
           <div>
@@ -296,6 +338,8 @@ function PacketView({ packet }: { packet: NepsisMvpPacket }) {
           {JSON.stringify(packet, null, 2)}
         </pre>
       </details>
+        </>
+      )}
     </div>
   );
 }
