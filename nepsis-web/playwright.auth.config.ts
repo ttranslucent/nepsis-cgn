@@ -1,9 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
+const port = Number(process.env.PLAYWRIGHT_AUTH_PORT ?? 3101);
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: "./e2e-auth",
   timeout: 30_000,
   expect: {
     timeout: 5_000,
@@ -14,8 +14,9 @@ export default defineConfig({
   },
   webServer: {
     command:
-      `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true ` +
-      `NEPSIS_AUTH_SECRET=playwright-public-auth-secret ` +
+      `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=false ` +
+      `NEPSIS_AUTH_SECRET=playwright-preview-auth-secret ` +
+      `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true ` +
       `RESEND_API_KEY= NEPSIS_AUTH_FROM_EMAIL= ` +
       `npm run dev -- --hostname 127.0.0.1 --port ${port}`,
     url: `http://127.0.0.1:${port}`,
@@ -26,10 +27,6 @@ export default defineConfig({
     {
       name: "chrome-desktop",
       use: { ...devices["Desktop Chrome"], channel: process.env.PLAYWRIGHT_CHANNEL ?? "chrome" },
-    },
-    {
-      name: "chrome-mobile",
-      use: { ...devices["Pixel 5"], channel: process.env.PLAYWRIGHT_CHANNEL ?? "chrome" },
     },
   ],
 });

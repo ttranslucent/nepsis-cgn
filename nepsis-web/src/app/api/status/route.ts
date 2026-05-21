@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 import { modelRoutesEnabled } from "@/lib/publicMode";
 import { hasConfiguredOpenAiKey } from "@/lib/openaiClient";
 import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
-import { previewCodesAllowed } from "@/lib/nepsisAuth";
+import {
+  authSecretStatus,
+  loginEmailConfigured,
+  operatorLoginReady,
+  previewCodesAllowed,
+} from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
-
-function configured(value: string | undefined): boolean {
-  return Boolean(value?.trim());
-}
 
 async function backendHealth(baseUrl: string | undefined, token: string | undefined) {
   const trimmedBase = baseUrl?.trim().replace(/\/+$/, "");
@@ -142,8 +143,8 @@ export async function GET() {
     mvpHealth(process.env.NEPSIS_API_BASE_URL, process.env.NEPSIS_API_TOKEN),
     mcpHealth(process.env.NEPSIS_API_BASE_URL),
   ]);
-  const loginConfigured = configured(process.env.NEPSIS_AUTH_SECRET);
-  const emailConfigured = configured(process.env.RESEND_API_KEY) && configured(process.env.NEPSIS_AUTH_FROM_EMAIL);
+  const authSecret = authSecretStatus();
+  const emailConfigured = loginEmailConfigured();
   const previewCodesEnabled = previewCodesAllowed();
   const modelsEnabled = modelRoutesEnabled();
 
@@ -151,9 +152,12 @@ export async function GET() {
     backend,
     mvp,
     auth: {
-      loginConfigured,
+      loginConfigured: authSecret.ready,
+      authSecretConfigured: authSecret.configured,
+      authSecretMode: authSecret.mode,
       emailConfigured,
       previewCodesEnabled,
+      operatorLoginReady: operatorLoginReady(),
     },
     models: {
       enabled: modelsEnabled,

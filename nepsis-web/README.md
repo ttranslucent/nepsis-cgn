@@ -42,7 +42,7 @@ Open [http://localhost:3000](http://localhost:3000).
 Development defaults:
 
 - `/api/engine/*` proxies to `http://127.0.0.1:8787` when `NEPSIS_API_BASE_URL` is unset.
-- Login codes can fall back to on-screen preview in non-production environments.
+- Login codes can fall back to on-screen preview when local preview-code mode is enabled.
 - `/api/engine/mvp` is the deterministic v0.3 demo path; session, engine, and LLM flows are experimental.
 - `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` forces public-mode navigation locally for QA.
 

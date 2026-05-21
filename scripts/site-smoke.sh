@@ -62,11 +62,14 @@ def as_json(path: str, payload: str) -> dict:
 
 check("/")
 check("/mvp")
+check("/login")
+check("/engine")
 
 status_code, payload = check("/api/status")
 if status_code == 200:
     data = as_json("/api/status", payload)
     mvp = data.get("mvp") if isinstance(data.get("mvp"), dict) else {}
+    auth = data.get("auth") if isinstance(data.get("auth"), dict) else {}
     models = data.get("models") if isinstance(data.get("models"), dict) else {}
     if mvp.get("schemaId") != "nepsis.mvp_packet" or not mvp.get("available"):
         failed = True
@@ -74,6 +77,12 @@ if status_code == 200:
     if mvp.get("noLoginRequired") is not True:
         failed = True
         print("/api/status did not report no-login MVP access")
+    if auth.get("previewCodesEnabled") is not False:
+        failed = True
+        print("/api/status did not report disabled public preview codes")
+    if auth.get("emailConfigured") is False and auth.get("operatorLoginReady") is not False:
+        failed = True
+        print("/api/status reported operator login ready without email delivery")
     if models.get("enabled") is not False or models.get("hasServerOpenAiKey") is not False:
         failed = True
         print("/api/status did not report model routes disabled without server provider keys")

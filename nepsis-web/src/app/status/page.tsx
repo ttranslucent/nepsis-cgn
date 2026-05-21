@@ -19,8 +19,11 @@ type StatusPayload = {
   };
   auth: {
     loginConfigured: boolean;
+    authSecretConfigured?: boolean;
+    authSecretMode?: "configured" | "development-fallback" | "missing";
     emailConfigured?: boolean;
     previewCodesEnabled: boolean;
+    operatorLoginReady?: boolean;
   };
   models: {
     enabled: boolean;
@@ -66,6 +69,16 @@ function StatusCard({
       <div className="mt-4 space-y-2 text-sm text-nepsis-muted">{children}</div>
     </section>
   );
+}
+
+function authSecretLabel(auth: StatusPayload["auth"]): string {
+  if (auth.authSecretMode === "development-fallback") {
+    return "Dev auth secret active.";
+  }
+  if (auth.authSecretConfigured ?? auth.loginConfigured) {
+    return "Auth secret configured.";
+  }
+  return "Auth secret missing.";
 }
 
 export default function StatusPage() {
@@ -136,12 +149,12 @@ export default function StatusPage() {
           <StatusCard
             title="Operator Login"
             ok={
-              status.mvp.noLoginRequired ||
+              status.auth.operatorLoginReady ??
               (status.auth.loginConfigured && (status.auth.emailConfigured || status.auth.previewCodesEnabled))
             }
           >
             <p>Public MVP access does not require login.</p>
-            <p>{status.auth.loginConfigured ? "Auth secret configured." : "Auth secret missing."}</p>
+            <p>{authSecretLabel(status.auth)}</p>
             <p>{status.auth.emailConfigured ? "Email login configured." : "Email login not configured."}</p>
             <p>{status.auth.previewCodesEnabled ? "Preview codes enabled." : "Preview codes disabled."}</p>
           </StatusCard>

@@ -98,6 +98,10 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mvp.available).toBe(true);
   expect(payload.mvp.schemaId).toBe("nepsis.mvp_packet");
   expect(payload.mvp.noLoginRequired).toBe(true);
+  expect(payload.auth.loginConfigured).toBe(true);
+  expect(payload.auth.emailConfigured).toBe(false);
+  expect(payload.auth.previewCodesEnabled).toBe(false);
+  expect(payload.auth.operatorLoginReady).toBe(false);
   expect(payload.models.enabled).toBe(false);
   expect(payload.models.hasServerOpenAiKey).toBe(false);
 
@@ -121,7 +125,7 @@ test("status page exposes safe public system posture", async ({ page }) => {
           schemaId: "nepsis.mvp_packet",
           noLoginRequired: true,
         },
-        auth: { loginConfigured: false, previewCodesEnabled: false },
+        auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
         mcp: { available: true, publicTools: ["run_mvp", "health", "get_mvp_schema"] },
       }),
@@ -136,4 +140,22 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("Backend API")).toBeVisible();
   await expect(page.getByText("MCP Tools")).toBeVisible();
   await expect(page.getByText("No server OpenAI key configured")).toBeVisible();
+
+  const operatorLogin = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Operator Login" }),
+  });
+  await expect(operatorLogin).toContainText("needs setup");
+  await expect(operatorLogin).toContainText("Auth secret missing.");
+  await expect(operatorLogin).toContainText("Email login not configured.");
+});
+
+test("public login fails closed without email delivery config", async ({ page }) => {
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: /Login to NepsisCGN/i })).toBeVisible();
+
+  await page.getByLabel("Email").fill("operator@example.com");
+  await page.getByRole("button", { name: "Send code" }).click();
+
+  await expect(page.getByRole("status")).toContainText("Login email delivery is required in public-site mode");
+  await expect(page.getByRole("status")).not.toContainText("one-time code");
 });

@@ -23,12 +23,34 @@ from ..manifolds.red_blue import SafetySign
 Family = Literal["puzzle", "clinical", "safety"]
 _STORE_SCHEMA_ID = "nepsis.engine_api_sessions"
 _STORE_SCHEMA_VERSION = "1.3.0"
-_SQLITE_SCHEMA_VERSION = 4
+_SQLITE_SCHEMA_VERSION = 5
 _WORKSPACE_STATE_MAX_BYTES = 64 * 1024
 _STAGE_AUDIT_POLICY = {
     "name": "nepsis_cgn.stage_audit",
     "version": "2026-03-10",
 }
+_OPERATOR_PHASE_INITIAL = "frame_draft"
+_OPERATOR_LEGAL_NEXT_TOOLS: dict[str, list[str]] = {
+    "frame_draft": ["get_session_state", "lock_frame", "abandon_session"],
+    "frame_locked": ["get_session_state", "run_report", "abandon_session"],
+    "report_evaluated": ["get_session_state", "run_report", "lock_report", "abandon_session"],
+    "report_locked": ["get_session_state", "set_threshold_decision", "abandon_session"],
+    "threshold_set": ["get_session_state", "commit_iteration", "abandon_session"],
+}
+_DEFAULT_OPERATOR_FRAME = {
+    "text": "Operator session draft.",
+    "objective_type": "sensemake",
+    "domain": "safety",
+    "time_horizon": "short",
+    "rationale_for_change": (
+        "Red channel: keep irreversible bad outcomes explicit | "
+        "Blue channel: optimize after red boundaries are controlled | "
+        "Uncertainty: the operator has not locked the frame yet"
+    ),
+    "constraints_hard": ["Maintain RED before BLUE sequencing."],
+    "constraints_soft": ["Keep the audit trace concise."],
+}
+_DEFAULT_OPERATOR_GOVERNANCE_COSTS = {"c_fp": 1.0, "c_fn": 9.0}
 LOGGER = logging.getLogger("nepsis_cgn.api.service")
 
 
@@ -55,6 +77,10 @@ class EngineSession:
     parent_frame_id: Optional[str] = None
     owner_id: Optional[str] = None
     workspace_state: Dict[str, Any] = field(default_factory=dict)
+    operator_phase: str = _OPERATOR_PHASE_INITIAL
+    operator_events: list[Dict[str, Any]] = field(default_factory=list)
+    operator_audit: Dict[str, Any] = field(default_factory=dict)
+    operator_ambient: bool = False
 
 
 class EngineApiService:
@@ -63,6 +89,7 @@ class EngineApiService:
         self._lock = RLock()
         self._store_path = _resolve_store_path(store_path)
         self._load_sessions()
+        self._operator_session_id = self._find_ambient_operator_session_id()
         self._apply_retention_policy()
 
     def create_session(
@@ -141,6 +168,287 @@ class EngineApiService:
         with self._lock:
             session = self._require_session(session_id, owner_id=owner_id)
             return self._session_summary(session)
+
+    def get_operator_session_state(self) -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            return self._operator_state(session)
+
+    def operator_lock_frame(
+        self,
+        *,
+        family: Family,
+        frame: Dict[str, Any],
+        governance_costs: Optional[Dict[str, float]] = None,
+        governance_calibration: Optional[Dict[str, Any]] = None,
+        manifest_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            if session.operator_phase != "frame_draft":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="lock_frame",
+                    failed_precondition="frame_draft_required",
+                    missing=["Fresh draft phase"],
+                    coach_prompts=["Commit or abandon the current operator loop before locking a new frame."],
+                )
+
+            self._reset_operator_navigation(
+                session,
+                family=family,
+                frame=frame,
+                governance_costs=governance_costs,
+                governance_calibration=governance_calibration,
+                manifest_path=manifest_path,
+            )
+            audit = self.stage_audit_session(session.session_id)
+            if audit["frame"]["status"] != "PASS":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="lock_frame",
+                    failed_precondition="frame_gate_blocked",
+                    gate=audit["frame"],
+                )
+
+            session.operator_phase = "frame_locked"
+            session.operator_audit = {
+                "frame": _json_copy(audit["frame"]),
+                "latest_audit": _json_copy(audit),
+            }
+            _append_operator_event(session, "LOCK_FRAME")
+            self._persist_sessions()
+            return self._operator_transition_payload(session, audit=audit)
+
+    def operator_run_report(
+        self,
+        *,
+        report_text: str,
+        sign: Dict[str, Any],
+        interpretation: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            if session.operator_phase not in {"frame_locked", "report_evaluated"}:
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="run_report",
+                    failed_precondition="lock_frame_required",
+                    missing=["Locked frame"],
+                    coach_prompts=["Call lock_frame before running a report."],
+                )
+
+            step = self._step_session_internal(
+                session,
+                sign=sign,
+                commit=False,
+                user_decision=None,
+                override_reason=None,
+                carry_forward=None,
+                record_action=True,
+                persist=False,
+            )
+            context = _operator_stage_context(session)
+            interpretation_context = _json_copy(interpretation) if interpretation is not None else {}
+            if not isinstance(interpretation_context, dict):
+                raise ValueError("interpretation must be an object when provided.")
+            interpretation_context.setdefault("report_text", report_text)
+            interpretation_context.setdefault("report_synced", True)
+            interpretation_context.setdefault("contradictions_status", "none_identified")
+            context["interpretation"] = interpretation_context
+            threshold_context = context.get("threshold") or {}
+            if not isinstance(threshold_context, dict):
+                threshold_context = {}
+            threshold_context.setdefault("decision", "undecided")
+            context["threshold"] = threshold_context
+            audit = self.stage_audit_session(
+                session.session_id,
+                context=context,
+                persist_context=True,
+            )
+
+            session.operator_phase = "report_evaluated"
+            session.operator_audit.update(
+                {
+                    "interpretation": _json_copy(audit["interpretation"]),
+                    "threshold": _json_copy(audit["threshold"]),
+                    "latest_audit": _json_copy(audit),
+                    "latest_step": _json_copy(step),
+                }
+            )
+            _append_operator_event(session, "RUN_REPORT")
+            self._persist_sessions()
+            return self._operator_transition_payload(session, step=step, audit=audit)
+
+    def operator_lock_report(self) -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            if session.operator_phase == "frame_locked":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="lock_report",
+                    failed_precondition="run_report_required",
+                    missing=["Evaluated report"],
+                    coach_prompts=["Call run_report before locking the report."],
+                )
+            if session.operator_phase != "report_evaluated":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="lock_report",
+                    failed_precondition="report_evaluated_required",
+                    missing=["Evaluated report"],
+                    coach_prompts=["Return to the report evaluation phase before locking the report."],
+                )
+
+            audit = self.stage_audit_session(session.session_id)
+            if audit["interpretation"]["status"] != "PASS":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="lock_report",
+                    failed_precondition="interpretation_gate_blocked",
+                    gate=audit["interpretation"],
+                )
+
+            session.operator_phase = "report_locked"
+            session.operator_audit.update(
+                {
+                    "interpretation": _json_copy(audit["interpretation"]),
+                    "threshold": _json_copy(audit["threshold"]),
+                    "latest_audit": _json_copy(audit),
+                }
+            )
+            _append_operator_event(session, "LOCK_REPORT")
+            self._persist_sessions()
+            return self._operator_transition_payload(session, audit=audit)
+
+    def operator_set_threshold_decision(
+        self,
+        *,
+        decision: str,
+        hold_reason: str = "",
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            if session.operator_phase != "report_locked":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="set_threshold_decision",
+                    failed_precondition="lock_report_required",
+                    missing=["Locked report"],
+                    coach_prompts=["Lock a passing report before setting the threshold decision."],
+                )
+
+            if decision not in {"recommend", "hold"}:
+                raise ValueError("decision must be one of: recommend, hold")
+            context = _operator_stage_context(session)
+            threshold_context = context.get("threshold") or {}
+            if not isinstance(threshold_context, dict):
+                threshold_context = {}
+            threshold_context["decision"] = decision
+            threshold_context["hold_reason"] = hold_reason
+            context["threshold"] = threshold_context
+            audit = self.stage_audit_session(
+                session.session_id,
+                context=context,
+                persist_context=True,
+            )
+            if audit["threshold"]["status"] != "PASS":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="set_threshold_decision",
+                    failed_precondition="threshold_gate_blocked",
+                    gate=audit["threshold"],
+                )
+
+            session.operator_phase = "threshold_set"
+            session.operator_audit.update(
+                {
+                    "threshold": _json_copy(audit["threshold"]),
+                    "latest_audit": _json_copy(audit),
+                }
+            )
+            _append_operator_event(session, "SET_THRESHOLD_DECISION")
+            self._persist_sessions()
+            return self._operator_transition_payload(session, audit=audit)
+
+    def operator_commit_iteration(
+        self,
+        *,
+        carry_forward_frame: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            if session.operator_phase != "threshold_set":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="commit_iteration",
+                    failed_precondition="threshold_decision_required",
+                    missing=["Threshold decision"],
+                    coach_prompts=["Set a passing threshold decision before committing the iteration."],
+                )
+
+            audit = self.stage_audit_session(session.session_id)
+            if audit["threshold"]["status"] != "PASS":
+                return self._phase_rejection(
+                    session,
+                    attempted_tool="commit_iteration",
+                    failed_precondition="threshold_gate_blocked",
+                    gate=audit["threshold"],
+                )
+
+            final_frame = _merged_frame_payload(session, carry_forward_frame)
+            event_log = _operator_event_log_with(session, "COMMIT_ITERATION")
+            packet = _build_operator_audit_packet(
+                session,
+                audit=audit,
+                phase_event_log=event_log,
+                final_frame=final_frame,
+            )
+            session.packets.append(packet)
+            session.operator_phase = "frame_draft"
+            session.operator_events = []
+            session.operator_audit = {
+                "last_commit_packet": _json_copy(packet),
+                "latest_audit": _json_copy(audit),
+            }
+            self._reset_operator_navigation(
+                session,
+                family=session.family,
+                frame=final_frame,
+                governance_costs=_serialize_governance_costs(session.governance_costs),
+                governance_calibration=_serialize_governance_calibration(session.governance_calibration),
+                manifest_path=session.manifest_path,
+            )
+            self._persist_sessions()
+            return {
+                "session_id": session.session_id,
+                "phase": session.operator_phase,
+                "legal_next_tools": _legal_next_tools(session.operator_phase),
+                "packet": packet,
+                "audit": audit,
+                "session": self._session_summary(session),
+            }
+
+    def operator_abandon_session(self, *, reason: str = "") -> Dict[str, Any]:
+        with self._lock:
+            session = self._ensure_operator_session()
+            old_session_id = session.session_id
+            packet = _build_operator_abandoned_packet(session, reason=reason)
+            session.operator_ambient = False
+            session.operator_phase = _OPERATOR_PHASE_INITIAL
+            session.operator_events = []
+            session.operator_audit = {"abandoned": _json_copy(packet)}
+            self._operator_session_id = None
+            fresh = self._ensure_operator_session(force_new=True)
+            self._persist_sessions()
+            return {
+                "session_id": fresh.session_id,
+                "previous_session_id": old_session_id,
+                "phase": fresh.operator_phase,
+                "legal_next_tools": _legal_next_tools(fresh.operator_phase),
+                "packet": packet,
+                "session": self._session_summary(fresh),
+            }
 
     def reframe_session(
         self,
@@ -358,6 +666,168 @@ class EngineApiService:
         except Exception:
             LOGGER.exception("retention_purge_failed max_age_seconds=%s", retention_seconds)
 
+    def _find_ambient_operator_session_id(self) -> Optional[str]:
+        for session in self._sessions.values():
+            if session.operator_ambient:
+                return session.session_id
+        return None
+
+    def _ensure_operator_session(self, *, force_new: bool = False) -> EngineSession:
+        if not force_new and self._operator_session_id is not None:
+            session = self._sessions.get(self._operator_session_id)
+            if session is not None and session.operator_ambient:
+                return session
+
+        if not force_new:
+            ambient_session_id = self._find_ambient_operator_session_id()
+            if ambient_session_id is not None:
+                self._operator_session_id = ambient_session_id
+                return self._sessions[ambient_session_id]
+
+        session = self._create_operator_session_unlocked()
+        self._persist_sessions()
+        return session
+
+    def _create_operator_session_unlocked(self) -> EngineSession:
+        session_id = str(uuid4())
+        costs = _parse_governance_costs(_DEFAULT_OPERATOR_GOVERNANCE_COSTS)
+        calibration = _parse_governance_calibration(None)
+        seed_frame_payload = _json_copy(_DEFAULT_OPERATOR_FRAME)
+        seed_frame = _frame_from_payload(seed_frame_payload, costs)
+        nav = build_navigation_controller(
+            manifest_path=None,
+            families=["safety"],
+            governance_costs=costs,
+            governance_calibration=calibration,
+            emit_iteration_packet=True,
+            session_id=session_id,
+            frame=seed_frame,
+        )
+        session = EngineSession(
+            session_id=session_id,
+            family="safety",
+            created_at=_now_iso8601(),
+            navigation=nav,
+            packets=[],
+            manifest_path=None,
+            emit_packet=True,
+            governance_costs=costs,
+            governance_calibration=calibration,
+            seed_frame_payload=seed_frame_payload,
+            branch_id=_initial_branch_id(session_id),
+            lineage_version=max(1, _frame_lineage_version(nav.frame)),
+            operator_ambient=True,
+        )
+        self._sessions[session_id] = session
+        self._operator_session_id = session_id
+        return session
+
+    def _reset_operator_navigation(
+        self,
+        session: EngineSession,
+        *,
+        family: Family,
+        frame: Dict[str, Any],
+        governance_costs: Optional[Dict[str, float]],
+        governance_calibration: Optional[Dict[str, Any]],
+        manifest_path: Optional[str],
+    ) -> None:
+        if family not in {"puzzle", "clinical", "safety"}:
+            raise ValueError("family must be one of: puzzle, clinical, safety")
+        costs = _parse_governance_costs(governance_costs)
+        calibration = _parse_governance_calibration(governance_calibration)
+        seed_frame_payload = _json_copy(frame)
+        seed_frame = _frame_from_payload(seed_frame_payload, costs)
+        nav = build_navigation_controller(
+            manifest_path=manifest_path,
+            families=[family],
+            governance_costs=costs,
+            governance_calibration=calibration,
+            emit_iteration_packet=session.emit_packet,
+            session_id=session.session_id,
+            frame=seed_frame,
+        )
+        session.family = family
+        session.manifest_path = manifest_path
+        session.governance_costs = costs
+        session.governance_calibration = calibration
+        session.seed_frame_payload = seed_frame_payload
+        session.navigation = nav
+        session.branch_id = _initial_branch_id(session.session_id)
+        session.lineage_version = max(1, _frame_lineage_version(nav.frame))
+        session.parent_frame_id = None
+        session.workspace_state = _normalize_workspace_state(
+            {
+                **(_json_copy(session.workspace_state) or {}),
+                "stage_audit_context": {
+                    "frame": _build_frame_stage_packet(session, None),
+                },
+            }
+        )
+
+    def _operator_state(self, session: EngineSession) -> Dict[str, Any]:
+        return {
+            "session_id": session.session_id,
+            "phase": session.operator_phase,
+            "legal_next_tools": _legal_next_tools(session.operator_phase),
+            "audit": _json_copy(session.operator_audit) or {},
+            "session": self._session_summary(session),
+        }
+
+    def _operator_transition_payload(
+        self,
+        session: EngineSession,
+        *,
+        step: Optional[Dict[str, Any]] = None,
+        audit: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "session_id": session.session_id,
+            "phase": session.operator_phase,
+            "legal_next_tools": _legal_next_tools(session.operator_phase),
+            "session": self._session_summary(session),
+        }
+        if step is not None:
+            payload["step"] = step
+        if audit is not None:
+            payload["audit"] = audit
+        return payload
+
+    def _phase_rejection(
+        self,
+        session: EngineSession,
+        *,
+        attempted_tool: str,
+        failed_precondition: str,
+        gate: Optional[Dict[str, Any]] = None,
+        missing: Optional[list[str]] = None,
+        coach_prompts: Optional[list[str]] = None,
+    ) -> Dict[str, Any]:
+        gate_status = "BLOCK"
+        gate_missing = list(missing or [])
+        prompts = list(coach_prompts or [])
+        if isinstance(gate, dict):
+            gate_status = str(gate.get("status") or "BLOCK")
+            raw_missing = gate.get("missing")
+            if isinstance(raw_missing, list):
+                gate_missing = [str(item) for item in raw_missing if str(item)]
+            coach = gate.get("coach")
+            if isinstance(coach, dict) and isinstance(coach.get("prompts"), list):
+                prompts = [str(item) for item in coach["prompts"] if str(item)]
+
+        return {
+            "schema_id": "nepsis.phase_rejection",
+            "schema_version": "1.0.0",
+            "attempted_tool": attempted_tool,
+            "failed_precondition": failed_precondition,
+            "current_phase": session.operator_phase,
+            "legal_next_tools": _legal_next_tools(session.operator_phase),
+            "session_id": session.session_id,
+            "gate_status": gate_status,
+            "missing": gate_missing,
+            "coach_prompts": prompts,
+        }
+
     def _step_session_internal(
         self,
         session: EngineSession,
@@ -477,6 +947,8 @@ class EngineApiService:
             "manifest_path": session.manifest_path,
             "governance": _serialize_governance_costs(session.governance_costs),
             "calibration": _serialize_governance_calibration(session.governance_calibration),
+            "operator_phase": session.operator_phase,
+            "operator_ambient": session.operator_ambient,
         }
 
     def _require_session(self, session_id: str, *, owner_id: Optional[str] = None) -> EngineSession:
@@ -528,7 +1000,8 @@ class EngineApiService:
                     """
                     SELECT session_id, family, created_at, steps, manifest_path, emit_packet,
                            governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
-                           branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json
+                           branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json,
+                           operator_phase, operator_events_json, operator_audit_json, operator_ambient
                     FROM engine_sessions
                     """
                 ).fetchall()
@@ -555,6 +1028,10 @@ class EngineApiService:
                 "parent_frame_id": row[12],
                 "owner_id": row[13],
                 "workspace_state": _json_loads_or_none(row[14], encrypted=True) or {},
+                "operator_phase": row[15],
+                "operator_events": _json_loads_or_none(row[16], encrypted=True) or [],
+                "operator_audit": _json_loads_or_none(row[17], encrypted=True) or {},
+                "operator_ambient": bool(row[18]),
             }
             restored = self._restore_session(payload)
             self._sessions[restored.session_id] = restored
@@ -603,6 +1080,10 @@ class EngineApiService:
             parent_frame_id=None,
             owner_id=owner_id,
             workspace_state=_normalize_workspace_state(payload.get("workspace_state") or {}),
+            operator_phase=_normalize_operator_phase(payload.get("operator_phase")),
+            operator_events=_normalize_operator_events(payload.get("operator_events")),
+            operator_audit=_normalize_operator_audit(payload.get("operator_audit")),
+            operator_ambient=bool(payload.get("operator_ambient", False)),
         )
 
         actions = payload.get("actions")
@@ -683,8 +1164,9 @@ class EngineApiService:
                         INSERT INTO engine_sessions(
                             session_id, family, created_at, steps, manifest_path, emit_packet,
                             governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
-                            branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json,
+                            operator_phase, operator_events_json, operator_audit_json, operator_ambient
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             row["session_id"],
@@ -702,6 +1184,10 @@ class EngineApiService:
                             row["parent_frame_id"],
                             row["owner_id"],
                             _json_dumps_or_none(row.get("workspace_state"), encrypted=True),
+                            row["operator_phase"],
+                            _json_dumps_or_none(row.get("operator_events"), encrypted=True),
+                            _json_dumps_or_none(row.get("operator_audit"), encrypted=True),
+                            1 if row["operator_ambient"] else 0,
                         ),
                     )
 
@@ -738,7 +1224,11 @@ class EngineApiService:
                 lineage_version INTEGER NOT NULL DEFAULT 1,
                 parent_frame_id TEXT,
                 owner_id TEXT,
-                workspace_state_json TEXT
+                workspace_state_json TEXT,
+                operator_phase TEXT NOT NULL DEFAULT 'frame_draft',
+                operator_events_json TEXT,
+                operator_audit_json TEXT,
+                operator_ambient INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -753,6 +1243,14 @@ class EngineApiService:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN owner_id TEXT")
         if "workspace_state_json" not in columns:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN workspace_state_json TEXT")
+        if "operator_phase" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN operator_phase TEXT NOT NULL DEFAULT 'frame_draft'")
+        if "operator_events_json" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN operator_events_json TEXT")
+        if "operator_audit_json" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN operator_audit_json TEXT")
+        if "operator_ambient" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN operator_ambient INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             INSERT INTO engine_store_meta(key, value)
@@ -789,6 +1287,10 @@ class EngineApiService:
             "parent_frame_id": session.parent_frame_id,
             "owner_id": session.owner_id,
             "workspace_state": _json_copy(session.workspace_state) or {},
+            "operator_phase": session.operator_phase,
+            "operator_events": _json_copy(session.operator_events) or [],
+            "operator_audit": _json_copy(session.operator_audit) or {},
+            "operator_ambient": bool(session.operator_ambient),
         }
 
 
@@ -1052,6 +1554,137 @@ _THRESHOLD_COACH_PROMPTS: dict[str, str] = {
     "hold_reason": "If holding, explain what clarification or evidence is required.",
     "red_override_enforced": "Red space is active. Recommendation stays blocked until you reframe, release, or gather the discriminator you need.",
 }
+
+
+def _legal_next_tools(phase: str) -> list[str]:
+    return list(_OPERATOR_LEGAL_NEXT_TOOLS.get(phase, _OPERATOR_LEGAL_NEXT_TOOLS[_OPERATOR_PHASE_INITIAL]))
+
+
+def _normalize_operator_phase(value: Any) -> str:
+    if isinstance(value, str) and value in _OPERATOR_LEGAL_NEXT_TOOLS:
+        return value
+    return _OPERATOR_PHASE_INITIAL
+
+
+def _normalize_operator_events(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    events: list[Dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict) and isinstance(item.get("event"), str):
+            events.append(_json_copy(item))
+        elif isinstance(item, str) and item.strip():
+            events.append({"event": item.strip(), "at": None})
+    return events
+
+
+def _normalize_operator_audit(value: Any) -> Dict[str, Any]:
+    return _json_copy(value) if isinstance(value, dict) else {}
+
+
+def _append_operator_event(
+    session: EngineSession,
+    event: str,
+    *,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    entry = {"event": event, "at": _now_iso8601()}
+    if extra:
+        entry.update(_json_copy(extra) or {})
+    session.operator_events.append(entry)
+
+
+def _operator_event_log_with(session: EngineSession, event: str) -> list[Dict[str, Any]]:
+    event_log = _json_copy(session.operator_events) or []
+    event_log.append({"event": event, "at": _now_iso8601()})
+    return event_log
+
+
+def _operator_stage_context(session: EngineSession) -> Dict[str, Dict[str, Any]]:
+    context = _stored_stage_audit_context(session.workspace_state)
+    normalized = _normalize_stage_audit_context(context) if context is not None else {}
+    if "frame" not in normalized:
+        normalized["frame"] = _build_frame_stage_packet(session, None)
+    return normalized
+
+
+def _operator_phase_event_names(event_log: list[Dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for item in event_log:
+        event = item.get("event") if isinstance(item, dict) else None
+        if isinstance(event, str) and event:
+            names.append(event)
+    return names
+
+
+def _merged_frame_payload(
+    session: EngineSession,
+    carry_forward_frame: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    frame = session.navigation.frame.to_dict() if session.navigation.frame else _json_copy(_DEFAULT_OPERATOR_FRAME)
+    merged = _json_copy(frame) or {}
+    if carry_forward_frame is not None:
+        if not isinstance(carry_forward_frame, dict):
+            raise ValueError("carry_forward_frame must be an object when provided.")
+        for key, value in carry_forward_frame.items():
+            if value is not None:
+                merged[key] = _json_copy(value)
+    return merged
+
+
+def _build_operator_audit_packet(
+    session: EngineSession,
+    *,
+    audit: Dict[str, Any],
+    phase_event_log: list[Dict[str, Any]],
+    final_frame: Dict[str, Any],
+) -> Dict[str, Any]:
+    threshold_packet = _json_copy(audit["threshold"]["packet"])
+    latest_packet = _latest_iteration_packet(session)
+    return {
+        "schema_id": "nepsis.operator_audit_packet",
+        "schema_version": "1.0.0",
+        "session_id": session.session_id,
+        "created_at": _now_iso8601(),
+        "phase_events": _operator_phase_event_names(phase_event_log),
+        "phase_event_log": phase_event_log,
+        "frame": {
+            "status": audit["frame"]["status"],
+            "packet": _json_copy(audit["frame"]["packet"]),
+            "missing": _json_copy(audit["frame"]["missing"]),
+            "warnings": _json_copy(audit["frame"]["warnings"]),
+        },
+        "report": {
+            "status": audit["interpretation"]["status"],
+            "packet": _json_copy(audit["interpretation"]["packet"]),
+            "missing": _json_copy(audit["interpretation"]["missing"]),
+            "warnings": _json_copy(audit["interpretation"]["warnings"]),
+        },
+        "threshold": threshold_packet,
+        "red_override": {
+            "active": threshold_packet.get("gate_crossed") is True,
+            "warning_level": threshold_packet.get("warning_level"),
+            "recommendation": threshold_packet.get("recommendation"),
+        },
+        "latest_iteration_packet_id": _packet_meta_value(latest_packet, "packet_id"),
+        "latest_iteration": _packet_meta_value(latest_packet, "iteration"),
+        "final_frame": _json_copy(final_frame),
+        "policy": dict(_STAGE_AUDIT_POLICY),
+    }
+
+
+def _build_operator_abandoned_packet(session: EngineSession, *, reason: str) -> Dict[str, Any]:
+    return {
+        "schema_id": "nepsis.operator_abandoned_loop",
+        "schema_version": "1.0.0",
+        "session_id": session.session_id,
+        "created_at": _now_iso8601(),
+        "phase": session.operator_phase,
+        "reason": str(reason or ""),
+        "phase_events": _operator_phase_event_names(session.operator_events),
+        "phase_event_log": _json_copy(session.operator_events) or [],
+        "committed": False,
+    }
 
 
 def _normalize_stage_audit_context(context: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

@@ -7,6 +7,32 @@ import pytest
 from nepsis_cgn.api.service import EngineApiService
 
 
+def _passing_operator_frame() -> dict[str, object]:
+    return {
+        "text": "Decide whether to escalate response.",
+        "objective_type": "decide",
+        "domain": "safety",
+        "time_horizon": "short",
+        "rationale_for_change": (
+            "Red channel: avoid missing a catastrophic incident | "
+            "Blue channel: protect users while minimizing disruption | "
+            "Uncertainty: signal quality from the first report"
+        ),
+        "constraints_hard": ["No policy breach"],
+        "constraints_soft": ["Minimize disruption"],
+    }
+
+
+def _passing_operator_report_context() -> dict[str, object]:
+    return {
+        "report_text": "obs: critical signal present\nobs: no policy violation",
+        "evidence_count": 2,
+        "contradictions_status": "none_identified",
+        "contradictions_note": "",
+        "contradiction_density": 0.0,
+    }
+
+
 def test_create_and_step_safety_session_with_governance() -> None:
     svc = EngineApiService()
     created = svc.create_session(
@@ -33,6 +59,158 @@ def test_create_and_step_safety_session_with_governance() -> None:
     assert step["iteration_packet"]["manifold"]["channel"]["space"] == "ruin"
     assert step["iteration_packet"]["meta"]["session_id"] == sid
     assert step["session"]["packet_count"] == 1
+
+
+def test_operator_run_report_before_lock_frame_returns_phase_rejection() -> None:
+    svc = EngineApiService()
+    state = svc.get_operator_session_state()
+
+    result = svc.operator_run_report(
+        report_text="obs: critical signal present",
+        sign={"critical_signal": True, "policy_violation": False},
+    )
+
+    assert result["schema_id"] == "nepsis.phase_rejection"
+    assert result["session_id"] == state["session_id"]
+    assert result["attempted_tool"] == "run_report"
+    assert result["current_phase"] == "frame_draft"
+    assert result["failed_precondition"] == "lock_frame_required"
+    assert result["legal_next_tools"] == ["get_session_state", "lock_frame", "abandon_session"]
+    assert result["gate_status"] == "BLOCK"
+    assert result["missing"]
+    assert result["coach_prompts"]
+
+
+def test_operator_lock_report_before_passing_interpretation_rejected() -> None:
+    svc = EngineApiService()
+    locked = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+
+    result = svc.operator_lock_report()
+
+    assert locked["phase"] == "frame_locked"
+    assert result["schema_id"] == "nepsis.phase_rejection"
+    assert result["attempted_tool"] == "lock_report"
+    assert result["current_phase"] == "frame_locked"
+    assert result["failed_precondition"] == "run_report_required"
+    assert result["legal_next_tools"] == ["get_session_state", "run_report", "abandon_session"]
+
+
+def test_operator_report_can_rerun_from_report_evaluated() -> None:
+    svc = EngineApiService()
+    svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+
+    first = svc.operator_run_report(
+        report_text="obs: critical signal present",
+        sign={"critical_signal": True, "policy_violation": False},
+        interpretation=_passing_operator_report_context(),
+    )
+    second = svc.operator_run_report(
+        report_text="obs: critical signal not present",
+        sign={"critical_signal": False, "policy_violation": False},
+        interpretation={
+            **_passing_operator_report_context(),
+            "report_text": "obs: critical signal not present\nobs: no policy violation",
+        },
+    )
+
+    assert first["phase"] == "report_evaluated"
+    assert second["phase"] == "report_evaluated"
+    assert second["step"]["session"]["steps"] == 2
+    assert second["audit"]["interpretation"]["status"] == "PASS"
+
+
+def test_operator_threshold_recommend_rejected_when_red_override_active() -> None:
+    svc = EngineApiService()
+    svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={"critical_signal": True, "policy_violation": False},
+        interpretation=_passing_operator_report_context(),
+    )
+    svc.operator_lock_report()
+
+    result = svc.operator_set_threshold_decision(
+        decision="recommend",
+        hold_reason="",
+    )
+
+    assert result["schema_id"] == "nepsis.phase_rejection"
+    assert result["attempted_tool"] == "set_threshold_decision"
+    assert result["current_phase"] == "report_locked"
+    assert result["failed_precondition"] == "threshold_gate_blocked"
+    assert "set_threshold_decision" in result["legal_next_tools"]
+    assert "Red override enforcement" in result["missing"]
+
+
+def test_operator_commit_iteration_emits_audit_packet_and_cycles_phase() -> None:
+    svc = EngineApiService()
+    svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={"critical_signal": True, "policy_violation": False},
+        interpretation=_passing_operator_report_context(),
+    )
+    svc.operator_lock_report()
+    threshold = svc.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Collect one additional discriminator before recommendation.",
+    )
+
+    committed = svc.operator_commit_iteration(
+        carry_forward_frame={
+            "text": "Continue escalation assessment after the next discriminator.",
+            "rationale_for_change": "Carry forward held threshold decision.",
+        },
+    )
+
+    assert threshold["phase"] == "threshold_set"
+    assert committed["phase"] == "frame_draft"
+    assert committed["packet"]["schema_id"] == "nepsis.operator_audit_packet"
+    assert committed["packet"]["phase_events"] == [
+        "LOCK_FRAME",
+        "RUN_REPORT",
+        "LOCK_REPORT",
+        "SET_THRESHOLD_DECISION",
+        "COMMIT_ITERATION",
+    ]
+    assert committed["packet"]["threshold"]["decision"] == "hold"
+    assert committed["packet"]["final_frame"]["text"].startswith("Continue escalation")
+    assert svc.get_operator_session_state()["phase"] == "frame_draft"
+
+
+def test_operator_abandon_session_emits_fragment_and_starts_fresh_session() -> None:
+    svc = EngineApiService()
+    original = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+
+    abandoned = svc.operator_abandon_session(reason="Frame was too broad.")
+    state = svc.get_operator_session_state()
+
+    assert abandoned["packet"]["schema_id"] == "nepsis.operator_abandoned_loop"
+    assert abandoned["packet"]["session_id"] == original["session_id"]
+    assert abandoned["packet"]["reason"] == "Frame was too broad."
+    assert abandoned["phase"] == "frame_draft"
+    assert state["phase"] == "frame_draft"
+    assert state["session_id"] != original["session_id"]
 
 
 def test_session_owner_limits_cross_user_access() -> None:
