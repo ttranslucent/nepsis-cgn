@@ -112,7 +112,7 @@ The public site posture is intentionally narrow:
 - `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run the canonical cases or paste a short query into the selected MVP scaffold.
 - `/status` shows backend, auth, model-route, and MCP readiness.
 - `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
-- Production should not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` unless a separate protected operator deployment has been reviewed.
+- Public production must not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`, or `NEPSIS_MODEL_ROUTES_ENABLED=true`.
 - `POST /api/engine/mvp` uses the FastAPI backend when configured and falls back
   to bundled frozen v0.3 packets when production has no backend URL, so the
   public demo remains usable while backend deployment is completed.
@@ -142,6 +142,17 @@ NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
 The script uses Python stdlib HTTP calls and checks `/`, `/mvp`, `/api/status`,
 `/api/engine/health`, `POST /api/engine/mvp`, unauthenticated auth session
 state, disabled public model routes, and the playground config endpoint.
+
+Before committing deployment env files or public-site config changes, run:
+
+```bash
+.venv/bin/python scripts/check_openai_secrets.py --all
+```
+
+The repo also includes a local `pre-commit` hook that runs the same checker on
+staged files and blocks hardcoded OpenAI keys, browser-exposed key env names,
+and public-site env combinations that would enable model routes, anonymous
+engine controls, login preview codes, or server OpenAI keys.
 
 ## Public API and MCP
 

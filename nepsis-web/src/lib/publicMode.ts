@@ -15,8 +15,8 @@ export function publicSiteMode(): boolean {
 }
 
 export function modelRoutesEnabled(): boolean {
-  if (envFlag("NEPSIS_MODEL_ROUTES_ENABLED")) {
-    return true;
+  if (publicSiteMode()) {
+    return false;
   }
-  return process.env.NODE_ENV !== "production" && !publicSiteMode();
+  return process.env.NODE_ENV !== "production" || envFlag("NEPSIS_MODEL_ROUTES_ENABLED");
 }

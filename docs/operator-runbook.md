@@ -63,12 +63,13 @@ npm run dev
 - Web has a long random `NEPSIS_AUTH_SECRET`.
 - Web sets `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and
   `NEPSIS_MODEL_ROUTES_ENABLED=false` for the public production site.
-- Web does not set `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY` for public
-  production unless model routes have auth and rate-limit review.
-- Web does not set `NEPSIS_ENGINE_ALLOW_ANON=true` in production.
-- Web does not set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true` in production.
+- Web does not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`,
+  `NEPSIS_ENGINE_ALLOW_ANON=true`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true`, or
+  `NEPSIS_MODEL_ROUTES_ENABLED=true` for the public production site.
 - Login email delivery is configured with `RESEND_API_KEY` and
   `NEPSIS_AUTH_FROM_EMAIL`.
+- `.venv/bin/python scripts/check_openai_secrets.py --all` passes before
+  deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
 
 ## Public Site Smoke

@@ -87,7 +87,7 @@ export default function LoginPage() {
         <h1 className="mb-2 text-lg font-semibold">Login to NepsisCGN</h1>
         <p className="mb-4 text-xs text-nepsis-muted">
           Passwordless login. If email delivery is configured, you&apos;ll receive a one-time code. In non-production
-          or preview deployments with code preview enabled, the code may be shown directly instead.
+          or local testing with code preview enabled, the code may be shown directly instead.
         </p>
 
         {step === "email" ? (

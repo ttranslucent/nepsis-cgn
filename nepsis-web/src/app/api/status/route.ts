@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { modelRoutesEnabled } from "@/lib/publicMode";
 import { hasConfiguredOpenAiKey } from "@/lib/openaiClient";
 import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
+import { previewCodesAllowed } from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
 
@@ -143,7 +144,7 @@ export async function GET() {
   ]);
   const loginConfigured = configured(process.env.NEPSIS_AUTH_SECRET);
   const emailConfigured = configured(process.env.RESEND_API_KEY) && configured(process.env.NEPSIS_AUTH_FROM_EMAIL);
-  const previewCodesEnabled = process.env.NEPSIS_AUTH_ALLOW_CODE_PREVIEW?.trim().toLowerCase() === "true";
+  const previewCodesEnabled = previewCodesAllowed();
   const modelsEnabled = modelRoutesEnabled();
 
   return NextResponse.json({

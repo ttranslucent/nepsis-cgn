@@ -1,5 +1,5 @@
 import { readNepsisUserFromRequest } from "@/lib/nepsisAuth";
-import { publicSiteMode } from "@/lib/publicMode";
+import { envFlag, publicSiteMode } from "@/lib/publicMode";
 
 const DEFAULT_ENGINE_BASE_URL = "http://127.0.0.1:8787";
 const ENGINE_SESSION_OWNER_HEADER = "X-Nepsis-Session-Owner";
@@ -33,13 +33,8 @@ function configuredEngineToken(): string | null {
   return token && token.length > 0 ? token : null;
 }
 
-function envFlag(name: string): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
 export function anonymousEngineControlsAllowed(): boolean {
-  return process.env.NODE_ENV !== "production" && envFlag("NEPSIS_ENGINE_ALLOW_ANON");
+  return !publicSiteMode() && envFlag("NEPSIS_ENGINE_ALLOW_ANON");
 }
 
 export function engineControlOwner(request: Request): string | null {
