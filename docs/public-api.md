@@ -82,4 +82,4 @@ is a browser-side view over the canonical `nepsis.mvp_packet` response.
 Visual Topology Mode does not add public API fields, does not require login,
 does not call provider models, and does not create runtime engine sessions. The
 raw telemetry and JSON packet remain available from the same page through the
-`Telemetry` result view.
+`Full View` result view.

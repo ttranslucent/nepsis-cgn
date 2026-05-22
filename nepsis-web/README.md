@@ -69,6 +69,7 @@ Key frontend integration points:
 - Typed client: `src/lib/engineClient.ts`
 - Session/state hook: `src/lib/useEngineSession.ts`
 - Operator workspace: `src/app/engine/page.tsx`
+- Live operator route alias: `src/app/operator/page.tsx`
 
 ## Environment Variables
 
