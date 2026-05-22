@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { modelRoutesEnabled } from "@/lib/publicMode";
+import {
+  liveOperatorEnabled,
+  modelRoutesEnabled,
+  operatorSiteMode,
+} from "@/lib/publicMode";
 import { hasConfiguredOpenAiKey } from "@/lib/openaiClient";
 import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
+import {
+  authSecretStatus,
+  loginEmailConfigured,
+  operatorLoginReady,
+  previewCodesAllowed,
+} from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
-
-function configured(value: string | undefined): boolean {
-  return Boolean(value?.trim());
-}
 
 async function backendHealth(baseUrl: string | undefined, token: string | undefined) {
   const trimmedBase = baseUrl?.trim().replace(/\/+$/, "");
@@ -141,18 +147,29 @@ export async function GET() {
     mvpHealth(process.env.NEPSIS_API_BASE_URL, process.env.NEPSIS_API_TOKEN),
     mcpHealth(process.env.NEPSIS_API_BASE_URL),
   ]);
-  const loginConfigured = configured(process.env.NEPSIS_AUTH_SECRET);
-  const emailConfigured = configured(process.env.RESEND_API_KEY) && configured(process.env.NEPSIS_AUTH_FROM_EMAIL);
-  const previewCodesEnabled = process.env.NEPSIS_AUTH_ALLOW_CODE_PREVIEW?.trim().toLowerCase() === "true";
+  const authSecret = authSecretStatus();
+  const emailConfigured = loginEmailConfigured();
+  const previewCodesEnabled = previewCodesAllowed();
   const modelsEnabled = modelRoutesEnabled();
 
   return NextResponse.json({
     backend,
     mvp,
+    operator: {
+      enabled: liveOperatorEnabled(),
+      operatorSiteMode: operatorSiteMode(),
+      path: "/operator",
+      backendReady: backend.configured && backend.reachable,
+      authReady: operatorLoginReady(),
+      modelReady: modelRoutesEnabled() && hasConfiguredOpenAiKey(),
+    },
     auth: {
-      loginConfigured,
+      loginConfigured: authSecret.ready,
+      authSecretConfigured: authSecret.configured,
+      authSecretMode: authSecret.mode,
       emailConfigured,
       previewCodesEnabled,
+      operatorLoginReady: operatorLoginReady(),
     },
     models: {
       enabled: modelsEnabled,
@@ -163,6 +180,28 @@ export async function GET() {
       endpoint: mcp.endpoint,
       publicTools: ["run_mvp", "get_mvp_schema", "health"],
       protectedTools: ["get_routes"],
+      operatorTools: [
+        "get_session_state",
+        "lock_frame",
+        "run_report",
+        "lock_report",
+        "set_threshold_decision",
+        "commit_iteration",
+        "abandon_session",
+      ],
+      local: {
+        available: true,
+        command: "nepsiscgn-mcp",
+        transport: "stdio",
+        modelKeysRequired: false,
+        lifecycle: "one process owns one implicit ambient session",
+      },
+      hosted: {
+        available: mcp.available,
+        endpoint: mcp.endpoint,
+        deferred: !mcp.available,
+        requiresBackendAuth: true,
+      },
     },
   });
 }

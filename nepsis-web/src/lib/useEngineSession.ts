@@ -7,6 +7,10 @@ import {
   type EngineCreateSessionPayload,
   type EngineDeleteSessionResponse,
   type EngineFrame,
+  type EngineOperatorFramePayload,
+  type EngineOperatorReportPayload,
+  type EngineOperatorResponse,
+  type EngineOperatorResult,
   type EnginePacketResponse,
   type EngineReframePayload,
   type EngineRoute,
@@ -17,6 +21,7 @@ import {
   type EngineStepResponse,
   type EngineWorkspacePayload,
   engineClient,
+  isPhaseRejection,
 } from "@/lib/engineClient";
 
 type EngineState = {
@@ -42,6 +47,15 @@ function upsertSession(
   const next = [...sessions];
   next[idx] = incoming;
   return next;
+}
+
+function phaseRejectionMessage(result: EngineOperatorResult): string {
+  if (!isPhaseRejection(result)) {
+    return "";
+  }
+  const missing = result.missing.length > 0 ? ` Missing: ${result.missing.join(", ")}.` : "";
+  const next = result.legal_next_tools.length > 0 ? ` Next: ${result.legal_next_tools.join(", ")}.` : "";
+  return `${result.attempted_tool} refused at ${result.current_phase}.${missing}${next}`;
 }
 
 export function useEngineSession() {
@@ -78,6 +92,37 @@ export function useEngineSession() {
   const clearError = useCallback(() => {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
+
+  const applyOperatorResponse = useCallback((result: EngineOperatorResponse) => {
+    setState((prev) => ({
+      ...prev,
+      activeSession: result.session,
+      sessions: upsertSession(prev.sessions, result.session),
+      lastStep: result.step ?? prev.lastStep,
+      lastAudit: result.audit ?? prev.lastAudit,
+      packets:
+        result.packet != null
+          ? [...prev.packets, result.packet]
+          : result.step?.iteration_packet != null
+            ? [...prev.packets, result.step.iteration_packet]
+            : prev.packets,
+    }));
+  }, []);
+
+  const applyOperatorResult = useCallback(
+    (result: EngineOperatorResult | undefined): EngineOperatorResult | undefined => {
+      if (!result) {
+        return undefined;
+      }
+      if (isPhaseRejection(result)) {
+        setState((prev) => ({ ...prev, error: phaseRejectionMessage(result) }));
+        return result;
+      }
+      applyOperatorResponse(result);
+      return result;
+    },
+    [applyOperatorResponse],
+  );
 
   const refreshHealth = useCallback(async () => {
     const data = await run(() => engineClient.getHealth());
@@ -314,6 +359,64 @@ export function useEngineSession() {
     [run, state.activeSession],
   );
 
+  const getOperatorSessionState = useCallback(async (): Promise<EngineOperatorResponse | undefined> => {
+    const result = await run(() => engineClient.getOperatorSessionState());
+    if (!result) {
+      return undefined;
+    }
+    applyOperatorResponse(result);
+    return result;
+  }, [applyOperatorResponse, run]);
+
+  const lockOperatorFrame = useCallback(
+    async (payload: EngineOperatorFramePayload): Promise<EngineOperatorResult | undefined> => {
+      const result = await run(() => engineClient.lockOperatorFrame(payload));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run],
+  );
+
+  const runOperatorReport = useCallback(
+    async (payload: EngineOperatorReportPayload): Promise<EngineOperatorResult | undefined> => {
+      const result = await run(() => engineClient.runOperatorReport(payload));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run],
+  );
+
+  const lockOperatorReport = useCallback(async (): Promise<EngineOperatorResult | undefined> => {
+    const result = await run(() => engineClient.lockOperatorReport());
+    return applyOperatorResult(result);
+  }, [applyOperatorResult, run]);
+
+  const setOperatorThresholdDecision = useCallback(
+    async (payload: { decision: "recommend" | "hold"; hold_reason?: string }): Promise<EngineOperatorResult | undefined> => {
+      const result = await run(() => engineClient.setOperatorThresholdDecision(payload));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run],
+  );
+
+  const commitOperatorIteration = useCallback(
+    async (payload: { carry_forward_frame?: Record<string, unknown> }): Promise<EngineOperatorResult | undefined> => {
+      const result = await run(() => engineClient.commitOperatorIteration(payload));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run],
+  );
+
+  const abandonOperatorSession = useCallback(
+    async (payload: { reason?: string } = {}): Promise<EngineOperatorResponse | undefined> => {
+      const result = await run(() => engineClient.abandonOperatorSession(payload));
+      if (!result) {
+        return undefined;
+      }
+      applyOperatorResponse(result);
+      return result;
+    },
+    [applyOperatorResponse, run],
+  );
+
   return {
     ...state,
     clearError,
@@ -328,6 +431,13 @@ export function useEngineSession() {
     deleteSession,
     stageAudit,
     updateWorkspaceState,
+    getOperatorSessionState,
+    lockOperatorFrame,
+    runOperatorReport,
+    lockOperatorReport,
+    setOperatorThresholdDecision,
+    commitOperatorIteration,
+    abandonOperatorSession,
   };
 }
 

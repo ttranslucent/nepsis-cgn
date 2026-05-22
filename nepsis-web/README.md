@@ -42,7 +42,7 @@ Open [http://localhost:3000](http://localhost:3000).
 Development defaults:
 
 - `/api/engine/*` proxies to `http://127.0.0.1:8787` when `NEPSIS_API_BASE_URL` is unset.
-- Login codes can fall back to on-screen preview in non-production environments.
+- Login codes can fall back to on-screen preview when local preview-code mode is enabled.
 - `/api/engine/mvp` is the deterministic v0.3 demo path; session, engine, and LLM flows are experimental.
 - `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` forces public-mode navigation locally for QA.
 
@@ -69,6 +69,7 @@ Key frontend integration points:
 - Typed client: `src/lib/engineClient.ts`
 - Session/state hook: `src/lib/useEngineSession.ts`
 - Operator workspace: `src/app/engine/page.tsx`
+- Live operator route alias: `src/app/operator/page.tsx`
 
 ## Environment Variables
 
@@ -76,7 +77,7 @@ Engine connectivity:
 
 - `NEPSIS_API_BASE_URL`: Required in production. Public base URL of the Nepsis API that Vercel should reach.
 - `NEPSIS_API_TOKEN`: Optional bearer token forwarded to the Nepsis API.
-- `NEPSIS_ENGINE_ALLOW_ANON`: Optional local/demo override to bypass browser login for engine session controls. Ignored in production.
+- `NEPSIS_ENGINE_ALLOW_ANON`: Optional local/demo override to bypass browser login for engine session controls. Ignored in public-site mode.
 - `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE`: Optional local QA flag. Production builds also render as public-site mode by default.
 
 Passwordless auth:
@@ -84,16 +85,28 @@ Passwordless auth:
 - `NEPSIS_AUTH_SECRET`: Required in production. Cookie-signing secret for login challenge and user session cookies.
 - `RESEND_API_KEY`: Required if the deployment should send real login emails.
 - `NEPSIS_AUTH_FROM_EMAIL`: Required with `RESEND_API_KEY`. Verified sender identity for login emails.
-- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional local/preview-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable. Keep this disabled in production.
+- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional local-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable. Ignored in public-site mode.
 
 For local login without email, leave `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` blank and set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true`. The `/login` page will show the one-time code after `Send code`.
 
 OpenAI-backed playground routes:
 
-- `NEPSIS_MODEL_ROUTES_ENABLED`: Enables server-side model routes. Keep `false` for the public production site unless auth and rate limits have been reviewed.
+- `NEPSIS_MODEL_ROUTES_ENABLED`: Enables server-side model routes only outside public-site mode. Public-site mode keeps these routes disabled even if this is set to `true`.
 - `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`: Optional server-side key for playground/model-sandbox calls.
 - `OPENAI_MODEL`: Optional default model. Defaults to `gpt-4.1-mini`.
 - `OPENAI_API_URL`: Optional override for the Responses API endpoint.
+
+Operator deployment mode:
+
+- `NEPSIS_DEPLOYMENT_MODE=operator` or `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`
+  enables the live/operator route family.
+- `NEPSIS_LIVE_OPERATOR_ENABLED=true` exposes live operator UI affordances.
+- `NEPSIS_MODEL_ROUTES_ENABLED=true` enables protected model routes only when
+  the deployment is not public-site mode.
+- `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY` must be configured server-side
+  before `/api/operator/model` returns live model output.
+- Browser-local provider keys are local-demo only and are not accepted by shared
+  operator deployments.
 
 Browser-local OpenAI key storage in `/settings` is local-demo only and is hidden
 in public-site mode. Do not use it as a shared deployment secret flow; prefer
@@ -124,10 +137,10 @@ Production behavior is intentionally strict:
   reports the backend gap.
 - `/api/status` checks the frozen MVP packet path in addition to backend health.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
-- If email delivery is not configured, `/login` either shows a preview code when preview is enabled or tells the operator which auth env vars are missing.
-- Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside production.
+- If email delivery is not configured, `/login` shows a preview code only in non-public local mode; otherwise it tells the operator which auth env vars are missing.
+- Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside public-site mode.
 - `/settings` and `/playground` do not display browser API-key fields in public-site mode.
-- `GET /api/playground-nepsis` reports model routes as disabled unless `NEPSIS_MODEL_ROUTES_ENABLED=true`.
+- `GET /api/playground-nepsis` reports model routes as disabled in public-site mode.
 
 Recommended deployment sequence:
 
@@ -140,6 +153,14 @@ Recommended deployment sequence:
 7. Set `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
 8. Verify `/mvp`, `/status`, `/login`, and gated `/engine` after the deployment is live.
 9. Run `NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh` from the repo root.
+
+Run the repository safety check before committing env or deployment changes:
+
+```bash
+.venv/bin/python scripts/check_openai_secrets.py --all
+```
+
+The local pre-commit hook uses the same checker for staged files.
 
 ## Public API and MCP
 

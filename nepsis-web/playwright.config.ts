@@ -13,7 +13,11 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true npm run dev -- --hostname 127.0.0.1 --port ${port}`,
+    command:
+      `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true ` +
+      `NEPSIS_AUTH_SECRET=playwright-public-auth-secret ` +
+      `RESEND_API_KEY= NEPSIS_AUTH_FROM_EMAIL= ` +
+      `npm run dev -- --hostname 127.0.0.1 --port ${port}`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

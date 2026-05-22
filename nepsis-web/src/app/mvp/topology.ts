@@ -46,85 +46,87 @@ export function buildMvpTopology(packet: NepsisMvpPacket): MvpTopologyModel {
   const blueBounded = redActive && packet.blue_channel.hypotheses.length > 0;
   const feedbackStatus = packet.state_feedback.loop_decision.status;
 
+  const nodes: MvpTopologyNode[] = [
+    {
+      id: "red",
+      label: "RED Channel",
+      eyebrow: "Constraint and hazard gate",
+      status: redActive ? "active" : "clear",
+      statusLabel: redActive ? "ACTIVE" : "CLEAR",
+      summary: packet.red_channel.rationale,
+      metrics: [
+        { label: "Hazards", value: String(packet.red_channel.active_hazards.length) },
+        { label: "Missing discriminators", value: String(packet.red_channel.missing_discriminators.length) },
+      ],
+    },
+    {
+      id: "still_1",
+      label: "STILL 1",
+      eyebrow: "Before BLUE",
+      status: still1?.trigger_status === "hold" ? "hold" : "ready",
+      statusLabel: still1?.trigger_status?.toUpperCase() ?? "READY",
+      summary: still1?.reason ?? "No pre-BLUE checkpoint was emitted.",
+      metrics: [{ label: "Required checks", value: String(still1?.required_before_commitment.length ?? 0) }],
+    },
+    {
+      id: "blue",
+      label: "BLUE Channel",
+      eyebrow: "Bounded hypothesis work",
+      status: blueBounded ? "bounded" : "active",
+      statusLabel: blueBounded ? "BOUNDED" : "ACTIVE",
+      summary: blueBounded
+        ? "BLUE can explain candidate interpretations, but cannot clear an unresolved RED boundary."
+        : "BLUE is available for hypothesis comparison.",
+      metrics: [
+        { label: "Hypotheses", value: String(packet.blue_channel.hypotheses.length) },
+        { label: "Axes", value: String(Object.keys(packet.blue_channel.evaluation_axes).length) },
+      ],
+    },
+    {
+      id: "still_2",
+      label: "STILL 2",
+      eyebrow: "Before commitment",
+      status: still2?.trigger_status === "hold" ? "hold" : readiness === "ready" ? "ready" : "blocked",
+      statusLabel: still2?.trigger_status?.toUpperCase() ?? readiness.toUpperCase(),
+      summary: still2?.reason ?? packet.still.commitment_readiness.rationale,
+      metrics: [{ label: "Readiness", value: readiness }],
+    },
+    {
+      id: "commitment",
+      label: "Commitment",
+      eyebrow: "Voronoi selection",
+      status: retessellationRequired ? "blocked" : "ready",
+      statusLabel: retessellationRequired ? "RETESSELLATE" : "READY",
+      summary: packet.voronoi_commitment.recommended_action,
+      metrics: [{ label: "Threshold", value: packet.voronoi_commitment.threshold_basis }],
+    },
+    {
+      id: "feedback",
+      label: "State feedback",
+      eyebrow: "Predicted next state",
+      status: feedbackStatus === "continue" ? "active" : "hold",
+      statusLabel: feedbackStatus.toUpperCase(),
+      summary: packet.state_feedback.loop_decision.next_observation_required,
+      metrics: [{ label: "Observed", value: packet.state_feedback.observed_next_state.status }],
+    },
+    {
+      id: "audit",
+      label: "Audit",
+      eyebrow: "Packet lineage",
+      status: "active",
+      statusLabel: "RECORDED",
+      summary: packet.final_output.concise_recommendation,
+      metrics: [
+        { label: "Events", value: String(packet.audit_trace.length) },
+        { label: "Schema", value: packet.schema_version },
+      ],
+    },
+  ];
+
   return {
     headline: contradictionActive ? "Constraint conflict detected" : "No contradiction detected",
     subhead: retessellationRequired ? "Retessellation required" : "Current topology is commitment-ready",
-    nodes: [
-      {
-        id: "red",
-        label: "RED Channel",
-        eyebrow: "Constraint and hazard gate",
-        status: redActive ? "active" : "clear",
-        statusLabel: redActive ? "ACTIVE" : "CLEAR",
-        summary: packet.red_channel.rationale,
-        metrics: [
-          { label: "Hazards", value: String(packet.red_channel.active_hazards.length) },
-          { label: "Missing discriminators", value: String(packet.red_channel.missing_discriminators.length) },
-        ],
-      },
-      {
-        id: "still_1",
-        label: "STILL 1",
-        eyebrow: "Before BLUE",
-        status: still1?.trigger_status === "hold" ? "hold" : "ready",
-        statusLabel: still1?.trigger_status?.toUpperCase() ?? "READY",
-        summary: still1?.reason ?? "No pre-BLUE checkpoint was emitted.",
-        metrics: [{ label: "Required checks", value: String(still1?.required_before_commitment.length ?? 0) }],
-      },
-      {
-        id: "blue",
-        label: "BLUE Channel",
-        eyebrow: "Bounded hypothesis work",
-        status: blueBounded ? "bounded" : "active",
-        statusLabel: blueBounded ? "BOUNDED" : "ACTIVE",
-        summary: blueBounded
-          ? "BLUE can explain candidate interpretations, but cannot clear an unresolved RED boundary."
-          : "BLUE is available for hypothesis comparison.",
-        metrics: [
-          { label: "Hypotheses", value: String(packet.blue_channel.hypotheses.length) },
-          { label: "Axes", value: String(Object.keys(packet.blue_channel.evaluation_axes).length) },
-        ],
-      },
-      {
-        id: "still_2",
-        label: "STILL 2",
-        eyebrow: "Before commitment",
-        status: still2?.trigger_status === "hold" ? "hold" : readiness === "ready" ? "ready" : "blocked",
-        statusLabel: still2?.trigger_status?.toUpperCase() ?? readiness.toUpperCase(),
-        summary: still2?.reason ?? packet.still.commitment_readiness.rationale,
-        metrics: [{ label: "Readiness", value: readiness }],
-      },
-      {
-        id: "commitment",
-        label: "Commitment",
-        eyebrow: "Voronoi selection",
-        status: retessellationRequired ? "blocked" : "ready",
-        statusLabel: retessellationRequired ? "RETESSELLATE" : "READY",
-        summary: packet.voronoi_commitment.recommended_action,
-        metrics: [{ label: "Threshold", value: packet.voronoi_commitment.threshold_basis }],
-      },
-      {
-        id: "feedback",
-        label: "State feedback",
-        eyebrow: "Predicted next state",
-        status: feedbackStatus === "continue" ? "active" : "hold",
-        statusLabel: feedbackStatus.toUpperCase(),
-        summary: packet.state_feedback.loop_decision.next_observation_required,
-        metrics: [{ label: "Observed", value: packet.state_feedback.observed_next_state.status }],
-      },
-      {
-        id: "audit",
-        label: "Audit",
-        eyebrow: "Packet lineage",
-        status: "active",
-        statusLabel: "RECORDED",
-        summary: packet.final_output.concise_recommendation,
-        metrics: [
-          { label: "Events", value: String(packet.audit_trace.length) },
-          { label: "Schema", value: packet.schema_version },
-        ],
-      },
-    ],
+    nodes,
     edges: [
       { from: "red", to: "still_1", label: redActive ? "holds boundary" : "permits", emphasized: redActive },
       { from: "still_1", to: "blue", label: blueBounded ? "bounded entry" : "entry", emphasized: blueBounded },

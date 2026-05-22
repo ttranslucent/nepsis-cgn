@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import {
   type EngineFamily,
   type EngineFrame,
+  type EngineOperatorResult,
   type EngineReframePayload,
   type EngineStageAuditResponse,
   type EngineStepResponse,
+  isPhaseRejection,
 } from "@/lib/engineClient";
 import {
   type GateResult,
@@ -31,6 +33,10 @@ import {
 import { OperatorAccessNotice } from "@/app/components/OperatorAccessNotice";
 import { publicSiteMode } from "@/lib/publicMode";
 import { useEngineSession } from "@/lib/useEngineSession";
+import {
+  requestOperatorModel,
+  type OperatorModelResponse,
+} from "@/lib/operatorModelClient";
 
 type ChatRole = "human" | "nepsis";
 type DetachedRole = "human" | "assistant";
@@ -778,6 +784,15 @@ function coachMessage(coach: StageCoach): string {
   return `${coach.summary}\nNext: ${coach.prompts.join(" ")}`;
 }
 
+function phaseRejectionMessage(result: EngineOperatorResult): string | null {
+  if (!isPhaseRejection(result)) {
+    return null;
+  }
+  const missing = result.missing.length > 0 ? ` Missing: ${result.missing.join(", ")}.` : "";
+  const prompts = result.coach_prompts.length > 0 ? ` ${result.coach_prompts.join(" ")}` : "";
+  return `${result.attempted_tool} refused at ${result.current_phase}.${missing}${prompts}`;
+}
+
 function normalizeGateStatus(value: unknown): GateStatus | null {
   if (value === "PASS" || value === "WARN" || value === "BLOCK") {
     return value;
@@ -874,13 +889,6 @@ function pipelineStateClass(state: "pass" | "warn" | "block" | "pending"): strin
 
 function sessionBranchContext(sessionId: string): string {
   return sessionId.slice(0, 6) || "ws";
-}
-
-function frameRefFromFrame(frame: EngineFrame | null | undefined): string | null {
-  if (!frame) {
-    return null;
-  }
-  return `${frame.frame_id}:v${frame.frame_version}`;
 }
 
 function parseBranchCounter(branchId: string | null | undefined): number {
@@ -988,6 +996,8 @@ function pulseJumpTarget(target: HTMLElement): void {
 
 export default function EnginePage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const liveOperatorSurface = pathname.startsWith("/operator");
 
   const {
     loading,
@@ -999,13 +1009,16 @@ export default function EnginePage() {
     packets,
     refreshHealth,
     refreshSessions,
-    createSession,
     loadSession,
-    step,
-    reframe,
     refreshPackets,
     stageAudit,
     updateWorkspaceState,
+    lockOperatorFrame,
+    runOperatorReport,
+    lockOperatorReport,
+    setOperatorThresholdDecision,
+    commitOperatorIteration,
+    abandonOperatorSession,
     lastAudit,
   } = useEngineSession();
 
@@ -1047,7 +1060,7 @@ export default function EnginePage() {
   const [reportResult, setReportResult] = useState<EngineStepResponse | null>(null);
   const [frameTimeline, setFrameTimeline] = useState<FrameTimelineEntry[]>([]);
   const [activeBranchId, setActiveBranchId] = useState("ws-b1");
-  const [branchCounter, setBranchCounter] = useState(1);
+  const [, setBranchCounter] = useState(1);
   const [pendingBranchParentFrameId, setPendingBranchParentFrameId] = useState<string | null>(null);
   const [modelSnapshots, setModelSnapshots] = useState<ModelComparisonSnapshot[]>([]);
   const [loadedSnapshotStorageKey, setLoadedSnapshotStorageKey] = useState<string | null>(null);
@@ -1058,6 +1071,10 @@ export default function EnginePage() {
   const [detachedInput, setDetachedInput] = useState("");
   const [detachedChat, setDetachedChat] = useState<DetachedMessage[]>([DETACHED_STARTER]);
   const [detachedBusy, setDetachedBusy] = useState(false);
+  const [modelAssistOpen, setModelAssistOpen] = useState(false);
+  const [modelAssistInput, setModelAssistInput] = useState("");
+  const [modelAssistBusy, setModelAssistBusy] = useState(false);
+  const [modelAssistLast, setModelAssistLast] = useState<OperatorModelResponse | null>(null);
 
   const snapshotStorageKey = useMemo(
     () => `${MODEL_SNAPSHOT_STORAGE_PREFIX}:${activeSession?.session_id ?? "workspace"}`,
@@ -1726,6 +1743,48 @@ export default function EnginePage() {
     setModelSnapshots([]);
   }
 
+  async function handleDraftFrameWithModel() {
+    clearAllErrors();
+    const input = optionalText(modelAssistInput);
+    if (!input) {
+      setLocalError("Model prompt is required.");
+      return;
+    }
+    setModelAssistBusy(true);
+    try {
+      const result = await requestOperatorModel({
+        mode: "draft_frame",
+        input,
+        context: {
+          family,
+          current_frame: frameDraft,
+          gate_status: displayFrameGateStatus,
+        },
+      });
+      setModelAssistLast(result);
+      const draft = result.frameDraft;
+      if (draft) {
+        setFrameDraft((prev) => ({
+          ...prev,
+          text: draft.text || prev.text,
+          objective_type: draft.objective_type || prev.objective_type,
+          domain: draft.domain || prev.domain,
+          time_horizon: draft.time_horizon || prev.time_horizon,
+          key_uncertainty: draft.key_uncertainty || prev.key_uncertainty,
+          constraints_hard_text: lineListToText(draft.constraints_hard),
+          constraints_soft_text: lineListToText(draft.constraints_soft),
+          red_definition: draft.red_definition || prev.red_definition,
+          blue_goals: draft.blue_goals || prev.blue_goals,
+        }));
+        pushFrameMessage("nepsis", "Live model draft applied. Review the frame gate before locking.");
+      }
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Model assist failed.");
+    } finally {
+      setModelAssistBusy(false);
+    }
+  }
+
   const requestBackendStageAudit = useCallback(
     async ({
       sessionId,
@@ -2116,57 +2175,34 @@ export default function EnginePage() {
     const framePayload = buildFramePayloadFromDraft(frameDraft);
     framePayload.text = text;
 
-    let sessionId = activeSession?.session_id ?? "";
-    let resultingFrame: EngineFrame | null = null;
-    let timelineMeta: FrameTimelineMeta = {
-      branchId: activeBranchId,
-      parentFrameId: pendingBranchParentFrameId,
-    };
-
-    if (!activeSession || activeSession.family !== family) {
-      const created = await createSession({
-        family,
-        emit_packet: true,
-        governance: { c_fp: costs.c_fp, c_fn: costs.c_fn },
-        frame: framePayload as EngineFrame & { text: string },
-      });
-      if (!created) {
-        return;
-      }
-      sessionId = created.session_id;
-      resultingFrame = created.frame;
-      const initialBranchId = created.branch_id ?? `${sessionBranchContext(created.session_id)}-b1`;
-      setActiveBranchId(initialBranchId);
-      setBranchCounter(parseBranchCounter(initialBranchId));
-      setPendingBranchParentFrameId(created.parent_frame_id ?? null);
-      timelineMeta = {
-        branchId: initialBranchId,
-        parentFrameId: created.parent_frame_id ?? null,
-        lineageVersion: created.lineage_version ?? undefined,
-      };
-      pushFrameMessage("nepsis", `Frame locked and new session created (${shortSession(created.session_id)}).`);
-      await refreshPackets(created.session_id);
-    } else {
-      const updated = await reframe({
-        frame: framePayload,
-        branch_id: activeBranchId,
-        parent_frame_id: pendingBranchParentFrameId,
-      });
-      if (!updated) {
-        return;
-      }
-      sessionId = activeSession.session_id;
-      resultingFrame = updated.frame;
-      const resolvedBranchId = updated.branch_id ?? activeBranchId;
-      timelineMeta = {
-        branchId: resolvedBranchId,
-        parentFrameId: updated.parent_frame_id ?? pendingBranchParentFrameId,
-        lineageVersion: updated.lineage_version ?? undefined,
-      };
-      setActiveBranchId(resolvedBranchId);
-      setBranchCounter(parseBranchCounter(resolvedBranchId));
-      pushFrameMessage("nepsis", `Frame locked on session ${shortSession(activeSession.session_id)}.`);
+    const locked = await lockOperatorFrame({
+      family,
+      governance: { c_fp: costs.c_fp, c_fn: costs.c_fn },
+      frame: framePayload as EngineFrame & { text: string },
+    });
+    if (!locked) {
+      return;
     }
+    if (isPhaseRejection(locked)) {
+      const rejection = phaseRejectionMessage(locked) ?? "Frame lock refused by service phase gate.";
+      setLocalError(rejection);
+      pushFrameMessage("nepsis", rejection);
+      return;
+    }
+
+    const sessionId = locked.session.session_id;
+    const resultingFrame = locked.session.frame;
+    const resolvedBranchId = locked.session.branch_id ?? `${sessionBranchContext(sessionId)}-b1`;
+    const timelineMeta: FrameTimelineMeta = {
+      branchId: resolvedBranchId,
+      parentFrameId: locked.session.parent_frame_id ?? null,
+      lineageVersion: locked.session.lineage_version ?? undefined,
+    };
+    setActiveBranchId(resolvedBranchId);
+    setBranchCounter(parseBranchCounter(resolvedBranchId));
+    setPendingBranchParentFrameId(locked.session.parent_frame_id ?? null);
+    pushFrameMessage("nepsis", `Frame locked on operator session ${shortSession(sessionId)}.`);
+    await refreshPackets(sessionId);
 
     setFrameLocked(true);
     setFrameCollapsed(true);
@@ -2204,20 +2240,20 @@ export default function EnginePage() {
     );
   }
 
-  function handleUnlockFrame() {
+  async function handleUnlockFrame() {
     clearAllErrors();
     if (activeSession) {
-      const nextBranchCounter = branchCounter + 1;
-      const nextBranchId = `${sessionBranchContext(activeSession.session_id)}-b${nextBranchCounter}`;
-      const parentFrameId =
-        activeSession.frame_ref ?? frameRefFromFrame(activeSession.frame) ?? latestSessionFrameEntry?.key ?? null;
-      setBranchCounter(nextBranchCounter);
-      setActiveBranchId(nextBranchId);
-      setPendingBranchParentFrameId(parentFrameId);
-      pushFrameMessage(
-        "nepsis",
-        `Frame unlocked for edits. Downstream stages were reset. Branch ${nextBranchId} created from ${parentFrameId ?? "root"}.`,
-      );
+      const abandoned = await abandonOperatorSession({ reason: "Frame unlocked before commit." });
+      if (abandoned) {
+        const nextBranchId = abandoned.session.branch_id ?? `${sessionBranchContext(abandoned.session_id)}-b1`;
+        setBranchCounter(parseBranchCounter(nextBranchId));
+        setActiveBranchId(nextBranchId);
+        setPendingBranchParentFrameId(abandoned.session.parent_frame_id ?? null);
+        pushFrameMessage(
+          "nepsis",
+          `Frame unlocked for edits. The previous operator loop was abandoned and ${shortSession(abandoned.session_id)} is ready.`,
+        );
+      }
     } else {
       pushFrameMessage(
         "nepsis",
@@ -2263,11 +2299,32 @@ export default function EnginePage() {
       return;
     }
 
-    const result = await step({ sign: signResult.sign, commit: false });
-    if (!result) {
+    const evaluatedReportText = reportDraftText.trim();
+    const reportRun = await runOperatorReport({
+      report_text: evaluatedReportText,
+      sign: signResult.sign,
+      interpretation: {
+        report_text: evaluatedReportText,
+        evidence_count: parseLineList(evaluatedReportText).length,
+        report_synced: true,
+        contradictions_status: contradictionsStatus,
+        contradictions_note: contradictionsNote,
+      },
+    });
+    if (!reportRun) {
       return;
     }
-    const evaluatedReportText = reportDraftText.trim();
+    if (isPhaseRejection(reportRun)) {
+      const rejection = phaseRejectionMessage(reportRun) ?? "Report run refused by service phase gate.";
+      setLocalError(rejection);
+      pushReportMessage("nepsis", rejection);
+      return;
+    }
+    const result = reportRun.step;
+    if (!result) {
+      setLocalError("Operator report did not return a step result.");
+      return;
+    }
     const evaluatedInterpretationGate = evaluateInterpretationGate({
       reportText: evaluatedReportText,
       posteriorHypotheses: Object.keys(result.posterior ?? {}),
@@ -2292,20 +2349,22 @@ export default function EnginePage() {
     });
     const interpretationCoachAfterEval = buildInterpretationCoach(evaluatedInterpretationGate);
     const thresholdCoachAfterEval = buildThresholdCoach(evaluatedThresholdGate);
-    const audit = await requestBackendStageAudit({
-      sessionId: result.session.session_id,
-      mode: "preview",
-      overrides: {
-        interpretation: {
-          ...evaluatedInterpretationGate.packet,
+    const audit =
+      reportRun.audit ??
+      (await requestBackendStageAudit({
+        sessionId: result.session.session_id,
+        mode: "preview",
+        overrides: {
+          interpretation: {
+            ...evaluatedInterpretationGate.packet,
+          },
+          threshold: {
+            ...evaluatedThresholdGate.packet,
+            decision: "undecided",
+            hold_reason: "",
+          },
         },
-        threshold: {
-          ...evaluatedThresholdGate.packet,
-          decision: "undecided",
-          hold_reason: "",
-        },
-      },
-    });
+      }));
 
     const persistedStageContext: StageAuditContextOverrides = {
       frame: frameGate.packet as unknown as Record<string, unknown>,
@@ -2376,6 +2435,16 @@ export default function EnginePage() {
       );
       return;
     }
+    const locked = await lockOperatorReport();
+    if (!locked) {
+      return;
+    }
+    if (isPhaseRejection(locked)) {
+      const rejection = phaseRejectionMessage(locked) ?? "Report lock refused by service phase gate.";
+      setLocalError(rejection);
+      pushReportMessage("nepsis", rejection);
+      return;
+    }
     setReportLocked(true);
     pushReportMessage("nepsis", "Report locked. Posterior stage is now active.");
     if (reportResult.governance?.recommended_action) {
@@ -2430,28 +2499,53 @@ export default function EnginePage() {
       );
       return;
     }
+    if (thresholdDecision === "undecided") {
+      setLocalError("Choose recommend action or hold before committing.");
+      return;
+    }
+    const thresholdSet = await setOperatorThresholdDecision({
+      decision: thresholdDecision,
+      hold_reason: thresholdHoldReason,
+    });
+    if (!thresholdSet) {
+      return;
+    }
+    if (isPhaseRejection(thresholdSet)) {
+      const rejection = phaseRejectionMessage(thresholdSet) ?? "Threshold decision refused by service phase gate.";
+      setLocalError(rejection);
+      pushPosteriorMessage("nepsis", rejection);
+      return;
+    }
     const payload = buildNextFramePayload(nextFrameDraft);
     if (!payload.text) {
       setLocalError("Next-frame text is required to commit.");
       return;
     }
 
-    const updated = await reframe({
-      frame: payload,
-      branch_id: activeBranchId,
-      parent_frame_id: pendingBranchParentFrameId,
+    const committed = await commitOperatorIteration({
+      carry_forward_frame: payload,
     });
-    if (!updated) {
+    if (!committed) {
+      return;
+    }
+    if (isPhaseRejection(committed)) {
+      const rejection = phaseRejectionMessage(committed) ?? "Iteration commit refused by service phase gate.";
+      setLocalError(rejection);
+      pushPosteriorMessage("nepsis", rejection);
       return;
     }
 
-    const updatedFrame = updated.frame;
-    const resolvedBranchId = updated.branch_id ?? activeBranchId;
+    const updatedFrame = committed.session.frame;
+    if (!updatedFrame) {
+      setLocalError("Committed operator session did not return a carry-forward frame.");
+      return;
+    }
+    const resolvedBranchId = committed.session.branch_id ?? activeBranchId;
     appendFrameTimeline(activeSession.session_id, updatedFrame, "Committed to next priors", {
       branchId: resolvedBranchId,
-      parentFrameId: updated.parent_frame_id ?? pendingBranchParentFrameId,
-      lineageVersion: updated.lineage_version ?? undefined,
-      audit: auditForAction ?? lastAudit,
+      parentFrameId: committed.session.parent_frame_id ?? pendingBranchParentFrameId,
+      lineageVersion: committed.session.lineage_version ?? undefined,
+      audit: committed.audit ?? auditForAction ?? lastAudit,
     });
     setActiveBranchId(resolvedBranchId);
     setBranchCounter(parseBranchCounter(resolvedBranchId));
@@ -2622,7 +2716,14 @@ export default function EnginePage() {
       <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">Nepsis Engine Workspace</h1>
+            <h1 className="text-xl font-semibold">
+              {liveOperatorSurface ? "Live Operator Workspace" : "Nepsis Engine Workspace"}
+            </h1>
+            {liveOperatorSurface && (
+              <span className="mt-2 inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-100">
+                Live mode
+              </span>
+            )}
             <p className="mt-1 max-w-3xl text-sm text-nepsis-muted">
               Guided flow: <span className="font-medium text-nepsis-text">{audienceLabels.stage1}</span> →{" "}
               <span className="font-medium text-nepsis-text">{audienceLabels.stage2}</span> →{" "}
@@ -2651,6 +2752,14 @@ export default function EnginePage() {
             >
               Model Sandbox
             </button>
+            {liveOperatorSurface && (
+              <button
+                onClick={() => setModelAssistOpen(true)}
+                className="rounded-full border border-amber-500/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300"
+              >
+                Model Assist
+              </button>
+            )}
             {developerToolsEnabled && (
               <button
                 onClick={() => setSystemStatusOpen((prev) => !prev)}
@@ -3172,7 +3281,7 @@ export default function EnginePage() {
               </button>
             ) : (
               <button
-                onClick={handleUnlockFrame}
+                onClick={() => void handleUnlockFrame()}
                 className="rounded-full border border-nepsis-border px-4 py-2 text-xs hover:border-nepsis-accent"
               >
                 Unlock Frame
@@ -3826,6 +3935,54 @@ export default function EnginePage() {
             </div>
           )}
         </section>
+      )}
+
+      {modelAssistOpen && (
+        <div className="fixed inset-0 z-50">
+          <button
+            aria-label="Close model assist overlay"
+            onClick={() => setModelAssistOpen(false)}
+            className="absolute inset-0 bg-black/60"
+          />
+          <aside className="absolute right-0 top-0 h-full w-full max-w-md border-l border-nepsis-border bg-nepsis-panel p-4 shadow-2xl shadow-black/60">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold">Live Model Assist</h2>
+                <p className="text-xs text-nepsis-muted">
+                  Authenticated server-side model call. Review gates before commitment.
+                </p>
+              </div>
+              <button
+                onClick={() => setModelAssistOpen(false)}
+                className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs hover:border-nepsis-accent"
+              >
+                Close
+              </button>
+            </div>
+            <label className="block text-xs text-nepsis-muted">
+              Model prompt
+              <textarea
+                value={modelAssistInput}
+                onChange={(event) => setModelAssistInput(event.target.value)}
+                rows={5}
+                disabled={modelAssistBusy}
+                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs text-nepsis-text"
+              />
+            </label>
+            <button
+              onClick={() => void handleDraftFrameWithModel()}
+              disabled={modelAssistBusy || !modelAssistInput.trim()}
+              className="mt-3 rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+            >
+              {modelAssistBusy ? "Drafting..." : "Draft Frame"}
+            </button>
+            {modelAssistLast && (
+              <pre className="mt-3 max-h-72 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[11px] text-nepsis-muted">
+                {JSON.stringify(modelAssistLast, null, 2)}
+              </pre>
+            )}
+          </aside>
+        </div>
       )}
 
       {sandboxOpen && (

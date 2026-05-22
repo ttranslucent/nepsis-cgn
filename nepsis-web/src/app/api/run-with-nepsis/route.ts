@@ -3,9 +3,10 @@ import {
   DEFAULT_OPENAI_MODEL,
   createOpenAiClient,
   extractOpenAiText,
+  hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
 import { requireEngineControlAuth } from "@/lib/engineApi";
-import { modelRoutesEnabled } from "@/lib/publicMode";
+import { browserModelKeysAllowed, modelRoutesEnabled } from "@/lib/publicMode";
 
 export async function POST(req: Request) {
   try {
@@ -25,12 +26,25 @@ export async function POST(req: Request) {
     }
 
     const { prompt, apiKey, model } = await req.json();
+    const browserApiKey = typeof apiKey === "string" ? apiKey : null;
+    const effectiveApiKey = browserModelKeysAllowed() ? browserApiKey : null;
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
     }
 
-    const completion = await createOpenAiClient(apiKey).responses.create({
+    if (!effectiveApiKey?.trim() && !hasConfiguredOpenAiKey()) {
+      return NextResponse.json(
+        {
+          error: "OpenAI key required",
+          detail:
+            "Configure OPENAI_API_KEY/NEPSIS_OPENAI_API_KEY server-side before running live model routes.",
+        },
+        { status: 428 },
+      );
+    }
+
+    const completion = await createOpenAiClient(effectiveApiKey).responses.create({
       model: typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL,
       input: prompt,
     });

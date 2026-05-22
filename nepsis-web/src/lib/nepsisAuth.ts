@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { envFlag, publicSiteMode } from "@/lib/publicMode";
 
 export const NEPSIS_USER_COOKIE = "nepsis_user";
 export const NEPSIS_LOGIN_CHALLENGE_COOKIE = "nepsis_login_challenge";
@@ -28,18 +29,22 @@ type LoginCodeDelivery =
   | { delivery: "preview"; previewCode: string }
   | { delivery: "unavailable"; error: string };
 
+type AuthSecretStatus = {
+  configured: boolean;
+  ready: boolean;
+  mode: "configured" | "development-fallback" | "missing";
+};
+
 type LoginRateLimitScope = "request-code" | "verify-code";
 type LoginRateLimitResult =
   | { ok: true }
   | { ok: false; retryAfterSeconds: number; error: string };
 
-function envFlag(name: string): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-function previewCodesAllowed(): boolean {
-  return process.env.NODE_ENV !== "production" || envFlag("NEPSIS_AUTH_ALLOW_CODE_PREVIEW");
+export function previewCodesAllowed(): boolean {
+  if (publicSiteMode()) {
+    return false;
+  }
+  return envFlag("NEPSIS_AUTH_ALLOW_CODE_PREVIEW");
 }
 
 function isPlaceholderResendConfig(apiKey: string, from: string): boolean {
@@ -51,15 +56,37 @@ function isPlaceholderResendConfig(apiKey: string, from: string): boolean {
   );
 }
 
+export function loginEmailConfigured(): boolean {
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  const from = process.env.NEPSIS_AUTH_FROM_EMAIL?.trim();
+  return Boolean(resendApiKey && from && !isPlaceholderResendConfig(resendApiKey, from));
+}
+
+export function authSecretStatus(): AuthSecretStatus {
+  const configured = process.env.NEPSIS_AUTH_SECRET?.trim();
+  if (configured) {
+    return { configured: true, ready: true, mode: "configured" };
+  }
+  if (process.env.NODE_ENV !== "production" && !publicSiteMode()) {
+    return { configured: false, ready: true, mode: "development-fallback" };
+  }
+  return { configured: false, ready: false, mode: "missing" };
+}
+
+export function operatorLoginReady(): boolean {
+  return authSecretStatus().ready && (loginEmailConfigured() || previewCodesAllowed());
+}
+
 function authSecret(): string {
+  const status = authSecretStatus();
+  if (status.mode === "development-fallback") {
+    return "nepsis-dev-auth-secret";
+  }
   const configured = process.env.NEPSIS_AUTH_SECRET?.trim();
   if (configured) {
     return configured;
   }
-  if (process.env.NODE_ENV !== "production") {
-    return "nepsis-dev-auth-secret";
-  }
-  throw new Error("NEPSIS_AUTH_SECRET must be configured in production.");
+  throw new Error("NEPSIS_AUTH_SECRET must be configured in production or public-site mode.");
 }
 
 function signValue(payload: string): string {
@@ -309,10 +336,7 @@ export function cookieOptions(maxAge: number) {
 async function sendWithResend(email: string, code: string): Promise<boolean> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.NEPSIS_AUTH_FROM_EMAIL?.trim();
-  if (!resendApiKey || !from) {
-    return false;
-  }
-  if (isPlaceholderResendConfig(resendApiKey, from)) {
+  if (!resendApiKey || !from || !loginEmailConfigured()) {
     return false;
   }
 
@@ -368,10 +392,19 @@ export async function deliverLoginCode(email: string, code: string): Promise<Log
     return { delivery: "preview", previewCode: code };
   }
 
+  if (publicSiteMode()) {
+    const publicMessage =
+      "Login email delivery is required in public-site mode. Set RESEND_API_KEY and NEPSIS_AUTH_FROM_EMAIL.";
+    return {
+      delivery: "unavailable",
+      error: deliveryError ? `${deliveryError} ${publicMessage}` : publicMessage,
+    };
+  }
+
   return {
     delivery: "unavailable",
     error: deliveryError
-      ? `${deliveryError} Enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true for preview-only testing without email delivery.`
-      : "Login email delivery is not configured. Set RESEND_API_KEY and NEPSIS_AUTH_FROM_EMAIL, or enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true for preview-only testing.",
+      ? `${deliveryError} Enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true for local-only testing without email delivery.`
+      : "Login email delivery is not configured. Set RESEND_API_KEY and NEPSIS_AUTH_FROM_EMAIL, or enable NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true for local-only testing.",
   };
 }

@@ -122,6 +122,99 @@ def create_app():
             raise HTTPException(status_code=400, detail="input_text must be a string when provided")
         return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
 
+    @app.get("/v1/operator/session")
+    async def get_operator_session_state():
+        return API.get_operator_session_state()
+
+    @app.post("/v1/operator/frame")
+    async def lock_operator_frame(request: Request):
+        body = await _read_json_body(request)
+        frame = body.get("frame")
+        if not isinstance(frame, dict):
+            raise HTTPException(status_code=400, detail="operator frame payload requires object field 'frame'")
+        family = body.get("family", "safety")
+        if family not in {"puzzle", "clinical", "safety"}:
+            raise HTTPException(status_code=400, detail="family must be one of: puzzle, clinical, safety")
+        governance = body.get("governance_costs", body.get("governance"))
+        if governance is not None and not isinstance(governance, dict):
+            raise HTTPException(status_code=400, detail="governance must be an object when provided")
+        calibration = body.get("governance_calibration", body.get("calibration"))
+        if calibration is not None and not isinstance(calibration, dict):
+            raise HTTPException(status_code=400, detail="calibration must be an object when provided")
+        manifest_path = _validated_manifest_path(body.get("manifest_path"))
+        try:
+            return _phase_json_response(
+                API.operator_lock_frame(
+                    family=family,
+                    frame=frame,
+                    governance_costs=governance,
+                    governance_calibration=calibration,
+                    manifest_path=manifest_path,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator/report")
+    async def run_operator_report(request: Request):
+        body = await _read_json_body(request)
+        report_text = body.get("report_text", body.get("reportText"))
+        sign = body.get("sign")
+        interpretation = body.get("interpretation")
+        if not isinstance(report_text, str):
+            raise HTTPException(status_code=400, detail="operator report payload requires string field 'report_text'")
+        if not isinstance(sign, dict):
+            raise HTTPException(status_code=400, detail="operator report payload requires object field 'sign'")
+        if interpretation is not None and not isinstance(interpretation, dict):
+            raise HTTPException(status_code=400, detail="interpretation must be an object when provided")
+        try:
+            return _phase_json_response(
+                API.operator_run_report(
+                    report_text=report_text,
+                    sign=sign,
+                    interpretation=interpretation,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator/report/lock")
+    async def lock_operator_report():
+        return _phase_json_response(API.operator_lock_report())
+
+    @app.post("/v1/operator/threshold")
+    async def set_operator_threshold_decision(request: Request):
+        body = await _read_json_body(request)
+        decision = body.get("decision")
+        hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+        if not isinstance(decision, str):
+            raise HTTPException(status_code=400, detail="threshold payload requires string field 'decision'")
+        if not isinstance(hold_reason, str):
+            raise HTTPException(status_code=400, detail="hold_reason must be a string when provided")
+        try:
+            return _phase_json_response(API.operator_set_threshold_decision(decision=decision, hold_reason=hold_reason))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator/commit")
+    async def commit_operator_iteration(request: Request):
+        body = await _read_json_body(request)
+        carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
+        if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
+            raise HTTPException(status_code=400, detail="carry_forward_frame must be an object when provided")
+        try:
+            return _phase_json_response(API.operator_commit_iteration(carry_forward_frame=carry_forward_frame))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator/abandon")
+    async def abandon_operator_session(request: Request):
+        body = await _read_json_body(request)
+        reason = body.get("reason", "")
+        if not isinstance(reason, str):
+            raise HTTPException(status_code=400, detail="reason must be a string when provided")
+        return API.operator_abandon_session(reason=reason)
+
     @app.get("/v1/sessions")
     async def list_sessions(request: Request, limit: int = 50, offset: int = 0):
         return API.list_sessions(limit=limit, offset=offset, owner_id=_request_owner_id(dict(request.headers)))
@@ -388,6 +481,13 @@ async def _read_json_body(request):
     return payload
 
 
+def _phase_json_response(payload: dict[str, Any]):
+    from fastapi.responses import JSONResponse
+
+    status_code = 409 if payload.get("schema_id") == "nepsis.phase_rejection" else 200
+    return JSONResponse(payload, status_code=status_code)
+
+
 def _validated_manifest_path(manifest_path: Any) -> str | None:
     if manifest_path is None:
         return None
@@ -474,6 +574,13 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
         {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
         {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
+        {"method": "GET", "path": "/v1/operator/session", "description": "Get ambient operator session phase state"},
+        {"method": "POST", "path": "/v1/operator/frame", "description": "Lock ambient operator frame"},
+        {"method": "POST", "path": "/v1/operator/report", "description": "Run ambient operator report"},
+        {"method": "POST", "path": "/v1/operator/report/lock", "description": "Lock ambient operator report"},
+        {"method": "POST", "path": "/v1/operator/threshold", "description": "Set ambient operator threshold decision"},
+        {"method": "POST", "path": "/v1/operator/commit", "description": "Commit ambient operator iteration audit"},
+        {"method": "POST", "path": "/v1/operator/abandon", "description": "Abandon ambient operator session"},
         {"method": "POST", "path": "/v1/sessions", "description": "Create engine session"},
         {"method": "GET", "path": "/v1/sessions", "description": "List sessions"},
         {"method": "DELETE", "path": "/v1/sessions", "description": "Purge old sessions by TTL"},

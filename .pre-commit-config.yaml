@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: no-openai-public-env-exposure
+        name: no-openai-public-env-exposure
+        description: Block OpenAI key exposure and unsafe public-site env combinations.
+        entry: python3 scripts/check_openai_secrets.py --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

@@ -31,6 +31,8 @@ def test_site_smoke_script_is_stdlib_python_and_has_expected_routes() -> None:
     assert syntax.returncode == 0, syntax.stderr
     assert "urllib.request" in text
     assert "curl" not in text
+    assert "/login" in text
+    assert "/engine" in text
     assert "/api/engine/mvp" in text
     assert "/api/engine/health" in text
     assert "/api/auth/session" in text
@@ -38,5 +40,6 @@ def test_site_smoke_script_is_stdlib_python_and_has_expected_routes() -> None:
     assert "/api/run-with-nepsis" in text
     assert "authenticated" in text
     assert "engineControlAllowed" in text
+    assert "operatorLoginReady" in text
     assert "modelRoutesEnabled" in text
     assert "hasServerKey" in text

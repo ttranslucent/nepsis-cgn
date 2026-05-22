@@ -43,6 +43,13 @@ ROUTES = (
     {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
     {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
     {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
+    {"method": "GET", "path": "/v1/operator/session", "description": "Get ambient operator session phase state"},
+    {"method": "POST", "path": "/v1/operator/frame", "description": "Lock ambient operator frame"},
+    {"method": "POST", "path": "/v1/operator/report", "description": "Run ambient operator report"},
+    {"method": "POST", "path": "/v1/operator/report/lock", "description": "Lock ambient operator report"},
+    {"method": "POST", "path": "/v1/operator/threshold", "description": "Set ambient operator threshold decision"},
+    {"method": "POST", "path": "/v1/operator/commit", "description": "Commit ambient operator iteration audit"},
+    {"method": "POST", "path": "/v1/operator/abandon", "description": "Abandon ambient operator session"},
     {"method": "POST", "path": "/v1/sessions", "description": "Create engine session"},
     {"method": "GET", "path": "/v1/sessions", "description": "List sessions"},
     {"method": "DELETE", "path": "/v1/sessions", "description": "Purge old sessions by TTL"},
@@ -93,6 +100,9 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if path == "/v1/sessions":
             self._safe(lambda: self._list_sessions(query))
             return
+        if path == "/v1/operator/session":
+            self._safe(lambda: API.get_operator_session_state())
+            return
 
         m_session = re.fullmatch(r"/v1/sessions/([^/]+)", path)
         if m_session:
@@ -132,6 +142,30 @@ class EngineApiHandler(BaseHTTPRequestHandler):
 
         if path == "/v1/mvp":
             self._safe(lambda: self._run_mvp(body))
+            return
+
+        if path == "/v1/operator/frame":
+            self._safe(lambda: self._operator_lock_frame(body))
+            return
+
+        if path == "/v1/operator/report":
+            self._safe(lambda: self._operator_run_report(body))
+            return
+
+        if path == "/v1/operator/report/lock":
+            self._safe(lambda: API.operator_lock_report())
+            return
+
+        if path == "/v1/operator/threshold":
+            self._safe(lambda: self._operator_set_threshold_decision(body))
+            return
+
+        if path == "/v1/operator/commit":
+            self._safe(lambda: self._operator_commit_iteration(body))
+            return
+
+        if path == "/v1/operator/abandon":
+            self._safe(lambda: self._operator_abandon_session(body))
             return
 
         m_step = re.fullmatch(r"/v1/sessions/([^/]+)/step", path)
@@ -264,6 +298,64 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             raise ValueError("input_text must be a string when provided")
         return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
 
+    def _operator_lock_frame(self, body: dict[str, Any]) -> dict[str, Any]:
+        frame = body.get("frame")
+        if not isinstance(frame, dict):
+            raise ValueError("operator frame payload requires object field 'frame'")
+        family = body.get("family", "safety")
+        if family not in {"puzzle", "clinical", "safety"}:
+            raise ValueError("family must be one of: puzzle, clinical, safety")
+        governance = body.get("governance_costs", body.get("governance"))
+        if governance is not None and not isinstance(governance, dict):
+            raise ValueError("governance must be an object when provided")
+        calibration = body.get("governance_calibration", body.get("calibration"))
+        if calibration is not None and not isinstance(calibration, dict):
+            raise ValueError("calibration must be an object when provided")
+        return API.operator_lock_frame(
+            family=family,
+            frame=frame,
+            governance_costs=governance,
+            governance_calibration=calibration,
+            manifest_path=_validated_manifest_path(body.get("manifest_path")),
+        )
+
+    def _operator_run_report(self, body: dict[str, Any]) -> dict[str, Any]:
+        report_text = body.get("report_text", body.get("reportText"))
+        sign = body.get("sign")
+        interpretation = body.get("interpretation")
+        if not isinstance(report_text, str):
+            raise ValueError("operator report payload requires string field 'report_text'")
+        if not isinstance(sign, dict):
+            raise ValueError("operator report payload requires object field 'sign'")
+        if interpretation is not None and not isinstance(interpretation, dict):
+            raise ValueError("interpretation must be an object when provided")
+        return API.operator_run_report(
+            report_text=report_text,
+            sign=sign,
+            interpretation=interpretation,
+        )
+
+    def _operator_set_threshold_decision(self, body: dict[str, Any]) -> dict[str, Any]:
+        decision = body.get("decision")
+        hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+        if not isinstance(decision, str):
+            raise ValueError("threshold payload requires string field 'decision'")
+        if not isinstance(hold_reason, str):
+            raise ValueError("hold_reason must be a string when provided")
+        return API.operator_set_threshold_decision(decision=decision, hold_reason=hold_reason)
+
+    def _operator_commit_iteration(self, body: dict[str, Any]) -> dict[str, Any]:
+        carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
+        if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
+            raise ValueError("carry_forward_frame must be an object when provided")
+        return API.operator_commit_iteration(carry_forward_frame=carry_forward_frame)
+
+    def _operator_abandon_session(self, body: dict[str, Any]) -> dict[str, Any]:
+        reason = body.get("reason", "")
+        if not isinstance(reason, str):
+            raise ValueError("reason must be a string when provided")
+        return API.operator_abandon_session(reason=reason)
+
     def _list_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=50)
         offset = _query_optional_int(query, "offset", default=0)
@@ -286,7 +378,8 @@ class EngineApiHandler(BaseHTTPRequestHandler):
     def _safe(self, op: Callable[[], dict[str, Any]]) -> None:
         try:
             payload = op()
-            self._send_json(200, payload)
+            status = 409 if payload.get("schema_id") == "nepsis.phase_rejection" else 200
+            self._send_json(status, payload)
         except KeyError as exc:
             self._send_json(404, {"error": str(exc)})
         except PermissionError as exc:

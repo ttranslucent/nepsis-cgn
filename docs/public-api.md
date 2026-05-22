@@ -39,6 +39,18 @@ Content-Type: application/json
 Do not open the broader `/v1/sessions/*` API publicly unless auth, ownership,
 storage, and rate limits have been reviewed for that deployment.
 
+## Live Operator Path
+
+The product-facing live path is `/operator`, not `/mvp`. It reuses the existing
+engine session runtime and remains signed-in. Live model assistance is exposed
+through protected server-side routes such as `POST /api/operator/model`; model
+output is advisory draft input for operator review, not a commitment or packet
+substitute.
+
+Public demo deployments should keep `/operator` gated and model routes disabled.
+Private operator deployments must configure backend auth, login email delivery,
+and server-side model credentials before enabling live model routes.
+
 ## MCP Endpoint
 
 The backend HTTP MCP endpoint is:
@@ -61,3 +73,13 @@ Protected tools:
 MCP clients should authenticate to their own model provider separately. NepsisCGN
 does not proxy visitor OpenAI, Claude, or Gemini accounts through the public web
 site.
+
+## Public MVP Visual Topology Mode
+
+The `/mvp` page may render a Visual Topology Mode for stakeholder review. This
+is a browser-side view over the canonical `nepsis.mvp_packet` response.
+
+Visual Topology Mode does not add public API fields, does not require login,
+does not call provider models, and does not create runtime engine sessions. The
+raw telemetry and JSON packet remain available from the same page through the
+`Full View` result view.

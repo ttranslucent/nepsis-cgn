@@ -42,6 +42,8 @@ npm run dev
   public-demo safety net and `/status` still reports the backend gap.
 - `/engine`, session APIs, playground routes, and LLM/model sandbox flows are
   experimental operator tools.
+- `/operator` is the product-facing live operator path. It must stay signed-in
+  and backed by configured backend auth plus server-side model credentials.
 - Clinical demo packets are not medical advice, not diagnosis, and not clinical
   decision support.
 - Browser-stored OpenAI keys are local-demo only. Do not use them as a shared
@@ -63,12 +65,17 @@ npm run dev
 - Web has a long random `NEPSIS_AUTH_SECRET`.
 - Web sets `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and
   `NEPSIS_MODEL_ROUTES_ENABLED=false` for the public production site.
-- Web does not set `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY` for public
-  production unless model routes have auth and rate-limit review.
-- Web does not set `NEPSIS_ENGINE_ALLOW_ANON=true` in production.
-- Web does not set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true` in production.
+- Web does not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`,
+  `NEPSIS_ENGINE_ALLOW_ANON=true`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true`, or
+  `NEPSIS_MODEL_ROUTES_ENABLED=true` for the public production site.
+- A separate private operator deployment may set
+  `NEPSIS_DEPLOYMENT_MODE=operator`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
+  `NEPSIS_MODEL_ROUTES_ENABLED=true`, and a server-side model key. Do not reuse
+  that configuration for the public demo deployment.
 - Login email delivery is configured with `RESEND_API_KEY` and
   `NEPSIS_AUTH_FROM_EMAIL`.
+- `.venv/bin/python scripts/check_openai_secrets.py --all` passes before
+  deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
 
 ## Public Site Smoke

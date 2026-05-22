@@ -58,6 +58,8 @@ def test_route_manifest_contains_routes_endpoint() -> None:
     assert any(r["path"] == "/v1/routes" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/openapi.json" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/mvp" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator/session" and r["method"] == "GET" for r in routes)
+    assert any(r["path"] == "/v1/operator/report" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/step" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/stage-audit" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/stage-audit" and r["method"] == "POST" for r in routes)
@@ -409,6 +411,36 @@ def test_http_request_body_limit_returns_413(monkeypatch) -> None:
 
     assert response.status == 413
     assert "too large" in json.loads(body.decode("utf-8"))["error"].lower()
+
+
+def test_http_operator_phase_rejection_returns_409(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/operator/report",
+            body=json.dumps(
+                {
+                    "report_text": "obs: critical signal present",
+                    "sign": {"critical_signal": True, "policy_violation": False},
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        body = response.read()
+        conn.close()
+    finally:
+        _stop_test_server(httpd, thread)
+
+    parsed = json.loads(body.decode("utf-8"))
+    assert response.status == 409
+    assert parsed["schema_id"] == "nepsis.phase_rejection"
+    assert parsed["attempted_tool"] == "run_report"
 
 
 def test_stage_audit_http_post_route_accepts_context_payload(monkeypatch) -> None:

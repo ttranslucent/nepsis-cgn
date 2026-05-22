@@ -48,6 +48,9 @@ The script defaults to `python3.11`. If that executable is unavailable, it uses
   visitors reach the frozen MVP through the web proxy, not direct anonymous API
   access.
 - Public production should not set server OpenAI keys unless model routes have
-  auth and rate-limit review.
+  auth and rate-limit review in a non-public operator deployment. Public-site
+  mode disables model routes even when `NEPSIS_MODEL_ROUTES_ENABLED=true`.
 - Treat engine sessions, LLM calls, and browser-stored OpenAI keys as
   experimental unless separately reviewed for the target deployment.
+- Run `.venv/bin/python scripts/check_openai_secrets.py --all` before committing
+  deployment env files or public-site config changes.

@@ -33,8 +33,8 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
   await page.getByRole("button", { name: "Run Query" }).click();
 
-  await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("RED Channel", { exact: true })).toBeVisible();
   await expect(page.getByText("STILL 1", { exact: true })).toBeVisible();
   await expect(page.getByText("BLUE Channel", { exact: true })).toBeVisible();
@@ -42,6 +42,8 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await expect(page.getByText("Commitment", { exact: true })).toBeVisible();
   await expect(page.getByText("State feedback", { exact: true })).toBeVisible();
   await expect(page.getByText("Audit", { exact: true })).toBeVisible();
+  await expect(page.getByText("Constraint conflict detected", { exact: true })).toBeVisible();
+  await expect(page.getByText("Retessellation required", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Full View" }).click();
   await expect(page.getByRole("button", { name: "Full View" })).toHaveAttribute("aria-pressed", "true");
@@ -68,6 +70,14 @@ test("public operator routes are gated and do not ask for browser API keys", asy
   await page.goto("/engine");
   await expect(page.getByRole("heading", { name: /Operator access required/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /Run MVP Demo/i })).toBeVisible();
+});
+
+test("public live operator route is labeled and gated", async ({ page }) => {
+  await page.goto("/operator");
+  await expect(page.getByRole("heading", { name: /Operator access required/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Run MVP Demo/i })).toBeVisible();
+  await expect(page.getByLabel(/OpenAI API Key/i)).toHaveCount(0);
+  await expect(page.getByText(/deterministic MVP demo remains available/i)).toBeVisible();
 });
 
 test("public model API routes are disabled without provider keys", async ({ request }) => {
@@ -98,8 +108,23 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mvp.available).toBe(true);
   expect(payload.mvp.schemaId).toBe("nepsis.mvp_packet");
   expect(payload.mvp.noLoginRequired).toBe(true);
+  expect(payload.auth.loginConfigured).toBe(true);
+  expect(payload.auth.emailConfigured).toBe(false);
+  expect(payload.auth.previewCodesEnabled).toBe(false);
+  expect(payload.auth.operatorLoginReady).toBe(false);
   expect(payload.models.enabled).toBe(false);
   expect(payload.models.hasServerOpenAiKey).toBe(false);
+  expect(payload.mcp.local.available).toBe(true);
+  expect(payload.mcp.local.command).toBe("nepsiscgn-mcp");
+  expect(payload.mcp.local.transport).toBe("stdio");
+  expect(payload.mcp.hosted.available).toBe(false);
+  expect(payload.mcp.hosted.deferred).toBe(true);
+
+  const engineHealth = await request.get("/api/engine/health");
+  expect(engineHealth.ok()).toBeTruthy();
+  const engineHealthPayload = await engineHealth.json();
+  expect(engineHealthPayload.ok).toBe(false);
+  expect(engineHealthPayload.configured).toBe(false);
 });
 
 test("status page exposes safe public system posture", async ({ page }) => {
@@ -115,9 +140,31 @@ test("status page exposes safe public system posture", async ({ page }) => {
           schemaId: "nepsis.mvp_packet",
           noLoginRequired: true,
         },
-        auth: { loginConfigured: false, previewCodesEnabled: false },
+        operator: {
+          enabled: false,
+          operatorSiteMode: false,
+          path: "/operator",
+          backendReady: false,
+          authReady: false,
+          modelReady: false,
+        },
+        auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
-        mcp: { available: true, publicTools: ["run_mvp", "health", "get_mvp_schema"] },
+        mcp: {
+          publicTools: ["run_mvp", "health", "get_mvp_schema"],
+          operatorTools: ["get_session_state", "lock_frame", "run_report"],
+          local: {
+            available: true,
+            command: "nepsiscgn-mcp",
+            transport: "stdio",
+            modelKeysRequired: false,
+          },
+          hosted: {
+            available: false,
+            endpoint: null,
+            deferred: true,
+          },
+        },
       }),
     });
   });
@@ -128,6 +175,29 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
-  await expect(page.getByText("MCP Tools")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Live Operator" })).toBeVisible();
+  await expect(page.getByText("Live operator route is disabled.")).toBeVisible();
+  await expect(page.getByText("Local MCP Bridge")).toBeVisible();
+  await expect(page.getByText("Command: nepsiscgn-mcp")).toBeVisible();
+  await expect(page.getByText("Hosted MCP Endpoint")).toBeVisible();
+  await expect(page.getByText("Deferred until backend auth and deployment are configured.")).toBeVisible();
   await expect(page.getByText("No server OpenAI key configured")).toBeVisible();
+
+  const operatorLogin = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Operator Login" }),
+  });
+  await expect(operatorLogin).toContainText("needs setup");
+  await expect(operatorLogin).toContainText("Auth secret missing.");
+  await expect(operatorLogin).toContainText("Email login not configured.");
+});
+
+test("public login fails closed without email delivery config", async ({ page }) => {
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: /Login to NepsisCGN/i })).toBeVisible();
+
+  await page.getByLabel("Email").fill("operator@example.com");
+  await page.getByRole("button", { name: "Send code" }).click();
+
+  await expect(page.getByRole("status")).toContainText("Login email delivery is required in public-site mode");
+  await expect(page.getByRole("status")).not.toContainText("one-time code");
 });

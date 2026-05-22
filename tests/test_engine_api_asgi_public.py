@@ -3,6 +3,23 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from nepsis_cgn.api import asgi
+from nepsis_cgn.api.service import EngineApiService
+
+
+def _operator_frame() -> dict[str, object]:
+    return {
+        "text": "Decide whether to escalate response.",
+        "objective_type": "decide",
+        "domain": "safety",
+        "time_horizon": "short",
+        "rationale_for_change": (
+            "Red channel: avoid missing a catastrophic incident | "
+            "Blue channel: protect users while minimizing disruption | "
+            "Uncertainty: signal quality from the first report"
+        ),
+        "constraints_hard": ["No policy breach"],
+        "constraints_soft": ["Minimize disruption"],
+    }
 
 
 def test_asgi_mvp_requires_token_in_production_mode(monkeypatch) -> None:
@@ -87,3 +104,78 @@ def test_asgi_mcp_rejects_protected_tool_without_token(monkeypatch) -> None:
     payload = response.json()
     assert payload["error"]["code"] == -32001
     assert "authorization" in payload["error"]["message"].lower()
+
+
+def test_asgi_operator_routes_require_token(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.setattr(asgi, "API", EngineApiService())
+
+    client = TestClient(asgi.create_app())
+    response = client.get("/v1/operator/session")
+
+    assert response.status_code == 401
+
+
+def test_asgi_operator_phase_rejection_maps_to_409(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.setattr(asgi, "API", EngineApiService())
+
+    client = TestClient(asgi.create_app())
+    response = client.post(
+        "/v1/operator/report",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "report_text": "obs: critical signal present",
+            "sign": {"critical_signal": True, "policy_violation": False},
+        },
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["schema_id"] == "nepsis.phase_rejection"
+    assert payload["attempted_tool"] == "run_report"
+    assert payload["legal_next_tools"] == ["get_session_state", "lock_frame", "abandon_session"]
+
+
+def test_asgi_operator_lock_report_preserves_passing_gate_state(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.setattr(asgi, "API", EngineApiService())
+    headers = {"Authorization": "Bearer test-token"}
+
+    client = TestClient(asgi.create_app())
+    locked = client.post(
+        "/v1/operator/frame",
+        headers=headers,
+        json={
+            "family": "safety",
+            "governance": {"c_fp": 1, "c_fn": 9},
+            "frame": _operator_frame(),
+        },
+    )
+    reported = client.post(
+        "/v1/operator/report",
+        headers=headers,
+        json={
+            "report_text": "obs: critical signal present\nobs: no policy violation",
+            "sign": {"critical_signal": True, "policy_violation": False},
+            "interpretation": {
+                "report_text": "obs: critical signal present\nobs: no policy violation",
+                "evidence_count": 2,
+                "contradictions_status": "none_identified",
+                "contradictions_note": "",
+                "contradiction_density": 0.0,
+            },
+        },
+    )
+    report_locked = client.post("/v1/operator/report/lock", headers=headers)
+
+    assert locked.status_code == 200
+    assert reported.status_code == 200
+    assert report_locked.status_code == 200
+    payload = report_locked.json()
+    assert payload["phase"] == "report_locked"
+    assert payload["audit"]["interpretation"]["status"] == "PASS"
+    assert payload["audit"]["threshold"]["status"] == "BLOCK"
