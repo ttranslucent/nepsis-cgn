@@ -2,7 +2,56 @@
 
 These notes were moved out of the root README during the v0.3 MVP freeze documentation refactor. They are preserved for continuity, not as the public quickstart.
 
-## Current Working State (2026-03-17)
+## Current Working State (2026-05-22)
+
+- Primary repo path: `/Users/trentthorn/Code/nepsiscgn`
+- Reference-only accidental workspace from earlier Codex work:
+  - `/Users/trentthorn/Documents/Codex/2026-05-21/have-built-the-harness-now-i/nepsis-cgn`
+- Current feature branch:
+  - `codex/stateless-user-model-connectivity`
+- Current draft PR:
+  - `https://github.com/ttranslucent/nepsis-cgn/pull/4`
+- `main` currently includes PR #3:
+  - `4beedc1` (`[codex] add live operator path (#3)`)
+- PR #4 currently contains:
+  - stateless `nepsis.operator_packet` v2 runtime,
+  - shared MCP handler for stdio and HTTP,
+  - hosted MCP capability-token auth for all `tools/call` requests,
+  - docs/status updates for user-owned model connectivity,
+  - negative tests for missing capability tokens and missing commit trace gates.
+- Canonical path for user-owned model connectivity:
+  - `src/nepsis_cgn/api/operator_packet.py`
+  - `src/nepsis_cgn/mcp/handler.py`
+  - `src/nepsis_cgn/mcp/stdio.py`
+  - FastAPI/HTTP wiring in `src/nepsis_cgn/api/asgi.py` and `src/nepsis_cgn/api/server.py`
+- Existing stateful `/v1/operator/*` routes remain private/transitional for the
+  current operator UI and compatibility. They are not the canonical hosted model
+  harness path.
+- Most recent detailed ledger entry:
+  - `ledger/sessions/2026-05-22_session-50.md`
+
+## May 2026 Pickup
+
+1. To inspect current PR work:
+   - `git switch codex/stateless-user-model-connectivity`
+   - `git status -sb`
+   - `gh pr view 4 --web`
+2. To check readiness:
+   - `gh pr checks 4`
+   - `.venv/bin/python -m pytest -q`
+   - `cd nepsis-web && npm run lint`
+   - `cd nepsis-web && npm run build`
+3. If PR #4 is accepted:
+   - `gh pr merge 4 --squash`
+   - `git checkout main`
+   - `git pull --ff-only`
+4. Keep the public MVP boundary intact:
+   - `/mvp` remains deterministic and model-free.
+   - Hosted model routes stay disabled unless a separate operator deployment
+     explicitly enables and caps them.
+   - MCP users bring their own model host and provider account.
+
+## Previous Working State (2026-03-17)
 
 - Primary branch: `main`
 - Primary repo path: `/Users/trentthorn/Code/nepsiscgn`
