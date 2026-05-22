@@ -5,7 +5,7 @@ import {
   extractOpenAiText,
   hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
-import { modelRoutesEnabled } from "@/lib/publicMode";
+import { browserModelKeysAllowed, modelRoutesEnabled } from "@/lib/publicMode";
 import { requireEngineControlAuth } from "@/lib/engineApi";
 import { buildProtoStateFromOutput, extractJingallCandidate, letterDelta } from "@/lib/protoPuzzleFromLlm";
 import { evaluateProtoPuzzleTs, type ProtoEvaluation } from "@/lib/protoPuzzle";
@@ -52,6 +52,7 @@ export async function POST(req: Request) {
   }
 
   const { prompt, packId, apiKey, model } = body as PlaygroundRequest;
+  const effectiveApiKey = browserModelKeysAllowed() ? apiKey ?? null : null;
 
   if (!prompt || typeof prompt !== "string") {
     return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
@@ -61,19 +62,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Pack is not available in Playground" }, { status: 400 });
   }
 
-  if (!apiKey?.trim() && !hasConfiguredOpenAiKey()) {
+  if (!effectiveApiKey?.trim() && !hasConfiguredOpenAiKey()) {
     return NextResponse.json(
       {
         error: "OpenAI key required",
         detail:
-          "Add a local browser key in Settings or configure OPENAI_API_KEY/NEPSIS_OPENAI_API_KEY on the server before running Playground.",
+          "Configure OPENAI_API_KEY/NEPSIS_OPENAI_API_KEY on the server before running Playground.",
       },
       { status: 428 },
     );
   }
 
   try {
-    const completion = await createOpenAiClient(apiKey).responses.create({
+    const completion = await createOpenAiClient(effectiveApiKey).responses.create({
       model: typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL,
       input: prompt,
     });
