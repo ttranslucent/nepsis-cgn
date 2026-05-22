@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import {
   type EngineFamily,
@@ -992,6 +992,8 @@ function pulseJumpTarget(target: HTMLElement): void {
 
 export default function EnginePage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const liveOperatorSurface = pathname.startsWith("/operator");
 
   const {
     loading,
@@ -2664,7 +2666,14 @@ export default function EnginePage() {
       <section className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">Nepsis Engine Workspace</h1>
+            <h1 className="text-xl font-semibold">
+              {liveOperatorSurface ? "Live Operator Workspace" : "Nepsis Engine Workspace"}
+            </h1>
+            {liveOperatorSurface && (
+              <span className="mt-2 inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-100">
+                Live mode
+              </span>
+            )}
             <p className="mt-1 max-w-3xl text-sm text-nepsis-muted">
               Guided flow: <span className="font-medium text-nepsis-text">{audienceLabels.stage1}</span> →{" "}
               <span className="font-medium text-nepsis-text">{audienceLabels.stage2}</span> →{" "}

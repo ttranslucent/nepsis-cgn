@@ -1,4 +1,10 @@
 function envValue(name: string): string {
+  if (name === "NEXT_PUBLIC_NEPSIS_PUBLIC_SITE") {
+    return process.env.NEXT_PUBLIC_NEPSIS_PUBLIC_SITE?.trim().toLowerCase() ?? "";
+  }
+  if (name === "NEXT_PUBLIC_NEPSIS_OPERATOR_SITE") {
+    return process.env.NEXT_PUBLIC_NEPSIS_OPERATOR_SITE?.trim().toLowerCase() ?? "";
+  }
   return process.env[name]?.trim().toLowerCase() ?? "";
 }
 

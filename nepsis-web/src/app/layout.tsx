@@ -6,7 +6,7 @@ import { cookies } from "next/headers";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
 import { NEPSIS_USER_COOKIE, readNepsisUserFromCookieValue } from "@/lib/nepsisAuth";
-import { publicSiteMode } from "@/lib/publicMode";
+import { liveOperatorEnabled, publicSiteMode } from "@/lib/publicMode";
 
 const nepsisSans = Space_Grotesk({
   subsets: ["latin"],
@@ -56,7 +56,13 @@ export default async function RootLayout({
 }) {
   const cookieStore = await cookies();
   const signedInUser = readNepsisUserFromCookieValue(cookieStore.get(NEPSIS_USER_COOKIE)?.value);
-  const visibleNavLinks = publicSiteMode() ? publicNavLinks : navLinks;
+  const isPublicSite = publicSiteMode();
+  const liveOperatorLinks = liveOperatorEnabled()
+    ? [{ href: "/operator", label: "Live Operator" }]
+    : [];
+  const visibleNavLinks = isPublicSite
+    ? publicNavLinks
+    : [...navLinks, ...liveOperatorLinks];
 
   return (
     <html lang="en" className={`${nepsisSans.variable} ${nepsisMono.variable}`}>
@@ -120,7 +126,7 @@ export default async function RootLayout({
                 <span>
                   Demo mode: <strong className="text-nepsis-text">/mvp</strong> is deterministic and frozen.
                 </span>
-                <span>Operator tools require sign-in and deployment configuration.</span>
+                <span>Live operator tools require sign-in, backend configuration, and server model configuration.</span>
                 <span>Model calls are disabled on the public site unless explicitly enabled.</span>
               </div>
             </div>

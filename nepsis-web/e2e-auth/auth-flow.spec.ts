@@ -36,6 +36,7 @@ test("signed-in operator can open live operator route", async ({ page }) => {
   const previewCode = statusText?.match(/\b\d{6}\b/)?.[0];
   expect(previewCode).toBeTruthy();
   await page.getByRole("button", { name: "Verify & continue" }).click();
+  await expect(page).toHaveURL(/\/engine$/);
 
   await page.goto("/operator");
   await expect(page.getByRole("heading", { name: /Live Operator Workspace/i })).toBeVisible();
