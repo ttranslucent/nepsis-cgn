@@ -104,6 +104,11 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.auth.operatorLoginReady).toBe(false);
   expect(payload.models.enabled).toBe(false);
   expect(payload.models.hasServerOpenAiKey).toBe(false);
+  expect(payload.mcp.local.available).toBe(true);
+  expect(payload.mcp.local.command).toBe("nepsiscgn-mcp");
+  expect(payload.mcp.local.transport).toBe("stdio");
+  expect(payload.mcp.hosted.available).toBe(false);
+  expect(payload.mcp.hosted.deferred).toBe(true);
 
   const engineHealth = await request.get("/api/engine/health");
   expect(engineHealth.ok()).toBeTruthy();
@@ -127,7 +132,21 @@ test("status page exposes safe public system posture", async ({ page }) => {
         },
         auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
-        mcp: { available: true, publicTools: ["run_mvp", "health", "get_mvp_schema"] },
+        mcp: {
+          publicTools: ["run_mvp", "health", "get_mvp_schema"],
+          operatorTools: ["get_session_state", "lock_frame", "run_report"],
+          local: {
+            available: true,
+            command: "nepsiscgn-mcp",
+            transport: "stdio",
+            modelKeysRequired: false,
+          },
+          hosted: {
+            available: false,
+            endpoint: null,
+            deferred: true,
+          },
+        },
       }),
     });
   });
@@ -138,7 +157,10 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
-  await expect(page.getByText("MCP Tools")).toBeVisible();
+  await expect(page.getByText("Local MCP Bridge")).toBeVisible();
+  await expect(page.getByText("Command: nepsiscgn-mcp")).toBeVisible();
+  await expect(page.getByText("Hosted MCP Endpoint")).toBeVisible();
+  await expect(page.getByText("Deferred until backend auth and deployment are configured.")).toBeVisible();
   await expect(page.getByText("No server OpenAI key configured")).toBeVisible();
 
   const operatorLogin = page.locator("section").filter({

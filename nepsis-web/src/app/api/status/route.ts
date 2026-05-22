@@ -168,6 +168,28 @@ export async function GET() {
       endpoint: mcp.endpoint,
       publicTools: ["run_mvp", "get_mvp_schema", "health"],
       protectedTools: ["get_routes"],
+      operatorTools: [
+        "get_session_state",
+        "lock_frame",
+        "run_report",
+        "lock_report",
+        "set_threshold_decision",
+        "commit_iteration",
+        "abandon_session",
+      ],
+      local: {
+        available: true,
+        command: "nepsiscgn-mcp",
+        transport: "stdio",
+        modelKeysRequired: false,
+        lifecycle: "one process owns one implicit ambient session",
+      },
+      hosted: {
+        available: mcp.available,
+        endpoint: mcp.endpoint,
+        deferred: !mcp.available,
+        requiresBackendAuth: true,
+      },
     },
   });
 }
