@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
+from ..mcp.handler import handle_mcp_request
 from .service import EngineApiService
 
 LOGGER = logging.getLogger("nepsis_cgn.api")
@@ -39,6 +40,7 @@ def _default_store_path() -> str:
 
 API = EngineApiService(store_path=_default_store_path())
 ROUTES = (
+    {"method": "POST", "path": "/mcp", "description": "Model Context Protocol JSON-RPC tool endpoint"},
     {"method": "GET", "path": "/v1/health", "description": "Health check"},
     {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
     {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
@@ -142,6 +144,10 @@ class EngineApiHandler(BaseHTTPRequestHandler):
 
         if path == "/v1/mvp":
             self._safe(lambda: self._run_mvp(body))
+            return
+
+        if path == "/mcp":
+            self._handle_mcp(body)
             return
 
         if path == "/v1/operator/frame":
@@ -440,7 +446,10 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if allowed_origin is not None:
             self.send_header("Access-Control-Allow-Origin", allowed_origin)
             self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Request-ID")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Authorization, X-API-Key, X-Request-ID, X-Nepsis-Capability-Token",
+            )
             self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
             self.send_header("Access-Control-Max-Age", "600")
 
@@ -493,7 +502,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
 
         if method == "OPTIONS":
             return True
-        if path in {"/health", "/v1/health", "/v1/routes", "/v1/openapi.json"}:
+        if path in {"/health", "/v1/health", "/v1/routes", "/v1/openapi.json", "/mcp"}:
             return True
 
         expected_token = _configured_api_token()
@@ -536,6 +545,20 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             bucket.append(now)
             _RATE_LIMIT_STATE[key] = bucket
         return True
+
+    def _handle_mcp(self, body: dict[str, Any]) -> None:
+        response = handle_mcp_request(
+            body,
+            headers=dict(self.headers),
+            require_capability_token=True,
+            server_name="nepsis-cgn",
+            route_manifest_fn=route_manifest,
+            request_id=self._request_id,
+        )
+        if response is None:
+            self._send_json(202, {})
+            return
+        self._send_json(200, response)
 
 
 def run(host: str = "127.0.0.1", port: int = 8787) -> None:

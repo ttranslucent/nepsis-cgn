@@ -1,6 +1,6 @@
 # NepsisCGN v0.3
 
-Last verified: 2026-05-19
+Last verified: 2026-05-22
 
 NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces structured reasoning under uncertainty with distinct RED/BLUE decision spaces, STILL checkpoints, contradiction monitoring, denominator collapse detection, ZeroBack repair, consequence-weighted commitment, state feedback scaffolding, and audit packets.
 
@@ -110,7 +110,7 @@ The local Next API proxy used by the UI is `/api/engine/mvp`, which forwards to 
 The public site posture is intentionally narrow:
 
 - `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run the canonical cases or paste a short query into the selected MVP scaffold.
-- `/operator` is a separate live operator surface. Enable it only on an authenticated operator deployment with backend API auth, login email delivery, and server-side model configuration.
+- `/operator` is a separate live operator surface. Enable it only on an authenticated operator deployment with backend API auth and login email delivery; keep hosted model routes disabled unless separately reviewed and capped.
 - `/status` shows backend, auth, model-route, and MCP readiness.
 - `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
 - Public production must not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`, or `NEPSIS_MODEL_ROUTES_ENABLED=true`.
@@ -134,11 +134,22 @@ NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true
 NEPSIS_MODEL_ROUTES_ENABLED=false
 ```
 
+Configure the backend MCP capability-token hashes with:
+
+```bash
+NEPSIS_MCP_CAPABILITY_TOKEN_HASHES=operator-1:<sha256-of-capability-token>
+```
+
+Only token hashes and labels are stored. MCP clients send the raw capability
+token as `Authorization: Bearer <token>` or `X-Nepsis-Capability-Token` when
+calling tools.
+
 For a private live operator deployment, use a separate environment from the
-public demo and set `NEPSIS_DEPLOYMENT_MODE=operator`,
-`NEPSIS_LIVE_OPERATOR_ENABLED=true`, `NEPSIS_MODEL_ROUTES_ENABLED=true`, login
-email delivery, and a server-side `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`.
-Do not enable live model routes on the public demo deployment.
+public demo. Hosted model routes stay disabled by default; enable them only with
+`NEPSIS_DEPLOYMENT_MODE=operator`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
+`NEPSIS_MODEL_ROUTES_ENABLED=true`, login email delivery, backend auth, rate
+limits, and explicit server-side model credentials. Do not enable live model
+routes on the public demo deployment.
 
 After deployment, run:
 
@@ -167,11 +178,14 @@ Public-safe web access is `POST /api/engine/mvp` from the Vercel app. The direct
 FastAPI `POST /v1/mvp` endpoint remains protected by `NEPSIS_API_TOKEN` in shared
 deployments so the web proxy can control CORS and rollout posture.
 
-The backend also exposes a minimal HTTP MCP JSON-RPC endpoint at `/mcp` with
-tools `run_mvp`, `get_mvp_schema`, `health`, and protected `get_routes`.
-MCP is a tool surface, not a model-provider bypass: Codex/ChatGPT, Claude Code,
-and Gemini users should connect their own authenticated client to Nepsis tools
-rather than routing their model account through NepsisCGN.
+The backend also exposes an HTTP MCP JSON-RPC endpoint at `/mcp`. `initialize`
+and `tools/list` are discoverable without a token. Every hosted `tools/call`
+requires a Nepsis capability token and returns packet-in/packet-out tool
+results; NepsisCGN stores no provider API keys and no packet bodies for
+stateless MCP calls. MCP is a tool surface, not a model-provider bypass:
+Codex/ChatGPT, Claude Code, and Gemini users should connect their own
+authenticated client to Nepsis tools rather than routing their model account
+through NepsisCGN.
 
 See [docs/public-api.md](docs/public-api.md) for request examples and the MCP
 tool list.
@@ -257,6 +271,7 @@ Environment notes:
 - Python must be >=3.11.
 - Use `.venv/bin/python`; system `python3` may be Python 3.9.
 - `OPENAI_API_KEY` is required only for real model calls.
+- `NEPSIS_MCP_CAPABILITY_TOKEN_HASHES` stores hosted MCP capability-token hashes, not provider keys.
 - Browser-stored OpenAI keys are local-demo only; do not use them as shared deployment secrets.
 - The simulated provider exercises red-channel repair without external model access.
 - The OpenAI provider maps the `openai` alias to `gpt-4o` unless a specific `gpt-*` model is supplied.
@@ -266,24 +281,18 @@ Environment notes:
 ## Open Model Harness Direction
 
 The local MVP launcher is intentionally model-free. The frozen `/mvp` path
-should stay deterministic while v0.4 explores an open model harness that uses
-supported host or CLI authentication flows instead of asking operators to paste
-provider API keys into NepsisCGN.
+stays deterministic. The model harness boundary is now MCP-first: NepsisCGN
+exports deterministic tools and stateless operator packets, while the user's
+Codex/ChatGPT, Claude Code, Gemini CLI, or other MCP-capable host supplies the
+model and pays its own subscription or API usage. NepsisCGN should not collect
+OpenAI, Anthropic, or Gemini provider keys for this path.
 
-- OpenAI API calls use API keys, while Codex supports ChatGPT sign-in. Future
-  OpenAI integration should prefer a supported Codex, ChatGPT Apps SDK, or MCP
-  path where that fits the harness boundary. See
-  [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
-  [Codex authentication](https://developers.openai.com/codex/auth), and
-  [Apps SDK authentication](https://developers.openai.com/apps-sdk/build/auth).
-- Claude account-based use needs separate review: Anthropic documents API-key
-  methods for third-party Agent SDK integrations unless claude.ai login access
-  is separately approved. See the
-  [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview).
-- Gemini can be approached through an already-authenticated Gemini CLI flow or
-  an explicit OAuth/ADC design. See
-  [Gemini CLI authentication](https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.mdx)
-  and [Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth).
+- OpenAI/ChatGPT/Codex users should connect through their own authenticated
+  client or an OAuth-style ChatGPT connector in a later branch.
+- Claude and Gemini users should use their own MCP-capable client or CLI auth
+  path and pass Nepsis only packet/tool inputs.
+- Hosted model calls through Nepsis remain private and disabled unless a
+  separate operator deployment explicitly enables and caps them.
 
 ## Known Limitations
 

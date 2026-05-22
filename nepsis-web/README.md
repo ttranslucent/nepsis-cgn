@@ -168,8 +168,10 @@ The public web API surface is `POST /api/engine/mvp`, which forwards to the
 token-protected FastAPI `POST /v1/mvp` route. Direct FastAPI access should stay
 behind `NEPSIS_API_TOKEN` unless a separate public API program is opened.
 
-The FastAPI backend exposes `/mcp` as an HTTP MCP JSON-RPC endpoint with
-`run_mvp`, `get_mvp_schema`, `health`, and protected `get_routes` tools. MCP is
-for connecting NepsisCGN to clients where users already have their own
+The FastAPI backend exposes `/mcp` as an HTTP MCP JSON-RPC endpoint. Discovery
+methods (`initialize`, `tools/list`) stay unauthenticated, while every hosted
+`tools/call` requires a Nepsis capability token configured as
+`NEPSIS_MCP_CAPABILITY_TOKEN_HASHES=operator-1:<sha256-of-token>`. MCP is for
+connecting NepsisCGN to clients where users already have their own
 ChatGPT/Codex, Claude Code, or Gemini account; it should not proxy model account
 access through this public website.

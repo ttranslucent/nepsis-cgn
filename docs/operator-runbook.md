@@ -43,14 +43,16 @@ npm run dev
 - `/engine`, session APIs, playground routes, and LLM/model sandbox flows are
   experimental operator tools.
 - `/operator` is the product-facing live operator path. It must stay signed-in
-  and backed by configured backend auth plus server-side model credentials.
+  and backed by configured backend auth. Hosted model routes require separate
+  caps and server-side credentials; MCP users should normally bring their own
+  authenticated model client.
 - Clinical demo packets are not medical advice, not diagnosis, and not clinical
   decision support.
 - Browser-stored OpenAI keys are local-demo only. Do not use them as a shared
   deployment secret flow.
-- The local launcher is model-free. Future account-based OpenAI/Codex, Claude,
-  or Gemini harness work should use supported host or CLI authentication flows
-  and receive separate v0.4 design review.
+- The local launcher is model-free. MCP harness work should use supported host
+  or CLI authentication flows for OpenAI/Codex, Claude, or Gemini instead of
+  collecting provider keys in NepsisCGN.
 
 ## Shared Deployment Checklist
 
@@ -101,7 +103,9 @@ with the provider and clear browser storage for `https://nepsis-cgn.vercel.app`.
 ## MCP Surface
 
 Backend `/mcp` exposes NepsisCGN as a tool endpoint with public deterministic
-tools (`run_mvp`, `get_mvp_schema`, `health`) and protected operator metadata
-(`get_routes`). MCP clients should use their own ChatGPT/Codex, Claude Code, or
-Gemini authentication; NepsisCGN should not collect or subsidize visitor model
-accounts.
+discovery (`initialize`, `tools/list`) and capability-token-protected tool
+calls. The operator flow is stateless packet-in/packet-out: each tool receives a
+`nepsis.operator_packet` v2 object and returns the next packet, with
+RED-before-BLUE gates enforced by phase transitions. MCP clients should use
+their own ChatGPT/Codex, Claude Code, or Gemini authentication; NepsisCGN should
+not collect or subsidize visitor model accounts.

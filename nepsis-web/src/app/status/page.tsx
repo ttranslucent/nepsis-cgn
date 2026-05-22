@@ -40,6 +40,7 @@ type StatusPayload = {
   mcp: {
     available: boolean;
     endpoint?: string | null;
+    discoverableMethods?: string[];
     publicTools: string[];
     protectedTools?: string[];
     operatorTools?: string[];
@@ -55,6 +56,9 @@ type StatusPayload = {
       endpoint?: string | null;
       deferred: boolean;
       requiresBackendAuth?: boolean;
+      requiresCapabilityToken?: boolean;
+      capabilityTokenConfigured?: boolean;
+      modelKeysRequired?: boolean;
     };
   };
 };
@@ -135,7 +139,7 @@ export default function StatusPage() {
         <h1 className="mt-2 text-3xl font-semibold">System Status</h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-nepsis-muted">
           Public users should be able to run the deterministic MVP without login or model keys. Operator tools stay
-          gated on the hosted site, while local MCP runs through stdio with the model client the user chooses.
+          gated on the hosted site, while MCP tools run against the model client and account the user chooses.
         </p>
       </div>
 
@@ -206,24 +210,34 @@ export default function StatusPage() {
                 ? "No model provider API key collected by NepsisCGN."
                 : "Model key requirement unknown."}
             </p>
-            <p>{status.mcp.local?.lifecycle ?? "One local process owns one implicit ambient session."}</p>
-            <p>Public tools: {status.mcp.publicTools.join(", ")}</p>
-            <p>Operator phase tools: {(status.mcp.operatorTools ?? []).join(", ") || "none"}</p>
+            <p>{status.mcp.local?.lifecycle ?? "Stateless packet-in/packet-out."}</p>
+            <p>Discovery: {(status.mcp.discoverableMethods ?? ["initialize", "tools/list"]).join(", ")}</p>
+            <p>Operator packet tools: {(status.mcp.operatorTools ?? []).join(", ") || "none"}</p>
           </StatusCard>
 
           <StatusCard title="Hosted MCP Endpoint" ok={status.mcp.hosted?.available ?? status.mcp.available}>
             <p>MCP endpoint: {status.mcp.hosted?.endpoint ?? status.mcp.endpoint ?? "/mcp"}</p>
             <p>
               {status.mcp.hosted?.deferred
-                ? "Deferred until backend auth and deployment are configured."
+                ? "Deferred until the backend endpoint is configured."
                 : "Hosted MCP endpoint is reachable."}
             </p>
             <p>
-              {status.mcp.hosted?.requiresBackendAuth === false
-                ? "Backend auth not required."
-                : "Requires backend auth, TLS, ownership, and security review."}
+              {status.mcp.hosted?.requiresCapabilityToken === true
+                ? "Tool calls require a Nepsis capability token."
+                : "Tool-call auth requirement unknown."}
             </p>
-            <p>Hosted protected tools: {(status.mcp.protectedTools ?? []).join(", ") || "none"}</p>
+            <p>
+              {status.mcp.hosted?.capabilityTokenConfigured
+                ? "Capability token hash configured."
+                : "Capability token hash not configured."}
+            </p>
+            <p>
+              {status.mcp.hosted?.modelKeysRequired === false
+                ? "No model provider API key collected by NepsisCGN."
+                : "Model key requirement unknown."}
+            </p>
+            <p>Protected tool calls: {(status.mcp.protectedTools ?? []).join(", ") || "none"}</p>
           </StatusCard>
         </div>
       )}

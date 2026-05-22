@@ -151,6 +151,31 @@ export async function GET() {
   const emailConfigured = loginEmailConfigured();
   const previewCodesEnabled = previewCodesAllowed();
   const modelsEnabled = modelRoutesEnabled();
+  const mcpToolNames = [
+    "run_mvp",
+    "get_mvp_schema",
+    "health",
+    "get_routes",
+    "start_operator_packet",
+    "get_session_state",
+    "lock_frame",
+    "run_report",
+    "lock_report",
+    "set_threshold_decision",
+    "commit_iteration",
+    "abandon_packet",
+  ];
+  const operatorPacketTools = [
+    "start_operator_packet",
+    "get_session_state",
+    "lock_frame",
+    "run_report",
+    "lock_report",
+    "set_threshold_decision",
+    "commit_iteration",
+    "abandon_packet",
+  ];
+  const capabilityTokenConfigured = Boolean(process.env.NEPSIS_MCP_CAPABILITY_TOKEN_HASHES?.trim());
 
   return NextResponse.json({
     backend,
@@ -178,29 +203,25 @@ export async function GET() {
     mcp: {
       available: mcp.available,
       endpoint: mcp.endpoint,
-      publicTools: ["run_mvp", "get_mvp_schema", "health"],
-      protectedTools: ["get_routes"],
-      operatorTools: [
-        "get_session_state",
-        "lock_frame",
-        "run_report",
-        "lock_report",
-        "set_threshold_decision",
-        "commit_iteration",
-        "abandon_session",
-      ],
+      discoverableMethods: ["initialize", "tools/list"],
+      publicTools: [],
+      protectedTools: mcpToolNames,
+      operatorTools: operatorPacketTools,
       local: {
         available: true,
         command: "nepsiscgn-mcp",
         transport: "stdio",
         modelKeysRequired: false,
-        lifecycle: "one process owns one implicit ambient session",
+        lifecycle: "stateless packet-in/packet-out; the model host stores the packet",
       },
       hosted: {
         available: mcp.available,
         endpoint: mcp.endpoint,
         deferred: !mcp.available,
-        requiresBackendAuth: true,
+        requiresBackendAuth: false,
+        requiresCapabilityToken: true,
+        capabilityTokenConfigured,
+        modelKeysRequired: false,
       },
     },
   });

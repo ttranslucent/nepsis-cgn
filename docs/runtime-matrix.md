@@ -9,7 +9,7 @@ backend and a local Next.js UI.
 | Backend API | CPython 3.11 plus `api` extra | `.venv/bin/python -m nepsis_cgn.api.server` | `/v1/mvp`, experimental sessions |
 | Next UI | Node.js 20 LTS, npm with lockfile | `cd nepsis-web && npm ci` | `/mvp`, `/engine`, auth routes |
 | Browser | Current Chromium/Safari/Firefox | N/A | Local UI demo |
-| Public backend | Render Python web service | `render.yaml` | Token-protected FastAPI and `/mcp` |
+| Public backend | Render Python web service | `render.yaml` | Token-protected FastAPI plus capability-token MCP `/mcp` |
 | Public web | Vercel Next.js app | `nepsis-web` | `/mvp`, `/status`, gated operator pages |
 
 ## Smoke Path
@@ -50,6 +50,9 @@ The script defaults to `python3.11`. If that executable is unavailable, it uses
 - Public production should not set server OpenAI keys unless model routes have
   auth and rate-limit review in a non-public operator deployment. Public-site
   mode disables model routes even when `NEPSIS_MODEL_ROUTES_ENABLED=true`.
+- Remote MCP `/mcp` exposes `initialize` and `tools/list` without auth, but all
+  hosted `tools/call` requests require `NEPSIS_MCP_CAPABILITY_TOKEN_HASHES`.
+  Store only `token-id:sha256(token)` values, never provider API keys.
 - Treat engine sessions, LLM calls, and browser-stored OpenAI keys as
   experimental unless separately reviewed for the target deployment.
 - Run `.venv/bin/python scripts/check_openai_secrets.py --all` before committing
