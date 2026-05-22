@@ -3,7 +3,6 @@ import type { NepsisMvpPacket } from "@/lib/engineClient";
 import { buildMvpTopology, type MvpTopologyNode, type MvpTopologyStatus } from "./topology";
 
 const STATUS_CLASS: Record<MvpTopologyStatus, string> = {
-  idle: "border-nepsis-border bg-black/20 text-nepsis-muted",
   clear: "border-emerald-300/45 bg-emerald-400/10 text-emerald-100",
   active: "border-red-300/55 bg-red-500/10 text-red-100",
   bounded: "border-sky-300/55 bg-sky-500/10 text-sky-100",
@@ -17,12 +16,12 @@ export function VisualTopologyMode({ packet }: { packet: NepsisMvpPacket }) {
 
   return (
     <section
-      aria-label="Visual topology mode"
+      aria-label="Visual topology"
       className="rounded-3xl border border-nepsis-border bg-nepsis-panel p-5 md:p-6"
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:items-start">
         <div>
-          <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Visual topology mode</div>
+          <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Visual Topology</div>
           <h2 className="mt-2 text-xl font-semibold">{topology.headline}</h2>
           <p className="mt-2 text-sm text-nepsis-muted">{topology.subhead}</p>
         </div>

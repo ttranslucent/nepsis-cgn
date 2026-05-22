@@ -9,7 +9,7 @@ export type MvpTopologyNodeId =
   | "feedback"
   | "audit";
 
-export type MvpTopologyStatus = "idle" | "clear" | "active" | "bounded" | "hold" | "ready" | "blocked";
+export type MvpTopologyStatus = "clear" | "active" | "bounded" | "hold" | "ready" | "blocked";
 
 export type MvpTopologyNode = {
   id: MvpTopologyNodeId;

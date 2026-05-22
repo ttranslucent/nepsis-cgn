@@ -25,6 +25,8 @@ const CASES: Array<{ id: NepsisMvpCaseId; label: string; description: string }> 
   },
 ];
 
+type ResultView = "topology" | "full";
+
 function userFacingMvpError(err: unknown): string {
   if (err instanceof EngineClientError) {
     const detail = typeof err.detail === "string" ? err.detail : "";
@@ -43,7 +45,7 @@ export default function MvpDemoPage() {
   const [packet, setPacket] = useState<NepsisMvpPacket | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resultView, setResultView] = useState<"topology" | "telemetry">("topology");
+  const [resultView, setResultView] = useState<ResultView>("topology");
 
   async function runDemo() {
     setIsRunning(true);
@@ -169,9 +171,42 @@ function PacketView({
   onResultViewChange,
 }: {
   packet: NepsisMvpPacket;
-  resultView: "topology" | "telemetry";
-  onResultViewChange: (value: "topology" | "telemetry") => void;
+  resultView: ResultView;
+  onResultViewChange: (value: ResultView) => void;
 }) {
+  return (
+    <div className="mt-5 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-nepsis-border bg-nepsis-panel p-3">
+        <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Result view</div>
+        <div className="inline-flex rounded-full border border-nepsis-border bg-black/20 p-1">
+          {[
+            { id: "topology", label: "Visual Topology" },
+            { id: "full", label: "Full View" },
+          ].map((view) => {
+            const selected = resultView === view.id;
+            return (
+              <button
+                key={view.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onResultViewChange(view.id as ResultView)}
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  selected ? "bg-nepsis-accent text-black" : "text-nepsis-muted hover:text-nepsis-text"
+                }`}
+              >
+                {view.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {resultView === "topology" ? <VisualTopologyMode packet={packet} /> : <FullPacketView packet={packet} />}
+    </div>
+  );
+}
+
+function FullPacketView({ packet }: { packet: NepsisMvpPacket }) {
   const contradictionTriggered = packet.contradiction_monitor.contradictions.length > 0;
   const retessellationTriggered = packet.denominator_collapse.retessellation_required;
   const zeroBackTriggered = packet.zeroback.triggered;
@@ -180,33 +215,7 @@ function PacketView({
   const stillCheckpoint2 = packet.still.checkpoints.find((item) => item.position === "after_blue_before_commitment");
 
   return (
-    <div className="mt-5 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-nepsis-border bg-nepsis-panel p-3">
-        <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Result view</div>
-        <div className="inline-flex rounded-full border border-nepsis-border bg-black/20 p-1">
-          {(["topology", "telemetry"] as const).map((view) => {
-            const selected = resultView === view;
-            return (
-              <button
-                key={view}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => onResultViewChange(view)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold capitalize transition ${
-                  selected ? "bg-nepsis-accent text-black" : "text-nepsis-muted hover:text-nepsis-text"
-                }`}
-              >
-                {view}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {resultView === "topology" ? (
-        <VisualTopologyMode packet={packet} />
-      ) : (
-        <>
+    <>
       <section className="rounded-3xl border border-nepsis-border bg-nepsis-panel p-5 md:p-6">
         <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
           <div>
@@ -338,9 +347,7 @@ function PacketView({
           {JSON.stringify(packet, null, 2)}
         </pre>
       </details>
-        </>
-      )}
-    </div>
+    </>
   );
 }
 
