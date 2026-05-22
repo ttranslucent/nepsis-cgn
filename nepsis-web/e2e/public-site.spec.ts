@@ -48,10 +48,12 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await page.getByRole("button", { name: "Full View" }).click();
   await expect(page.getByRole("button", { name: "Full View" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
+  await expect(page.getByText("Audit Trace", { exact: true })).toBeVisible();
   await expect(page.getByText("Raw JSON", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Visual topology" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Visual Topology" }).click();
+  await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
 });
 
