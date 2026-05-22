@@ -27,3 +27,17 @@ test("preview-code login verifies and unlocks operator session controls", async 
     user: "operator@example.com",
   });
 });
+
+test("signed-in operator can open live operator route", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("operator@example.com");
+  await page.getByRole("button", { name: "Send code" }).click();
+  const statusText = await page.getByRole("status").textContent();
+  const previewCode = statusText?.match(/\b\d{6}\b/)?.[0];
+  expect(previewCode).toBeTruthy();
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+
+  await page.goto("/operator");
+  await expect(page.getByRole("heading", { name: /Live Operator Workspace/i })).toBeVisible();
+  await expect(page.getByText(/Live mode/i)).toBeVisible();
+});
