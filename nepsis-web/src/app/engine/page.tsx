@@ -33,6 +33,10 @@ import {
 import { OperatorAccessNotice } from "@/app/components/OperatorAccessNotice";
 import { publicSiteMode } from "@/lib/publicMode";
 import { useEngineSession } from "@/lib/useEngineSession";
+import {
+  requestOperatorModel,
+  type OperatorModelResponse,
+} from "@/lib/operatorModelClient";
 
 type ChatRole = "human" | "nepsis";
 type DetachedRole = "human" | "assistant";
@@ -1067,6 +1071,10 @@ export default function EnginePage() {
   const [detachedInput, setDetachedInput] = useState("");
   const [detachedChat, setDetachedChat] = useState<DetachedMessage[]>([DETACHED_STARTER]);
   const [detachedBusy, setDetachedBusy] = useState(false);
+  const [modelAssistOpen, setModelAssistOpen] = useState(false);
+  const [modelAssistInput, setModelAssistInput] = useState("");
+  const [modelAssistBusy, setModelAssistBusy] = useState(false);
+  const [modelAssistLast, setModelAssistLast] = useState<OperatorModelResponse | null>(null);
 
   const snapshotStorageKey = useMemo(
     () => `${MODEL_SNAPSHOT_STORAGE_PREFIX}:${activeSession?.session_id ?? "workspace"}`,
@@ -1733,6 +1741,48 @@ export default function EnginePage() {
 
   function clearModelSnapshots() {
     setModelSnapshots([]);
+  }
+
+  async function handleDraftFrameWithModel() {
+    clearAllErrors();
+    const input = optionalText(modelAssistInput);
+    if (!input) {
+      setLocalError("Model prompt is required.");
+      return;
+    }
+    setModelAssistBusy(true);
+    try {
+      const result = await requestOperatorModel({
+        mode: "draft_frame",
+        input,
+        context: {
+          family,
+          current_frame: frameDraft,
+          gate_status: displayFrameGateStatus,
+        },
+      });
+      setModelAssistLast(result);
+      const draft = result.frameDraft;
+      if (draft) {
+        setFrameDraft((prev) => ({
+          ...prev,
+          text: draft.text || prev.text,
+          objective_type: draft.objective_type || prev.objective_type,
+          domain: draft.domain || prev.domain,
+          time_horizon: draft.time_horizon || prev.time_horizon,
+          key_uncertainty: draft.key_uncertainty || prev.key_uncertainty,
+          constraints_hard_text: lineListToText(draft.constraints_hard),
+          constraints_soft_text: lineListToText(draft.constraints_soft),
+          red_definition: draft.red_definition || prev.red_definition,
+          blue_goals: draft.blue_goals || prev.blue_goals,
+        }));
+        pushFrameMessage("nepsis", "Live model draft applied. Review the frame gate before locking.");
+      }
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Model assist failed.");
+    } finally {
+      setModelAssistBusy(false);
+    }
   }
 
   const requestBackendStageAudit = useCallback(
@@ -2702,6 +2752,14 @@ export default function EnginePage() {
             >
               Model Sandbox
             </button>
+            {liveOperatorSurface && (
+              <button
+                onClick={() => setModelAssistOpen(true)}
+                className="rounded-full border border-amber-500/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300"
+              >
+                Model Assist
+              </button>
+            )}
             {developerToolsEnabled && (
               <button
                 onClick={() => setSystemStatusOpen((prev) => !prev)}
@@ -3877,6 +3935,54 @@ export default function EnginePage() {
             </div>
           )}
         </section>
+      )}
+
+      {modelAssistOpen && (
+        <div className="fixed inset-0 z-50">
+          <button
+            aria-label="Close model assist overlay"
+            onClick={() => setModelAssistOpen(false)}
+            className="absolute inset-0 bg-black/60"
+          />
+          <aside className="absolute right-0 top-0 h-full w-full max-w-md border-l border-nepsis-border bg-nepsis-panel p-4 shadow-2xl shadow-black/60">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold">Live Model Assist</h2>
+                <p className="text-xs text-nepsis-muted">
+                  Authenticated server-side model call. Review gates before commitment.
+                </p>
+              </div>
+              <button
+                onClick={() => setModelAssistOpen(false)}
+                className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs hover:border-nepsis-accent"
+              >
+                Close
+              </button>
+            </div>
+            <label className="block text-xs text-nepsis-muted">
+              Model prompt
+              <textarea
+                value={modelAssistInput}
+                onChange={(event) => setModelAssistInput(event.target.value)}
+                rows={5}
+                disabled={modelAssistBusy}
+                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs text-nepsis-text"
+              />
+            </label>
+            <button
+              onClick={() => void handleDraftFrameWithModel()}
+              disabled={modelAssistBusy || !modelAssistInput.trim()}
+              className="mt-3 rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+            >
+              {modelAssistBusy ? "Drafting..." : "Draft Frame"}
+            </button>
+            {modelAssistLast && (
+              <pre className="mt-3 max-h-72 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[11px] text-nepsis-muted">
+                {JSON.stringify(modelAssistLast, null, 2)}
+              </pre>
+            )}
+          </aside>
+        </div>
       )}
 
       {sandboxOpen && (
