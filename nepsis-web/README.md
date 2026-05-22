@@ -95,6 +95,18 @@ OpenAI-backed playground routes:
 - `OPENAI_MODEL`: Optional default model. Defaults to `gpt-4.1-mini`.
 - `OPENAI_API_URL`: Optional override for the Responses API endpoint.
 
+Operator deployment mode:
+
+- `NEPSIS_DEPLOYMENT_MODE=operator` or `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`
+  enables the live/operator route family.
+- `NEPSIS_LIVE_OPERATOR_ENABLED=true` exposes live operator UI affordances.
+- `NEPSIS_MODEL_ROUTES_ENABLED=true` enables protected model routes only when
+  the deployment is not public-site mode.
+- `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY` must be configured server-side
+  before `/api/operator/model` returns live model output.
+- Browser-local provider keys are local-demo only and are not accepted by shared
+  operator deployments.
+
 Browser-local OpenAI key storage in `/settings` is local-demo only and is hidden
 in public-site mode. Do not use it as a shared deployment secret flow; prefer
 reviewed server-side environment variables for private operator deployments.

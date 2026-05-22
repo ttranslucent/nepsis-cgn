@@ -39,6 +39,18 @@ Content-Type: application/json
 Do not open the broader `/v1/sessions/*` API publicly unless auth, ownership,
 storage, and rate limits have been reviewed for that deployment.
 
+## Live Operator Path
+
+The product-facing live path is `/operator`, not `/mvp`. It reuses the existing
+engine session runtime and remains signed-in. Live model assistance is exposed
+through protected server-side routes such as `POST /api/operator/model`; model
+output is advisory draft input for operator review, not a commitment or packet
+substitute.
+
+Public demo deployments should keep `/operator` gated and model routes disabled.
+Private operator deployments must configure backend auth, login email delivery,
+and server-side model credentials before enabling live model routes.
+
 ## MCP Endpoint
 
 The backend HTTP MCP endpoint is:

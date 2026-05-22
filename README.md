@@ -110,6 +110,7 @@ The local Next API proxy used by the UI is `/api/engine/mvp`, which forwards to 
 The public site posture is intentionally narrow:
 
 - `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run the canonical cases or paste a short query into the selected MVP scaffold.
+- `/operator` is a separate live operator surface. Enable it only on an authenticated operator deployment with backend API auth, login email delivery, and server-side model configuration.
 - `/status` shows backend, auth, model-route, and MCP readiness.
 - `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
 - Public production must not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`, or `NEPSIS_MODEL_ROUTES_ENABLED=true`.
@@ -132,6 +133,12 @@ NEPSIS_AUTH_SECRET=<long-random-secret>
 NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true
 NEPSIS_MODEL_ROUTES_ENABLED=false
 ```
+
+For a private live operator deployment, use a separate environment from the
+public demo and set `NEPSIS_DEPLOYMENT_MODE=operator`,
+`NEPSIS_LIVE_OPERATOR_ENABLED=true`, `NEPSIS_MODEL_ROUTES_ENABLED=true`, login
+email delivery, and a server-side `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`.
+Do not enable live model routes on the public demo deployment.
 
 After deployment, run:
 
