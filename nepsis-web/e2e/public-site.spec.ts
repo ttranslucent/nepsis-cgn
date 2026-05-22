@@ -138,6 +138,14 @@ test("status page exposes safe public system posture", async ({ page }) => {
           schemaId: "nepsis.mvp_packet",
           noLoginRequired: true,
         },
+        operator: {
+          enabled: false,
+          operatorSiteMode: false,
+          path: "/operator",
+          backendReady: false,
+          authReady: false,
+          modelReady: false,
+        },
         auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
         mcp: {
@@ -165,6 +173,8 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Live Operator" })).toBeVisible();
+  await expect(page.getByText("Live operator route is disabled.")).toBeVisible();
   await expect(page.getByText("Local MCP Bridge")).toBeVisible();
   await expect(page.getByText("Command: nepsiscgn-mcp")).toBeVisible();
   await expect(page.getByText("Hosted MCP Endpoint")).toBeVisible();

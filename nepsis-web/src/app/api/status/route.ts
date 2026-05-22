@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { modelRoutesEnabled } from "@/lib/publicMode";
+import {
+  liveOperatorEnabled,
+  modelRoutesEnabled,
+  operatorSiteMode,
+} from "@/lib/publicMode";
 import { hasConfiguredOpenAiKey } from "@/lib/openaiClient";
 import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
 import {
@@ -151,6 +155,14 @@ export async function GET() {
   return NextResponse.json({
     backend,
     mvp,
+    operator: {
+      enabled: liveOperatorEnabled(),
+      operatorSiteMode: operatorSiteMode(),
+      path: "/operator",
+      backendReady: backend.configured && backend.reachable,
+      authReady: operatorLoginReady(),
+      modelReady: modelRoutesEnabled() && hasConfiguredOpenAiKey(),
+    },
     auth: {
       loginConfigured: authSecret.ready,
       authSecretConfigured: authSecret.configured,

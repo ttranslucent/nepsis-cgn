@@ -17,6 +17,14 @@ type StatusPayload = {
     noLoginRequired: boolean;
     detail?: string;
   };
+  operator: {
+    enabled: boolean;
+    operatorSiteMode: boolean;
+    path: string;
+    backendReady: boolean;
+    authReady: boolean;
+    modelReady: boolean;
+  };
   auth: {
     loginConfigured: boolean;
     authSecretConfigured?: boolean;
@@ -158,6 +166,14 @@ export default function StatusPage() {
                 : "Backend health check is not reachable."}
             </p>
             {status.backend.status && <p>HTTP status: {status.backend.status}</p>}
+          </StatusCard>
+
+          <StatusCard title="Live Operator" ok={status.operator.enabled && status.operator.backendReady && status.operator.authReady}>
+            <p>{status.operator.enabled ? "Live operator route is enabled." : "Live operator route is disabled."}</p>
+            <p>Path: {status.operator.path}</p>
+            <p>{status.operator.backendReady ? "Backend is reachable." : "Backend is not ready."}</p>
+            <p>{status.operator.authReady ? "Operator auth is ready." : "Operator auth is not ready."}</p>
+            <p>{status.operator.modelReady ? "Server model key is ready." : "Server model key is not ready."}</p>
           </StatusCard>
 
           <StatusCard
