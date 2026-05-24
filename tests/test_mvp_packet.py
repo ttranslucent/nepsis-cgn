@@ -58,6 +58,40 @@ def test_jailing_mvp_packet_preserves_constraint_and_retessellates() -> None:
     assert packet["final_output"]["required_next_discriminators"]
 
 
+def test_jailing_visitor_query_drives_token_conflict_packet() -> None:
+    packet = build_nepsis_mvp_packet(
+        case_id="jailing",
+        input_text="Source says VIREN, but the model answered VIRAL.",
+    )
+
+    assert "source_token=VIREN" in packet["observations"]
+    assert "candidate_token=VIRAL" in packet["observations"]
+    assert "Hard constraint: preserve the source token VIREN exactly." in packet["constraints"]
+    assert packet["red_channel"]["active_hazards"][0]["hazard"] == "Candidate changes VIREN into VIRAL."
+    assert packet["contradiction_monitor"]["contradictions"][0]["observation"] == "candidate_token=VIRAL"
+    assert packet["blue_channel"]["hypotheses"][0]["label"] == "VIREN is the required answer."
+    assert packet["blue_channel"]["hypotheses"][1]["label"] == "VIRAL is a fluent but invalid normalization."
+    assert packet["voronoi_commitment"]["recommended_action"] == (
+        "Reject VIRAL; preserve VIREN as the governed answer."
+    )
+    assert packet["final_output"]["concise_recommendation"] == (
+        "Do not accept VIRAL. Return or preserve VIREN unless source verification changes."
+    )
+
+
+def test_jailing_visitor_query_accepts_loose_source_candidate_wording() -> None:
+    packet = build_nepsis_mvp_packet(
+        case_id="jailing",
+        input_text="Compare source VIREN against candidate VIRAL before accepting the response.",
+    )
+
+    assert "source_token=VIREN" in packet["observations"]
+    assert "candidate_token=VIRAL" in packet["observations"]
+    assert packet["voronoi_commitment"]["recommended_action"] == (
+        "Reject VIRAL; preserve VIREN as the governed answer."
+    )
+
+
 def test_mvp_audit_trace_runs_red_before_blue_and_retessellation() -> None:
     packet = build_nepsis_mvp_packet(case_id="jailing")
     stages = [event["stage"] for event in packet["audit_trace"]]

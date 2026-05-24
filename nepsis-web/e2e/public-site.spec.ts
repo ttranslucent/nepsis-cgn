@@ -12,7 +12,10 @@ test.beforeEach(async ({ page }) => {
 
 test("public MVP can run without login or model key", async ({ page }) => {
   await page.goto("/mvp");
-  await expect(page.getByRole("heading", { name: /RED/i })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Detect constraint violations before an AI answer commits." }),
+  ).toBeVisible();
+  await expect(page.getByText("RED → STILL → BLUE → STILL → commitment → state feedback → audit")).toBeVisible();
   await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
   await page.getByRole("button", { name: "Run Query" }).click();
 
@@ -34,6 +37,9 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await page.getByRole("button", { name: "Run Query" }).click();
 
   await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+  await expect(page.getByText("What it checked", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("What it found", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("What changed", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("RED Channel", { exact: true })).toBeVisible();
   await expect(page.getByText("STILL 1", { exact: true })).toBeVisible();
@@ -42,6 +48,8 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await expect(page.getByText("Commitment", { exact: true })).toBeVisible();
   await expect(page.getByText("State feedback", { exact: true })).toBeVisible();
   await expect(page.getByText("Audit", { exact: true })).toBeVisible();
+  const topologyText = await page.getByRole("region", { name: "Visual topology" }).innerText();
+  expect(topologyText.indexOf("Packet lineage")).toBeLessThan(topologyText.indexOf("RED Channel"));
   await expect(page.getByText("Constraint conflict detected", { exact: true })).toBeVisible();
   await expect(page.getByText("Retessellation required", { exact: true })).toBeVisible();
 
@@ -55,6 +63,23 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await page.getByRole("button", { name: "Visual Topology" }).click();
   await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+});
+
+test("public MVP visitor query changes packet details in bundled fallback", async ({ page }) => {
+  await page.goto("/mvp");
+  await page.getByLabel(/Visitor query/i).fill("Compare source VIREN against candidate VIRAL before accepting.");
+  await page.getByRole("button", { name: "Run Query" }).click();
+
+  await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Reject VIRAL");
+  await expect(page.locator("main")).toContainText("preserve VIREN");
+
+  await page.getByRole("button", { name: "Full View" }).click();
+  await expect(page.locator("main")).toContainText("source_token=VIREN");
+  await expect(page.locator("main")).toContainText("candidate_token=VIRAL");
+  await expect(page.locator("main")).toContainText("Do not accept VIRAL. Return or preserve VIREN");
+  await expect(page.locator("main")).not.toContainText("source_token=JINGALL");
+  await expect(page.locator("main")).not.toContainText("candidate_token=JAILING");
 });
 
 test("public operator routes are gated and do not ask for browser API keys", async ({ page }) => {

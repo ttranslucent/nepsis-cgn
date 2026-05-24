@@ -14,6 +14,7 @@ dependencies = ["pyyaml"]
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "httpx",
     "black",
     "ruff",
     "mypy",

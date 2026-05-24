@@ -4,8 +4,28 @@ import fallbackPackets from "@/data/mvpPackets.json";
 
 type MvpCaseId = "jailing" | "clinical";
 type FallbackPacket = Record<string, unknown>;
+type TokenPair = { sourceToken: string; candidateToken: string };
 
 const PACKETS = fallbackPackets as Record<MvpCaseId, FallbackPacket>;
+const TOKEN_PATTERN = "([A-Za-z][A-Za-z0-9_-]{1,})";
+const JAILING_TOKEN_PATTERNS = [
+  new RegExp(
+    `\\bsource[_\\s-]*token\\s*[:=]\\s*${TOKEN_PATTERN}.*?\\bcandidate[_\\s-]*token\\s*[:=]\\s*${TOKEN_PATTERN}`,
+    "is",
+  ),
+  new RegExp(
+    `\\bsource\\s+(?:token\\s+)?(?:says|is)\\s+${TOKEN_PATTERN}.*?\\b(?:model|answer|candidate|output)\\s+(?:answered|says|used|is)\\s+${TOKEN_PATTERN}`,
+    "is",
+  ),
+  new RegExp(
+    `\\brequired\\s+name\\s+is\\s+${TOKEN_PATTERN}.*?\\bcandidate\\s+answer\\s+collapses\\s+to\\s+(?:the\\s+\\w+\\s+word\\s+)?${TOKEN_PATTERN}`,
+    "is",
+  ),
+  new RegExp(
+    `\\bsource(?:[_\\s-]*token)?\\s*(?::|=|says|is)?\\s*${TOKEN_PATTERN}.*?\\b(?:candidate|answer|model|output)(?:[_\\s-]*token)?\\s*(?::|=|answered|says|used|is)?\\s*${TOKEN_PATTERN}`,
+    "is",
+  ),
+];
 
 function parseBody(body: string): Record<string, unknown> {
   if (!body.trim()) {
@@ -44,6 +64,53 @@ function readInputText(body: Record<string, unknown>): string | null {
   return trimmed;
 }
 
+function normalizeDemoToken(value: string): string {
+  return value.replace(/^[\s"'`.,;:()[\]{}]+|[\s"'`.,;:()[\]{}]+$/g, "").toUpperCase();
+}
+
+function extractJailingTokenPair(inputText: string): TokenPair | null {
+  for (const pattern of JAILING_TOKEN_PATTERNS) {
+    const match = inputText.match(pattern);
+    if (match?.[1] && match[2]) {
+      return {
+        sourceToken: normalizeDemoToken(match[1]),
+        candidateToken: normalizeDemoToken(match[2]),
+      };
+    }
+  }
+  return null;
+}
+
+function replaceTokenCopy(value: unknown, tokens: TokenPair): unknown {
+  if (typeof value === "string") {
+    return value
+      .replaceAll("JINGALL", "\u0000SOURCE_TOKEN\u0000")
+      .replaceAll("JAILING", "\u0000CANDIDATE_TOKEN\u0000")
+      .replaceAll("\u0000SOURCE_TOKEN\u0000", tokens.sourceToken)
+      .replaceAll("\u0000CANDIDATE_TOKEN\u0000", tokens.candidateToken);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceTokenCopy(item, tokens));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, replaceTokenCopy(entry, tokens)]),
+    );
+  }
+  return value;
+}
+
+function applyVisitorQuery(packet: FallbackPacket, caseId: MvpCaseId, inputText: string | null): FallbackPacket {
+  if (caseId !== "jailing" || !inputText) {
+    return packet;
+  }
+  const tokens = extractJailingTokenPair(inputText);
+  if (!tokens || tokens.sourceToken === tokens.candidateToken) {
+    return packet;
+  }
+  return replaceTokenCopy(packet, tokens) as FallbackPacket;
+}
+
 export function buildBundledMvpFallbackResponse(body: string): Response {
   let parsed: Record<string, unknown>;
   try {
@@ -66,7 +133,8 @@ export function buildBundledMvpFallbackResponse(body: string): Response {
     return Response.json({ error: (error as Error).message }, { status: 400 });
   }
 
-  const packet = JSON.parse(JSON.stringify(PACKETS[caseId])) as FallbackPacket;
+  let packet = JSON.parse(JSON.stringify(PACKETS[caseId])) as FallbackPacket;
+  packet = applyVisitorQuery(packet, caseId, inputText);
   packet.packet_id = randomUUID();
   packet.created_at = new Date().toISOString();
   packet.fallback_source = "nepsis-web bundled frozen v0.3 packet";
