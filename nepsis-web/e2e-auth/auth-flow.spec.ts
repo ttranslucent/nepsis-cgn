@@ -3,6 +3,10 @@ import { expect, test } from "@playwright/test";
 test("preview-code login verifies and unlocks operator session controls", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: /Login to NepsisCGN/i })).toBeVisible();
+  await expect(page.getByText("Local preview-code mode is enabled.")).toBeVisible();
+  await expect(
+    page.getByText("No email will be sent; this page will show the one-time code after Send code."),
+  ).toBeVisible();
 
   await page.getByLabel("Email").fill("operator@example.com");
   await page.getByRole("button", { name: "Send code" }).click();

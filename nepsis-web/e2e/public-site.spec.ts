@@ -12,7 +12,10 @@ test.beforeEach(async ({ page }) => {
 
 test("public MVP can run without login or model key", async ({ page }) => {
   await page.goto("/mvp");
-  await expect(page.getByRole("heading", { name: /RED/i })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Detect constraint violations before an AI answer commits." }),
+  ).toBeVisible();
+  await expect(page.getByText("RED → STILL → BLUE → STILL → commitment → state feedback → audit")).toBeVisible();
   await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
   await page.getByRole("button", { name: "Run Query" }).click();
 
@@ -34,6 +37,9 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await page.getByRole("button", { name: "Run Query" }).click();
 
   await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+  await expect(page.getByText("What it checked", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("What it found", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("What changed", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("RED Channel", { exact: true })).toBeVisible();
   await expect(page.getByText("STILL 1", { exact: true })).toBeVisible();
@@ -42,6 +48,8 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await expect(page.getByText("Commitment", { exact: true })).toBeVisible();
   await expect(page.getByText("State feedback", { exact: true })).toBeVisible();
   await expect(page.getByText("Audit", { exact: true })).toBeVisible();
+  const topologyText = await page.getByRole("region", { name: "Visual topology" }).innerText();
+  expect(topologyText.indexOf("Packet lineage")).toBeLessThan(topologyText.indexOf("RED Channel"));
   await expect(page.getByText("Constraint conflict detected", { exact: true })).toBeVisible();
   await expect(page.getByText("Retessellation required", { exact: true })).toBeVisible();
 
@@ -55,6 +63,23 @@ test("public MVP toggles between visual topology and full view", async ({ page }
   await page.getByRole("button", { name: "Visual Topology" }).click();
   await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+});
+
+test("public MVP visitor query changes packet details in bundled fallback", async ({ page }) => {
+  await page.goto("/mvp");
+  await page.getByLabel(/Visitor query/i).fill("Compare source VIREN against candidate VIRAL before accepting.");
+  await page.getByRole("button", { name: "Run Query" }).click();
+
+  await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Reject VIRAL");
+  await expect(page.locator("main")).toContainText("preserve VIREN");
+
+  await page.getByRole("button", { name: "Full View" }).click();
+  await expect(page.locator("main")).toContainText("source_token=VIREN");
+  await expect(page.locator("main")).toContainText("candidate_token=VIRAL");
+  await expect(page.locator("main")).toContainText("Do not accept VIRAL. Return or preserve VIREN");
+  await expect(page.locator("main")).not.toContainText("source_token=JINGALL");
+  await expect(page.locator("main")).not.toContainText("candidate_token=JAILING");
 });
 
 test("public operator routes are gated and do not ask for browser API keys", async ({ page }) => {
@@ -122,6 +147,14 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mcp.hosted.deferred).toBe(true);
   expect(payload.mcp.hosted.requiresCapabilityToken).toBe(true);
   expect(payload.mcp.hosted.modelKeysRequired).toBe(false);
+  expect(payload.setup.publicSite.ready).toBe(true);
+  expect(payload.setup.publicSite.envExample).toBe("nepsis-web/.env.public.example");
+  expect(payload.setup.publicSite.docs[0].href).toBe("docs/public-api.md#public-site-setup");
+  expect(payload.setup.operatorMode.ready).toBe(false);
+  expect(payload.setup.operatorMode.envExample).toBe("nepsis-web/.env.operator.example");
+  expect(payload.setup.operatorMode.docs[0].href).toBe(
+    "docs/operator-runbook.md#private-operator-deployment",
+  );
 
   const engineHealth = await request.get("/api/engine/health");
   expect(engineHealth.ok()).toBeTruthy();
@@ -153,6 +186,41 @@ test("status page exposes safe public system posture", async ({ page }) => {
         },
         auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
+        setup: {
+          publicSite: {
+            ready: true,
+            envExample: "nepsis-web/.env.public.example",
+            docs: [{ label: "Public site setup", href: "docs/public-api.md#public-site-setup" }],
+            assertions: [
+              {
+                id: "public-site-mode",
+                ok: true,
+                label: "Public site mode active",
+                detail: "The web deployment is rendering the frozen public /mvp posture.",
+                env: ["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true"],
+              },
+            ],
+          },
+          operatorMode: {
+            ready: false,
+            envExample: "nepsis-web/.env.operator.example",
+            docs: [
+              {
+                label: "Private operator deployment",
+                href: "docs/operator-runbook.md#private-operator-deployment",
+              },
+            ],
+            assertions: [
+              {
+                id: "operator-mode",
+                ok: false,
+                label: "Private operator mode active",
+                detail: "The deployment is explicitly configured as a live operator surface.",
+                env: ["NEPSIS_DEPLOYMENT_MODE=operator"],
+              },
+            ],
+          },
+        },
         mcp: {
           discoverableMethods: ["initialize", "tools/list"],
           publicTools: [],
@@ -197,6 +265,10 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Public Site Setup" })).toBeVisible();
+  await expect(page.getByText("Env example: nepsis-web/.env.public.example")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Private Operator Setup" })).toBeVisible();
+  await expect(page.getByText("Env example: nepsis-web/.env.operator.example")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Live Operator" })).toBeVisible();
   await expect(page.getByText("Live operator route is disabled.")).toBeVisible();
   await expect(page.getByText("Local MCP Bridge")).toBeVisible();
@@ -214,13 +286,50 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(operatorLogin).toContainText("Email login not configured.");
 });
 
-test("public login fails closed without email delivery config", async ({ page }) => {
+test("public login explains operator sign-in is unavailable without email delivery config", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: /Login to NepsisCGN/i })).toBeVisible();
 
-  await page.getByLabel("Email").fill("operator@example.com");
-  await page.getByRole("button", { name: "Send code" }).click();
+  await expect(
+    page.getByText("Operator sign-in is intentionally unavailable on this public deployment."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Real login emails are not configured, and local preview-code mode is disabled here."),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Run frozen MVP demo" })).toHaveAttribute("href", "/mvp");
+  await expect(page.getByLabel("Email")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Send code" })).toBeDisabled();
+});
 
-  await expect(page.getByRole("status")).toContainText("Login email delivery is required in public-site mode");
-  await expect(page.getByRole("status")).not.toContainText("one-time code");
+test("login readiness copy distinguishes real email delivery from local preview codes", async ({ page }) => {
+  await page.route("**/api/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mvp: {
+          available: true,
+          status: 200,
+          schemaId: "nepsis.mvp_packet",
+          noLoginRequired: true,
+        },
+        auth: {
+          loginConfigured: true,
+          authSecretConfigured: true,
+          authSecretMode: "configured",
+          emailConfigured: true,
+          previewCodesEnabled: false,
+          operatorLoginReady: true,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/login");
+
+  await expect(page.getByText("Real email delivery is configured.")).toBeVisible();
+  await expect(page.getByText("Local preview-code mode is off.")).toBeVisible();
+  await expect(page.getByText("No email will be sent")).toHaveCount(0);
+  await expect(page.getByLabel("Email")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Send code" })).toBeDisabled();
 });

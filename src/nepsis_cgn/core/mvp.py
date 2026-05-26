@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from .still import build_still_pathway
 MvpCaseId = Literal["jailing", "clinical"]
 MVP_PACKET_SCHEMA_ID = "nepsis.mvp_packet"
 MVP_PACKET_SCHEMA_VERSION = "0.1.5"
+_TOKEN_PATTERN = r"([A-Za-z][A-Za-z0-9_-]{1,})"
 
 
 def build_nepsis_mvp_packet(
@@ -42,6 +44,37 @@ def _contradiction_density_from_count(contradictions: list[dict[str, Any]]) -> f
     return count / float(count + 1)
 
 
+def _normalize_demo_token(value: str) -> str:
+    return value.strip(" \t\n\r\"'`.,;:()[]{}").upper()
+
+
+def _extract_token_pair(
+    text: str,
+    *,
+    default_source: str,
+    default_candidate: str | None,
+) -> tuple[str, str | None]:
+    patterns = [
+        rf"\bsource[_\s-]*token\s*[:=]\s*{_TOKEN_PATTERN}.*?\bcandidate[_\s-]*token\s*[:=]\s*{_TOKEN_PATTERN}",
+        rf"\bsource\s+(?:token\s+)?(?:says|is)\s+{_TOKEN_PATTERN}.*?\b(?:model|answer|candidate|output)\s+(?:answered|says|used|is)\s+{_TOKEN_PATTERN}",
+        rf"\brequired\s+name\s+is\s+{_TOKEN_PATTERN}.*?\bcandidate\s+answer\s+collapses\s+to\s+(?:the\s+\w+\s+word\s+)?{_TOKEN_PATTERN}",
+        rf"\bsource(?:[_\s-]*token)?\s*(?::|=|says|is)?\s*{_TOKEN_PATTERN}.*?\b(?:candidate|answer|model|output)(?:[_\s-]*token)?\s*(?::|=|answered|says|used|is)?\s*{_TOKEN_PATTERN}",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return _normalize_demo_token(match.group(1)), _normalize_demo_token(match.group(2))
+
+    upper_text = text.upper()
+    source = default_source
+    candidate = default_candidate
+    if default_source in upper_text:
+        source = default_source
+    if default_candidate and default_candidate in upper_text:
+        candidate = default_candidate
+    return source, candidate
+
+
 def _build_contradiction_monitor(
     *,
     contradictions: list[dict[str, Any]],
@@ -69,14 +102,14 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
         "Canonical Jailing/Jingall case: source constraint says the required name is JINGALL, "
         "but the candidate answer collapses to the familiar word JAILING."
     )
-    candidate = "JAILING" if "JAILING" in text.upper() else "unknown_candidate"
-    target = "JINGALL"
-    contradiction = candidate != "unknown_candidate" and candidate != target
+    source_token, candidate = _extract_token_pair(text, default_source="JINGALL", default_candidate="JAILING")
+    candidate_observation = candidate or "unknown_candidate"
+    contradiction = candidate is not None and candidate != source_token
     contradictions = [
         {
             "type": "constraint contradiction",
-            "observation": "candidate_token=JAILING",
-            "conflicts_with": "Hard constraint requires JINGALL",
+            "observation": f"candidate_token={candidate}",
+            "conflicts_with": f"Hard constraint requires {source_token}",
         },
         {
             "type": "missing-denominator contradiction",
@@ -89,12 +122,12 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
     packet.update(
         {
             "observations": [
-                "source_token=JINGALL",
-                f"candidate_token={candidate}",
+                f"source_token={source_token}",
+                f"candidate_token={candidate_observation}",
                 "candidate looks like a plausible common word",
             ],
             "constraints": [
-                "Hard constraint: preserve the source token JINGALL exactly.",
+                f"Hard constraint: preserve the source token {source_token} exactly.",
                 "Hard constraint: do not normalize a proper token into a plausible nearby word.",
                 "Must-not-miss hazard: cosmetic fluency cannot override source identity.",
             ],
@@ -103,7 +136,7 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     {
                         "id": "proper_token_substitution",
                         "severity": "hard_stop",
-                        "hazard": "Candidate changes JINGALL into JAILING.",
+                        "hazard": f"Candidate changes {source_token} into {candidate}.",
                         "constraint": "source token must be preserved exactly",
                     }
                 ]
@@ -148,16 +181,16 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 "hypotheses": [
                     {
                         "id": "constraint_preserving_token",
-                        "label": "JINGALL is the required answer.",
+                        "label": f"{source_token} is the required answer.",
                         "likelihood": "dominant_after_red_constraint",
                         "supporting_features": ["source token is explicit", "hard constraint names exact preservation"],
-                        "contradicting_features": ["candidate answer used JAILING"],
+                        "contradicting_features": [f"candidate answer used {candidate_observation}"],
                         "needed_discriminators": ["source-token verification"],
                         "action_threshold": "commit only after exact-token match",
                     },
                     {
                         "id": "plausible_word_collapse",
-                        "label": "JAILING is a fluent but invalid normalization.",
+                        "label": f"{candidate_observation} is a fluent but invalid normalization.",
                         "likelihood": "rejected_by_constraint",
                         "supporting_features": ["candidate is a familiar English word"],
                         "contradicting_features": ["violates exact source-token constraint"],
@@ -200,7 +233,11 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 "retessellation_required": contradiction,
             },
             "voronoi_commitment": {
-                "recommended_action": "Reject JAILING; preserve JINGALL as the governed answer.",
+                "recommended_action": (
+                    f"Reject {candidate}; preserve {source_token} as the governed answer."
+                    if contradiction
+                    else f"Preserve {source_token}; no conflicting candidate was identified."
+                ),
                 "threshold_basis": "Hard constraint beats fluency and likelihood.",
                 "consequence_weighting": "False acceptance violates the core case rule; false rejection is repairable.",
             },
@@ -218,11 +255,15 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 timestamp_or_phase="mvp_post_commitment_packet",
                 active_frame="governed token constraint",
                 active_constraints=[
-                    "preserve source token JINGALL exactly",
+                    f"preserve source token {source_token} exactly",
                     "do not substitute fluent plausibility for source identity",
                 ],
                 active_hazards=["proper_token_substitution"] if contradiction else [],
-                current_commitment="Reject JAILING; preserve JINGALL as the governed answer.",
+                current_commitment=(
+                    f"Reject {candidate}; preserve {source_token} as the governed answer."
+                    if contradiction
+                    else f"Preserve {source_token}; no conflicting candidate was identified."
+                ),
                 uncertainty_level="constraint_conflict_active" if contradiction else "low",
                 expected_time_window="next response or source-token verification step",
                 expected_changes=[
@@ -234,11 +275,11 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     "character-level candidate comparison",
                 ],
                 expected_resolution_signs=[
-                    "output token equals JINGALL",
+                    f"output token equals {source_token}",
                     "audit trace keeps exact-token constraint active",
                 ],
                 failure_conditions=[
-                    "response rewrites JINGALL",
+                    f"response rewrites {source_token}",
                     "response overwrites the governed token",
                     "response treats fluent plausibility as permission",
                 ],
@@ -268,7 +309,11 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 _event(12, "state_feedback", "Declared next-state observations and failure conditions for the active frame."),
             ],
             "final_output": {
-                "concise_recommendation": "Do not accept JAILING. Return or preserve JINGALL unless source verification changes.",
+                "concise_recommendation": (
+                    f"Do not accept {candidate}. Return or preserve {source_token} unless source verification changes."
+                    if contradiction
+                    else f"Preserve {source_token}; no conflicting candidate was identified in this query."
+                ),
                 "caveats": ["This demo is deterministic and constraint-scaffolded; it is not an LLM answer."],
                 "required_next_discriminators": ["source-token verification", "character-level candidate comparison"],
             },

@@ -80,6 +80,34 @@ npm run dev
   deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
 
+## Private operator deployment
+
+Use `nepsis-web/.env.operator.example` only for a separate private deployment.
+It belongs to the signed-in `/operator` path with real email login and live
+model routes. It is not a public `/mvp` template.
+
+Required private operator web env:
+
+```bash
+NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=false
+NEPSIS_DEPLOYMENT_MODE=operator
+NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true
+NEPSIS_LIVE_OPERATOR_ENABLED=true
+NEPSIS_API_BASE_URL=https://<private-render-service>
+NEPSIS_API_TOKEN=<private-backend-token>
+NEPSIS_AUTH_SECRET=<long-random-secret>
+RESEND_API_KEY=<resend-api-key>
+NEPSIS_AUTH_FROM_EMAIL=Nepsis Operator <login@operator.example>
+NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false
+NEPSIS_ENGINE_ALLOW_ANON=false
+NEPSIS_MODEL_ROUTES_ENABLED=true
+OPENAI_API_KEY=<server-side-openai-key>
+```
+
+For the frozen public `/mvp` deployment, use
+`nepsis-web/.env.public.example` instead and keep model routes and live operator
+mode disabled.
+
 ## Public Site Smoke
 
 After Vercel and Render are connected:

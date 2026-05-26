@@ -37,7 +37,7 @@ export function VisualTopologyMode({ packet }: { packet: NepsisMvpPacket }) {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-3 xl:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]">
+      <div className="mt-6 grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {topology.nodes.map((node, index) => (
           <TopologyNodeCard
             key={node.id}
@@ -64,29 +64,45 @@ function TopologyNodeCard({
   isLast: boolean;
 }) {
   return (
-    <div className="relative min-w-0">
-      <div className={`min-h-64 rounded-2xl border p-4 ${STATUS_CLASS[node.status]}`}>
+    <div className="min-w-0">
+      <div className={`flex h-full min-h-[22rem] flex-col rounded-2xl border p-4 ${STATUS_CLASS[node.status]}`}>
         <div className="text-[11px] uppercase tracking-[0.12em] opacity-80">{node.eyebrow}</div>
         <h3 className="mt-2 text-base font-semibold">{node.label}</h3>
-        <div className="mt-3 inline-flex rounded-full border border-current/35 px-2 py-1 font-mono text-[11px]">
+        <div className="mt-3 inline-flex w-fit rounded-full border border-current/35 px-2 py-1 font-mono text-[11px]">
           {node.statusLabel}
         </div>
         <p className="mt-3 text-sm leading-relaxed text-nepsis-text">{node.summary}</p>
-        <div className="mt-4 space-y-2">
+        <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+          <DetailRow label="What it checked" value={node.detail.checked} />
+          <DetailRow label="What it found" value={node.detail.found} />
+          <DetailRow label="What changed" value={node.detail.changed} />
+        </div>
+        <dl className="mt-4 grid gap-x-4 gap-y-2 border-t border-white/10 pt-3 sm:grid-cols-2">
           {node.metrics.map((metric) => (
-            <div key={`${node.id}-${metric.label}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.12em] text-nepsis-muted">{metric.label}</div>
-              <div className="mt-1 break-words text-xs text-nepsis-text">{metric.value}</div>
+            <div key={`${node.id}-${metric.label}`} className="min-w-0">
+              <dt className="text-[10px] uppercase tracking-[0.12em] text-nepsis-muted">{metric.label}</dt>
+              <dd className="mt-1 break-words text-xs text-nepsis-text">{metric.value}</dd>
             </div>
           ))}
-        </div>
+        </dl>
+        {!isLast && edgeLabel && (
+          <div className="mt-auto pt-4 text-[11px] uppercase tracking-[0.12em] text-nepsis-muted">
+            <div className="flex items-center gap-2">
+              <span className={`h-px flex-1 ${edgeEmphasized ? "bg-nepsis-accent" : "bg-nepsis-border"}`} />
+              <span className="shrink-0">Next: {edgeLabel}</span>
+            </div>
+          </div>
+        )}
       </div>
-      {!isLast && edgeLabel && (
-        <div className="mt-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-nepsis-muted xl:absolute xl:left-[calc(100%+0.2rem)] xl:top-1/2 xl:z-10 xl:mt-0 xl:w-24 xl:-translate-y-1/2">
-          <span className={`h-px flex-1 ${edgeEmphasized ? "bg-nepsis-accent" : "bg-nepsis-border"}`} />
-          <span className="max-w-20 text-center">{edgeLabel}</span>
-        </div>
-      )}
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-nepsis-muted">{label}</div>
+      <div className="mt-1 text-sm leading-relaxed text-nepsis-text">{value}</div>
     </div>
   );
 }

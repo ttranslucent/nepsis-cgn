@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   EngineClientError,
   type EngineCreateSessionPayload,
   type EngineDeleteSessionResponse,
   type EngineFrame,
+  type EngineOperatorPacket,
+  type EngineOperatorPacketResult,
   type EngineOperatorFramePayload,
   type EngineOperatorReportPayload,
   type EngineOperatorResponse,
@@ -34,6 +36,7 @@ type EngineState = {
   packets: Record<string, unknown>[];
   lastStep: EngineStepResponse | null;
   lastAudit: EngineStageAuditResponse | null;
+  operatorPacket: EngineOperatorPacket | null;
 };
 
 function upsertSession(
@@ -58,7 +61,95 @@ function phaseRejectionMessage(result: EngineOperatorResult): string {
   return `${result.attempted_tool} refused at ${result.current_phase}.${missing}${next}`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function isStageAuditResponse(value: unknown): value is EngineStageAuditResponse {
+  return (
+    isRecord(value) &&
+    isRecord(value.policy) &&
+    isRecord(value.frame) &&
+    isRecord(value.interpretation) &&
+    isRecord(value.threshold)
+  );
+}
+
+function isStepResponse(value: unknown): value is EngineStepResponse {
+  return isRecord(value) && typeof value.decision === "string" && isRecord(value.posterior);
+}
+
+function packetFrameToEngineFrame(packet: EngineOperatorPacket): EngineFrame | null {
+  const frame = packet.frame;
+  if (!isRecord(frame)) {
+    return null;
+  }
+  const costs = isRecord(packet.governance_costs) ? packet.governance_costs : {};
+  return {
+    frame_id: `${packet.loop_id}:${packet.packet_id}`,
+    frame_version: Math.max(1, packet.audit_trace.length + 1),
+    text: stringValue(frame.text),
+    objective_type: stringValue(frame.objective_type, "sensemake"),
+    domain: typeof frame.domain === "string" ? frame.domain : null,
+    time_horizon: typeof frame.time_horizon === "string" ? frame.time_horizon : null,
+    rationale_for_change:
+      typeof frame.rationale_for_change === "string" ? frame.rationale_for_change : null,
+    constraints_hard: stringList(frame.constraints_hard),
+    constraints_soft: stringList(frame.constraints_soft),
+    costs: {
+      c_fp: numberValue(costs.c_fp),
+      c_fn: numberValue(costs.c_fn),
+      c_delay: numberValue(costs.c_delay),
+    },
+  };
+}
+
+function operatorPacketSession(packet: EngineOperatorPacket): EngineSessionSummary {
+  return {
+    session_id: packet.loop_id,
+    family: packet.family,
+    created_at: packet.created_at,
+    stage: packet.phase,
+    steps: packet.audit_trace.length,
+    packet_count: packet.audit_trace.length,
+    frame: packetFrameToEngineFrame(packet),
+    branch_id: `packet-${packet.loop_id.slice(0, 8)}`,
+    lineage_version: Math.max(1, (packet.previous_trace?.length ?? 0) + 1),
+    parent_frame_id: null,
+    frame_ref: packet.packet_id,
+    workspace_state: null,
+    operator_phase: packet.phase,
+  };
+}
+
+function operatorPacketResponse(packet: EngineOperatorPacket): EngineOperatorResponse {
+  const audit = isStageAuditResponse(packet.latest_audit) ? packet.latest_audit : undefined;
+  const step = isStepResponse(packet.latest_step) ? packet.latest_step : undefined;
+  return {
+    session_id: packet.loop_id,
+    phase: packet.phase,
+    legal_next_tools: packet.legal_next_tools,
+    session: operatorPacketSession(packet),
+    audit,
+    step,
+    packet: packet as unknown as Record<string, unknown>,
+  };
+}
+
 export function useEngineSession() {
+  const operatorPacketRef = useRef<EngineOperatorPacket | null>(null);
   const [state, setState] = useState<EngineState>({
     loading: false,
     error: null,
@@ -69,6 +160,7 @@ export function useEngineSession() {
     packets: [],
     lastStep: null,
     lastAudit: null,
+    operatorPacket: null,
   });
 
   const run = useCallback(async <T,>(op: () => Promise<T>): Promise<T | undefined> => {
@@ -93,24 +185,23 @@ export function useEngineSession() {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
-  const applyOperatorResponse = useCallback((result: EngineOperatorResponse) => {
+  const applyOperatorPacketResponse = useCallback((packet: EngineOperatorPacket) => {
+    operatorPacketRef.current = packet;
+    const response = operatorPacketResponse(packet);
     setState((prev) => ({
       ...prev,
-      activeSession: result.session,
-      sessions: upsertSession(prev.sessions, result.session),
-      lastStep: result.step ?? prev.lastStep,
-      lastAudit: result.audit ?? prev.lastAudit,
-      packets:
-        result.packet != null
-          ? [...prev.packets, result.packet]
-          : result.step?.iteration_packet != null
-            ? [...prev.packets, result.step.iteration_packet]
-            : prev.packets,
+      operatorPacket: packet,
+      activeSession: response.session,
+      sessions: upsertSession(prev.sessions, response.session),
+      lastStep: response.step ?? prev.lastStep,
+      lastAudit: response.audit ?? prev.lastAudit,
+      packets: [...prev.packets, packet as unknown as Record<string, unknown>],
     }));
+    return response;
   }, []);
 
-  const applyOperatorResult = useCallback(
-    (result: EngineOperatorResult | undefined): EngineOperatorResult | undefined => {
+  const applyOperatorPacketResult = useCallback(
+    (result: EngineOperatorPacketResult | undefined): EngineOperatorResult | undefined => {
       if (!result) {
         return undefined;
       }
@@ -118,10 +209,9 @@ export function useEngineSession() {
         setState((prev) => ({ ...prev, error: phaseRejectionMessage(result) }));
         return result;
       }
-      applyOperatorResponse(result);
-      return result;
+      return applyOperatorPacketResponse(result);
     },
-    [applyOperatorResponse],
+    [applyOperatorPacketResponse],
   );
 
   const refreshHealth = useCallback(async () => {
@@ -144,23 +234,8 @@ export function useEngineSession() {
   }, [run]);
 
   const refreshSessions = useCallback(async () => {
-    const data = await run(() => engineClient.listSessions());
-    if (!data) {
-      return undefined;
-    }
-    setState((prev) => {
-      const active =
-        prev.activeSession == null
-          ? null
-          : data.sessions.find((session) => session.session_id === prev.activeSession?.session_id) ?? null;
-      return {
-        ...prev,
-        sessions: data.sessions,
-        activeSession: active,
-      };
-    });
-    return data.sessions;
-  }, [run]);
+    return state.sessions;
+  }, [state.sessions]);
 
   const createSession = useCallback(
     async (payload: EngineCreateSessionPayload) => {
@@ -264,47 +339,22 @@ export function useEngineSession() {
 
   const refreshPackets = useCallback(
     async (sessionId?: string): Promise<EnginePacketResponse | undefined> => {
-      const targetId = sessionId ?? state.activeSession?.session_id;
-      if (!targetId) {
-        setState((prev) => ({ ...prev, error: "No session selected for packet refresh." }));
-        return undefined;
-      }
-      const packetResponse = await run(() => engineClient.getSessionPackets(targetId));
-      if (!packetResponse) {
-        return undefined;
-      }
-      setState((prev) => ({
-        ...prev,
-        packets: packetResponse.packets,
-      }));
-      return packetResponse;
+      return {
+        session_id: sessionId ?? state.operatorPacket?.loop_id ?? "operator-packet",
+        count: state.packets.length,
+        packets: state.packets,
+      };
     },
-    [run, state.activeSession],
+    [state.operatorPacket, state.packets],
   );
 
   const updateWorkspaceState = useCallback(
     async (sessionId: string, payload: EngineWorkspacePayload): Promise<EngineSessionSummary | undefined> => {
-      try {
-        const session = await engineClient.updateWorkspaceState(sessionId, payload);
-        setState((prev) => ({
-          ...prev,
-          activeSession:
-            prev.activeSession?.session_id === session.session_id ? session : prev.activeSession,
-          sessions: upsertSession(prev.sessions, session),
-        }));
-        return session;
-      } catch (error) {
-        const message =
-          error instanceof EngineClientError && error.status === 401
-            ? "Sign in to access engine session controls."
-            : error instanceof Error
-              ? error.message
-              : "Workspace state update failed";
-        setState((prev) => ({ ...prev, error: message }));
-        return undefined;
-      }
+      void sessionId;
+      void payload;
+      return state.activeSession ?? undefined;
     },
-    [],
+    [state.activeSession],
   );
 
   const deleteSession = useCallback(
@@ -314,10 +364,11 @@ export function useEngineSession() {
         setState((prev) => ({ ...prev, error: "No session selected for delete." }));
         return undefined;
       }
-      const result = await run(() => engineClient.deleteSession(targetId));
-      if (!result) {
-        return undefined;
-      }
+      const family =
+        state.sessions.find((session) => session.session_id === targetId)?.family ??
+        state.activeSession?.family ??
+        "safety";
+      const remainingSessions = state.sessions.filter((session) => session.session_id !== targetId).length;
       setState((prev) => {
         const nextSessions = prev.sessions.filter((session) => session.session_id !== targetId);
         const activeSession =
@@ -331,9 +382,14 @@ export function useEngineSession() {
           lastAudit: activeSession ? prev.lastAudit : null,
         };
       });
-      return result;
+      return {
+        deleted: true,
+        session_id: targetId,
+        family,
+        remaining_sessions: remainingSessions,
+      };
     },
-    [run, state.activeSession],
+    [state.activeSession, state.sessions],
   );
 
   const stageAudit = useCallback(
@@ -341,80 +397,100 @@ export function useEngineSession() {
       payload?: EngineStageAuditPayload,
       sessionId?: string,
     ): Promise<EngineStageAuditResponse | undefined> => {
-      const targetId = sessionId ?? state.activeSession?.session_id;
-      if (!targetId) {
-        setState((prev) => ({ ...prev, error: "No session selected for stage audit." }));
-        return undefined;
-      }
-      const audit = await run(() => engineClient.stageAuditSession(targetId, payload));
+      void payload;
+      void sessionId;
+      const audit = isStageAuditResponse(state.operatorPacket?.latest_audit)
+        ? state.operatorPacket.latest_audit
+        : undefined;
       if (!audit) {
         return undefined;
       }
-      setState((prev) => ({
-        ...prev,
-        lastAudit: audit,
-      }));
+      setState((prev) => ({ ...prev, lastAudit: audit }));
       return audit;
     },
-    [run, state.activeSession],
+    [state.operatorPacket],
   );
-
-  const getOperatorSessionState = useCallback(async (): Promise<EngineOperatorResponse | undefined> => {
-    const result = await run(() => engineClient.getOperatorSessionState());
-    if (!result) {
-      return undefined;
-    }
-    applyOperatorResponse(result);
-    return result;
-  }, [applyOperatorResponse, run]);
 
   const lockOperatorFrame = useCallback(
     async (payload: EngineOperatorFramePayload): Promise<EngineOperatorResult | undefined> => {
-      const result = await run(() => engineClient.lockOperatorFrame(payload));
-      return applyOperatorResult(result);
+      const result = await run(async () => {
+        const packet =
+          operatorPacketRef.current ??
+          (await engineClient.startOperatorPacket({
+            family: payload.family,
+            governance: payload.governance,
+            governance_costs: payload.governance_costs,
+          }));
+        operatorPacketRef.current = packet;
+        return engineClient.lockOperatorPacketFrame({ ...payload, packet });
+      });
+      return applyOperatorPacketResult(result);
     },
-    [applyOperatorResult, run],
+    [applyOperatorPacketResult, run],
   );
 
   const runOperatorReport = useCallback(
     async (payload: EngineOperatorReportPayload): Promise<EngineOperatorResult | undefined> => {
-      const result = await run(() => engineClient.runOperatorReport(payload));
-      return applyOperatorResult(result);
+      const packet = operatorPacketRef.current;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No active operator packet. Lock Frame first." }));
+        return undefined;
+      }
+      const result = await run(() => engineClient.runOperatorPacketReport({ ...payload, packet }));
+      return applyOperatorPacketResult(result);
     },
-    [applyOperatorResult, run],
+    [applyOperatorPacketResult, run],
   );
 
   const lockOperatorReport = useCallback(async (): Promise<EngineOperatorResult | undefined> => {
-    const result = await run(() => engineClient.lockOperatorReport());
-    return applyOperatorResult(result);
-  }, [applyOperatorResult, run]);
+    const packet = operatorPacketRef.current;
+    if (!packet) {
+      setState((prev) => ({ ...prev, error: "No active operator packet. Run report first." }));
+      return undefined;
+    }
+    const result = await run(() => engineClient.lockOperatorPacketReport({ packet }));
+    return applyOperatorPacketResult(result);
+  }, [applyOperatorPacketResult, run]);
 
   const setOperatorThresholdDecision = useCallback(
     async (payload: { decision: "recommend" | "hold"; hold_reason?: string }): Promise<EngineOperatorResult | undefined> => {
-      const result = await run(() => engineClient.setOperatorThresholdDecision(payload));
-      return applyOperatorResult(result);
+      const packet = operatorPacketRef.current;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No active operator packet. Lock report first." }));
+        return undefined;
+      }
+      const result = await run(() =>
+        engineClient.setOperatorPacketThresholdDecision({ ...payload, packet }),
+      );
+      return applyOperatorPacketResult(result);
     },
-    [applyOperatorResult, run],
+    [applyOperatorPacketResult, run],
   );
 
   const commitOperatorIteration = useCallback(
     async (payload: { carry_forward_frame?: Record<string, unknown> }): Promise<EngineOperatorResult | undefined> => {
-      const result = await run(() => engineClient.commitOperatorIteration(payload));
-      return applyOperatorResult(result);
+      const packet = operatorPacketRef.current;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No active operator packet. Set threshold first." }));
+        return undefined;
+      }
+      const result = await run(() => engineClient.commitOperatorPacketIteration({ ...payload, packet }));
+      return applyOperatorPacketResult(result);
     },
-    [applyOperatorResult, run],
+    [applyOperatorPacketResult, run],
   );
 
   const abandonOperatorSession = useCallback(
     async (payload: { reason?: string } = {}): Promise<EngineOperatorResponse | undefined> => {
-      const result = await run(() => engineClient.abandonOperatorSession(payload));
-      if (!result) {
+      const packet = operatorPacketRef.current;
+      if (!packet) {
         return undefined;
       }
-      applyOperatorResponse(result);
-      return result;
+      const result = await run(() => engineClient.abandonOperatorPacket({ ...payload, packet }));
+      const applied = applyOperatorPacketResult(result);
+      return applied && !isPhaseRejection(applied) ? applied : undefined;
     },
-    [applyOperatorResponse, run],
+    [applyOperatorPacketResult, run],
   );
 
   return {
@@ -431,7 +507,6 @@ export function useEngineSession() {
     deleteSession,
     stageAudit,
     updateWorkspaceState,
-    getOperatorSessionState,
     lockOperatorFrame,
     runOperatorReport,
     lockOperatorReport,

@@ -134,6 +134,16 @@ NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true
 NEPSIS_MODEL_ROUTES_ENABLED=false
 ```
 
+### Public site setup
+
+Start public Vercel env from `nepsis-web/.env.public.example`. That template is
+for the frozen `/mvp` deployment only: it sets
+`NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`, keeps operator mode off, keeps
+`NEPSIS_MODEL_ROUTES_ENABLED=false`, and leaves `OPENAI_API_KEY` and
+`NEPSIS_OPENAI_API_KEY` unset. The public site may point at the FastAPI backend,
+but `/api/engine/mvp` can still serve bundled frozen packets while the backend
+is being completed.
+
 Configure the backend MCP capability-token hashes with:
 
 ```bash
@@ -150,6 +160,16 @@ public demo. Hosted model routes stay disabled by default; enable them only with
 `NEPSIS_MODEL_ROUTES_ENABLED=true`, login email delivery, backend auth, rate
 limits, and explicit server-side model credentials. Do not enable live model
 routes on the public demo deployment.
+
+### Private operator deployment
+
+Start private operator Vercel env from `nepsis-web/.env.operator.example`, not
+the public template. That path requires a reachable backend, `NEPSIS_API_TOKEN`,
+`NEPSIS_AUTH_SECRET`, real email delivery with `RESEND_API_KEY` and
+`NEPSIS_AUTH_FROM_EMAIL`, `NEPSIS_DEPLOYMENT_MODE=operator`,
+`NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
+`NEPSIS_MODEL_ROUTES_ENABLED=true`, and a server-side
+`OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`.
 
 After deployment, run:
 
@@ -189,6 +209,11 @@ through NepsisCGN.
 
 See [docs/public-api.md](docs/public-api.md) for request examples and the MCP
 tool list.
+See [docs/hosted-mcp-codex.md](docs/hosted-mcp-codex.md) for hosted Codex
+streamable-HTTP MCP verification with a Nepsis capability token.
+See [docs/local-mcp-harness.md](docs/local-mcp-harness.md) for copy-paste
+local Codex, Claude Code, and Gemini CLI stdio config plus a host-config
+verification flow for `nepsiscgn-mcp`.
 
 ## Clickable UI Demo
 

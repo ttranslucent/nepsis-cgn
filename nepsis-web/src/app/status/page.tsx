@@ -37,6 +37,10 @@ type StatusPayload = {
     enabled: boolean;
     hasServerOpenAiKey: boolean;
   };
+  setup?: {
+    publicSite: SetupPath;
+    operatorMode: SetupPath;
+  };
   mcp: {
     available: boolean;
     endpoint?: string | null;
@@ -61,6 +65,21 @@ type StatusPayload = {
       modelKeysRequired?: boolean;
     };
   };
+};
+
+type SetupAssertion = {
+  id: string;
+  ok: boolean;
+  label: string;
+  detail: string;
+  env: string[];
+};
+
+type SetupPath = {
+  ready: boolean;
+  envExample: string;
+  docs: { label: string; href: string }[];
+  assertions: SetupAssertion[];
 };
 
 function Badge({ ok, label }: { ok: boolean; label: string }) {
@@ -105,6 +124,26 @@ function authSecretLabel(auth: StatusPayload["auth"]): string {
     return "Auth secret configured.";
   }
   return "Auth secret missing.";
+}
+
+function SetupPathCard({ title, path }: { title: string; path: SetupPath }) {
+  return (
+    <StatusCard title={title} ok={path.ready}>
+      <p>Env example: {path.envExample}</p>
+      <p>Docs: {path.docs.map((doc) => `${doc.label} (${doc.href})`).join(", ")}</p>
+      <ul className="space-y-2">
+        {path.assertions.map((assertion) => (
+          <li key={assertion.id}>
+            <span className={assertion.ok ? "text-emerald-200" : "text-amber-100"}>
+              {assertion.ok ? "Ready" : "Needs setup"}:
+            </span>{" "}
+            {assertion.label}. <span>{assertion.detail}</span>
+            <span className="block text-xs">Env: {assertion.env.join(", ")}</span>
+          </li>
+        ))}
+      </ul>
+    </StatusCard>
+  );
 }
 
 export default function StatusPage() {
@@ -171,6 +210,12 @@ export default function StatusPage() {
             </p>
             {status.backend.status && <p>HTTP status: {status.backend.status}</p>}
           </StatusCard>
+
+          {status.setup?.publicSite && <SetupPathCard title="Public Site Setup" path={status.setup.publicSite} />}
+
+          {status.setup?.operatorMode && (
+            <SetupPathCard title="Private Operator Setup" path={status.setup.operatorMode} />
+          )}
 
           <StatusCard title="Live Operator" ok={status.operator.enabled && status.operator.backendReady && status.operator.authReady}>
             <p>{status.operator.enabled ? "Live operator route is enabled." : "Live operator route is disabled."}</p>

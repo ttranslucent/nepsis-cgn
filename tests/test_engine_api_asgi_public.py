@@ -149,8 +149,35 @@ def test_asgi_operator_routes_require_token(monkeypatch) -> None:
 
     client = TestClient(asgi.create_app())
     response = client.get("/v1/operator/session")
+    packet_response = client.post("/v1/operator-packet/start", json={})
 
     assert response.status_code == 401
+    assert packet_response.status_code == 401
+
+
+def test_asgi_operator_packet_phase_rejection_maps_to_409(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    headers = {"Authorization": "Bearer test-token"}
+
+    client = TestClient(asgi.create_app())
+    started = client.post("/v1/operator-packet/start", headers=headers, json={})
+    response = client.post(
+        "/v1/operator-packet/report",
+        headers=headers,
+        json={
+            "packet": started.json(),
+            "report_text": "obs: critical signal present",
+            "sign": {"critical_signal": True, "policy_violation": False},
+        },
+    )
+
+    assert started.status_code == 200
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["schema_id"] == "nepsis.phase_rejection"
+    assert payload["attempted_tool"] == "run_report"
+    assert payload["legal_next_tools"] == ["start_operator_packet", "lock_frame", "abandon_packet"]
 
 
 def test_asgi_operator_phase_rejection_maps_to_409(monkeypatch) -> None:

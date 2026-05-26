@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
 import {
+  envFlag,
   liveOperatorEnabled,
   modelRoutesEnabled,
   operatorSiteMode,
+  publicSiteMode,
 } from "@/lib/publicMode";
 import { hasConfiguredOpenAiKey } from "@/lib/openaiClient";
 import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
@@ -141,6 +143,21 @@ async function mcpHealth(baseUrl: string | undefined) {
   }
 }
 
+type ReadinessAssertion = {
+  id: string;
+  ok: boolean;
+  label: string;
+  detail: string;
+  env: string[];
+};
+
+function readiness(assertions: ReadinessAssertion[]) {
+  return {
+    ready: assertions.every((assertion) => assertion.ok),
+    assertions,
+  };
+}
+
 export async function GET() {
   const [backend, mvp, mcp] = await Promise.all([
     backendHealth(process.env.NEPSIS_API_BASE_URL, process.env.NEPSIS_API_TOKEN),
@@ -151,6 +168,10 @@ export async function GET() {
   const emailConfigured = loginEmailConfigured();
   const previewCodesEnabled = previewCodesAllowed();
   const modelsEnabled = modelRoutesEnabled();
+  const operatorMode = operatorSiteMode();
+  const operatorEnabled = liveOperatorEnabled();
+  const serverModelKeyConfigured = hasConfiguredOpenAiKey();
+  const apiTokenConfigured = Boolean(process.env.NEPSIS_API_TOKEN?.trim());
   const mcpToolNames = [
     "run_mvp",
     "get_mvp_schema",
@@ -181,12 +202,12 @@ export async function GET() {
     backend,
     mvp,
     operator: {
-      enabled: liveOperatorEnabled(),
-      operatorSiteMode: operatorSiteMode(),
+      enabled: operatorEnabled,
+      operatorSiteMode: operatorMode,
       path: "/operator",
       backendReady: backend.configured && backend.reachable,
       authReady: operatorLoginReady(),
-      modelReady: modelRoutesEnabled() && hasConfiguredOpenAiKey(),
+      modelReady: modelsEnabled && serverModelKeyConfigured,
     },
     auth: {
       loginConfigured: authSecret.ready,
@@ -198,7 +219,91 @@ export async function GET() {
     },
     models: {
       enabled: modelsEnabled,
-      hasServerOpenAiKey: modelsEnabled && hasConfiguredOpenAiKey(),
+      hasServerOpenAiKey: modelsEnabled && serverModelKeyConfigured,
+    },
+    setup: {
+      publicSite: {
+        envExample: "nepsis-web/.env.public.example",
+        docs: [{ label: "Public site setup", href: "docs/public-api.md#public-site-setup" }],
+        ...readiness([
+          {
+            id: "public-site-mode",
+            ok: publicSiteMode(),
+            label: "Public site mode active",
+            detail: "The web deployment is rendering the frozen public /mvp posture.",
+            env: ["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true"],
+          },
+          {
+            id: "mvp-no-login",
+            ok: mvp.available && mvp.noLoginRequired,
+            label: "Frozen /mvp packet available without login",
+            detail: "The public path returns nepsis.mvp_packet and does not require an operator session.",
+            env: ["NEPSIS_API_BASE_URL optional", "NEPSIS_API_TOKEN optional when backend is configured"],
+          },
+          {
+            id: "operator-disabled",
+            ok: !operatorMode && !operatorEnabled,
+            label: "Live operator mode disabled",
+            detail: "The public site keeps /operator gated and does not expose live operator affordances.",
+            env: ["NEPSIS_DEPLOYMENT_MODE unset", "NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=false", "NEPSIS_LIVE_OPERATOR_ENABLED=false"],
+          },
+          {
+            id: "model-routes-disabled",
+            ok: !modelsEnabled && !serverModelKeyConfigured,
+            label: "Model routes and server provider keys absent",
+            detail: "The public /mvp deployment stays deterministic and does not need model-provider credentials.",
+            env: ["NEPSIS_MODEL_ROUTES_ENABLED=false", "OPENAI_API_KEY unset", "NEPSIS_OPENAI_API_KEY unset"],
+          },
+          {
+            id: "local-escapes-disabled",
+            ok: !envFlag("NEPSIS_ENGINE_ALLOW_ANON") && !previewCodesEnabled,
+            label: "Local-only auth escapes disabled",
+            detail: "Anonymous engine controls and preview login codes are local-only and should not be active here.",
+            env: ["NEPSIS_ENGINE_ALLOW_ANON=false", "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false"],
+          },
+        ]),
+      },
+      operatorMode: {
+        envExample: "nepsis-web/.env.operator.example",
+        docs: [{ label: "Private operator deployment", href: "docs/operator-runbook.md#private-operator-deployment" }],
+        ...readiness([
+          {
+            id: "operator-mode",
+            ok: operatorMode && operatorEnabled,
+            label: "Private operator mode active",
+            detail: "The deployment is explicitly configured as a live operator surface.",
+            env: ["NEPSIS_DEPLOYMENT_MODE=operator", "NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true", "NEPSIS_LIVE_OPERATOR_ENABLED=true"],
+          },
+          {
+            id: "backend-auth",
+            ok: backend.configured && backend.reachable && apiTokenConfigured,
+            label: "Backend API reachable with proxy token configured",
+            detail: "Private operator mode needs a reachable FastAPI backend and a shared web-proxy token.",
+            env: ["NEPSIS_API_BASE_URL", "NEPSIS_API_TOKEN"],
+          },
+          {
+            id: "real-login",
+            ok: authSecret.ready && emailConfigured && !previewCodesEnabled,
+            label: "Real passwordless login ready",
+            detail: "Operator login should use signed cookies and email delivery, not preview codes.",
+            env: ["NEPSIS_AUTH_SECRET", "RESEND_API_KEY", "NEPSIS_AUTH_FROM_EMAIL", "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false"],
+          },
+          {
+            id: "live-model-routes",
+            ok: modelsEnabled && serverModelKeyConfigured,
+            label: "Live model routes enabled with server-side key",
+            detail: "Operator model assistance is available only behind auth with a server-side provider key.",
+            env: ["NEPSIS_MODEL_ROUTES_ENABLED=true", "OPENAI_API_KEY or NEPSIS_OPENAI_API_KEY"],
+          },
+          {
+            id: "anonymous-controls-disabled",
+            ok: !envFlag("NEPSIS_ENGINE_ALLOW_ANON"),
+            label: "Anonymous engine controls disabled",
+            detail: "Private operator deployments require signed browser identity for engine controls.",
+            env: ["NEPSIS_ENGINE_ALLOW_ANON=false"],
+          },
+        ]),
+      },
     },
     mcp: {
       available: mcp.available,

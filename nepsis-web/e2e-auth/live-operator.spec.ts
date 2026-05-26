@@ -46,3 +46,329 @@ test("live operator model assist applies a frame draft", async ({ page }) => {
   await expect(page.getByLabel(/Frame question/i)).toHaveValue(/Decide whether to escalate/);
   await expect(page.getByLabel(/Red channel definition/i)).toHaveValue(/catastrophic/);
 });
+
+test("live operator frame lock uses stateless packet runtime", async ({ page }) => {
+  const packetCalls: string[] = [];
+  const legacyCalls: string[] = [];
+  const startedPacket = {
+    schema_id: "nepsis.operator_packet",
+    schema_version: "2.0.0",
+    packet_id: "pkt-start",
+    loop_id: "loop-test",
+    created_at: "2026-05-23T00:00:00.000Z",
+    phase: "frame_draft",
+    family: "safety",
+    frame: null,
+    governance_costs: { c_fp: 1, c_fn: 9 },
+    governance_calibration: null,
+    manifest_path: null,
+    audit_trace: [],
+    legal_next_tools: ["start_operator_packet", "lock_frame", "abandon_packet"],
+    latest_audit: {},
+    latest_step: null,
+    last_commit_packet: null,
+    last_abandoned_packet: null,
+    previous_trace: [],
+    policy: { name: "nepsis_cgn.stateless_operator_packet", version: "2026-05-22" },
+  };
+  const lockedPacket = {
+    ...startedPacket,
+    packet_id: "pkt-locked",
+    phase: "frame_locked",
+    frame: {
+      text: "Decide whether to escalate a safety incident.",
+      objective_type: "decide",
+      domain: "safety",
+      time_horizon: "short",
+      rationale_for_change:
+        "Red channel: Missing a catastrophic incident. | Blue channel: Protect users while avoiding unnecessary escalation. | Uncertainty: Whether the first report reflects a real critical signal.",
+      constraints_hard: ["Maintain RED before BLUE sequencing."],
+      constraints_soft: ["Minimize unnecessary disruption."],
+    },
+    audit_trace: [{ event: "LOCK_FRAME", at: "2026-05-23T00:00:01.000Z", arguments: {} }],
+    legal_next_tools: ["run_report", "abandon_packet"],
+  };
+
+  await page.route("**/api/engine/health", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+  await page.route("**/api/engine/sessions", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sessions: [] }) });
+  });
+  await page.route("**/api/engine/operator/frame", async (route) => {
+    legacyCalls.push(route.request().url());
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "legacy operator route should not be called" }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/start", async (route) => {
+    packetCalls.push("start");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(startedPacket) });
+  });
+  await page.route("**/api/engine/operator-packet/frame", async (route) => {
+    packetCalls.push("frame");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(lockedPacket) });
+  });
+
+  await login(page);
+  await page.goto("/operator");
+  await page.getByLabel(/Frame question/i).fill("Decide whether to escalate a safety incident.");
+  await page.getByLabel(/Key uncertainty source/i).fill("Whether the first report reflects a real critical signal.");
+  await page.getByLabel(/Hard constraints/i).fill("Maintain RED before BLUE sequencing.");
+  await page.getByLabel(/Soft constraints/i).fill("Minimize unnecessary disruption.");
+  await page.getByLabel(/Red channel definition/i).fill("Missing a catastrophic incident.");
+  await page.getByLabel(/Blue channel goals/i).fill("Protect users while avoiding unnecessary escalation.");
+  await page.getByRole("button", { name: /Lock Frame/i }).click();
+
+  await expect(page.getByRole("button", { name: "Unlock Frame" })).toBeVisible();
+  expect(packetCalls).toEqual(["start", "frame"]);
+  expect(legacyCalls).toEqual([]);
+});
+
+test("live operator lifecycle stays on stateless packet runtime", async ({ page }) => {
+  const packetCalls: string[] = [];
+  const legacyCalls: string[] = [];
+  const createdAt = "2026-05-23T00:00:00.000Z";
+  const frame = {
+    text: "Decide whether to escalate a safety incident.",
+    objective_type: "decide",
+    domain: "safety",
+    time_horizon: "short",
+    rationale_for_change:
+      "Red channel: Missing a catastrophic incident. | Blue channel: Protect users while avoiding unnecessary escalation. | Uncertainty: Whether the first report reflects a real critical signal.",
+    constraints_hard: ["Maintain RED before BLUE sequencing."],
+    constraints_soft: ["Minimize unnecessary disruption."],
+  };
+  const session = {
+    session_id: "loop-lifecycle",
+    family: "safety",
+    created_at: createdAt,
+    stage: "report_evaluated",
+    steps: 1,
+    packet_count: 1,
+    frame,
+    branch_id: "packet-loop-lifecycle",
+    lineage_version: 1,
+    parent_frame_id: null,
+    frame_ref: "pkt-report",
+    workspace_state: null,
+    operator_phase: "report_evaluated",
+  };
+  const auditGate = (packet: Record<string, unknown>) => ({
+    status: "PASS",
+    checks: [],
+    missing: [],
+    warnings: [],
+    packet,
+    coach: { status: "PASS", summary: "ready", prompts: [] },
+  });
+  const audit = {
+    session_id: "loop-lifecycle",
+    stage: "report_evaluated",
+    policy: { name: "nepsis_cgn.operator_stage_audit", version: "test" },
+    frame: auditGate({ problem_statement: frame.text }),
+    interpretation: auditGate({ report_text: "obs: critical signal present" }),
+    threshold: auditGate({ decision: "recommend" }),
+    source: {
+      packet_count: 1,
+      latest_packet_id: "pkt-report",
+      latest_iteration: 1,
+      context_applied: true,
+    },
+  };
+  const latestStep = {
+    manifold: "safety",
+    family: "safety",
+    decision: "continue",
+    cause: null,
+    tension: 0.2,
+    velocity: 0.1,
+    accel: 0,
+    posterior: { escalate: 0.74, observe: 0.26 },
+    ruin_hits: [],
+    active_transforms: [],
+    is_ruin: false,
+    violation_count: 0,
+    stage: "report_evaluated",
+    stage_events: ["CALL", "REPORT", "EVALUATE"],
+    frame_id: "loop-lifecycle:pkt-locked",
+    frame_version: 2,
+    governance: {
+      posture: "red_first",
+      warning_level: "green",
+      recommended_action: "recommend escalation",
+      trigger_codes: [],
+      theta: 0.7,
+      loss_treat: 1,
+      loss_notreat: 9,
+      p_bad: 0.2,
+      ruin_mass: 0,
+      contradiction_density: 0,
+      posterior_entropy_norm: 0.2,
+      top_margin: 0.48,
+      top_p: 0.74,
+      user_decision: null,
+      override_reason: null,
+    },
+    iteration_packet: { schema_id: "nepsis.iteration_packet", meta: { packet_id: "iter-1" } },
+    session,
+  };
+  const basePacket = {
+    schema_id: "nepsis.operator_packet",
+    schema_version: "2.0.0",
+    packet_id: "pkt-start",
+    loop_id: "loop-lifecycle",
+    created_at: createdAt,
+    phase: "frame_draft",
+    family: "safety",
+    frame: null,
+    governance_costs: { c_fp: 1, c_fn: 9 },
+    governance_calibration: null,
+    manifest_path: null,
+    audit_trace: [],
+    legal_next_tools: ["start_operator_packet", "lock_frame", "abandon_packet"],
+    latest_audit: audit,
+    latest_step: null,
+    last_commit_packet: null,
+    last_abandoned_packet: null,
+    previous_trace: [],
+    policy: { name: "nepsis_cgn.stateless_operator_packet", version: "2026-05-22" },
+  };
+  const packets = {
+    start: basePacket,
+    frame: {
+      ...basePacket,
+      packet_id: "pkt-locked",
+      phase: "frame_locked",
+      frame,
+      audit_trace: [{ event: "LOCK_FRAME", at: "2026-05-23T00:00:01.000Z", arguments: {} }],
+      legal_next_tools: ["run_report", "abandon_packet"],
+    },
+    report: {
+      ...basePacket,
+      packet_id: "pkt-report",
+      phase: "report_evaluated",
+      frame,
+      audit_trace: [
+        { event: "LOCK_FRAME", at: "2026-05-23T00:00:01.000Z", arguments: {} },
+        { event: "RUN_REPORT", at: "2026-05-23T00:00:02.000Z", arguments: {} },
+      ],
+      legal_next_tools: ["run_report", "lock_report", "abandon_packet"],
+      latest_step: latestStep,
+    },
+    reportLock: {
+      ...basePacket,
+      packet_id: "pkt-report-lock",
+      phase: "report_locked",
+      frame,
+      audit_trace: [
+        { event: "LOCK_FRAME", at: "2026-05-23T00:00:01.000Z", arguments: {} },
+        { event: "RUN_REPORT", at: "2026-05-23T00:00:02.000Z", arguments: {} },
+        { event: "LOCK_REPORT", at: "2026-05-23T00:00:03.000Z", arguments: {} },
+      ],
+      legal_next_tools: ["set_threshold_decision", "abandon_packet"],
+      latest_step: latestStep,
+    },
+    threshold: {
+      ...basePacket,
+      packet_id: "pkt-threshold",
+      phase: "threshold_set",
+      frame,
+      audit_trace: [
+        { event: "LOCK_FRAME", at: "2026-05-23T00:00:01.000Z", arguments: {} },
+        { event: "RUN_REPORT", at: "2026-05-23T00:00:02.000Z", arguments: {} },
+        { event: "LOCK_REPORT", at: "2026-05-23T00:00:03.000Z", arguments: {} },
+        { event: "SET_THRESHOLD_DECISION", at: "2026-05-23T00:00:04.000Z", arguments: {} },
+      ],
+      legal_next_tools: ["commit_iteration", "abandon_packet"],
+      latest_step: latestStep,
+    },
+    commit: {
+      ...basePacket,
+      packet_id: "pkt-commit",
+      phase: "frame_draft",
+      frame: {
+        ...frame,
+        text: "Continue escalation assessment with the next discriminator.",
+        frame_id: "loop-lifecycle:pkt-commit",
+        frame_version: 3,
+      },
+      previous_trace: [
+        { event: "LOCK_FRAME", at: "2026-05-23T00:00:01.000Z", arguments: {} },
+        { event: "RUN_REPORT", at: "2026-05-23T00:00:02.000Z", arguments: {} },
+        { event: "LOCK_REPORT", at: "2026-05-23T00:00:03.000Z", arguments: {} },
+        { event: "SET_THRESHOLD_DECISION", at: "2026-05-23T00:00:04.000Z", arguments: {} },
+        { event: "COMMIT_ITERATION", at: "2026-05-23T00:00:05.000Z", arguments: {} },
+      ],
+      last_commit_packet: { schema_id: "nepsis.operator_audit_packet" },
+    },
+  };
+
+  await page.route("**/api/engine/health", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+  await page.route("**/api/engine/sessions", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sessions: [] }) });
+  });
+  await page.route("**/api/engine/operator/**", async (route) => {
+    legacyCalls.push(route.request().url());
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "legacy operator route should not be called" }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/start", async (route) => {
+    packetCalls.push("start");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packets.start) });
+  });
+  await page.route("**/api/engine/operator-packet/frame", async (route) => {
+    packetCalls.push("frame");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packets.frame) });
+  });
+  await page.route("**/api/engine/operator-packet/report", async (route) => {
+    packetCalls.push("report");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packets.report) });
+  });
+  await page.route("**/api/engine/operator-packet/report/lock", async (route) => {
+    packetCalls.push("report/lock");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packets.reportLock) });
+  });
+  await page.route("**/api/engine/operator-packet/threshold", async (route) => {
+    packetCalls.push("threshold");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packets.threshold) });
+  });
+  await page.route("**/api/engine/operator-packet/commit", async (route) => {
+    packetCalls.push("commit");
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packets.commit) });
+  });
+
+  await login(page);
+  await page.goto("/operator");
+  await page.getByLabel(/Frame question/i).fill(frame.text);
+  await page.getByLabel(/Key uncertainty source/i).fill("Whether the first report reflects a real critical signal.");
+  await page.getByLabel(/Hard constraints/i).fill("Maintain RED before BLUE sequencing.");
+  await page.getByLabel(/Soft constraints/i).fill("Minimize unnecessary disruption.");
+  await page.getByLabel(/Red channel definition/i).fill("Missing a catastrophic incident.");
+  await page.getByLabel(/Blue channel goals/i).fill("Protect users while avoiding unnecessary escalation.");
+  await page.getByRole("button", { name: /Lock Frame/i }).click();
+  await expect(page.getByRole("button", { name: "Unlock Frame" })).toBeVisible();
+
+  await page.locator("#report-input").fill("obs: critical signal present\nobs: no policy violation");
+  await page.locator("#report-contradictions-status").selectOption("none_identified");
+  await page.locator("#report-run-button").click();
+  await expect(page.getByText("decision: continue")).toBeVisible();
+  await page.getByRole("button", { name: /Lock Report/i }).click();
+  await expect(page.getByRole("button", { name: "Unlock Report" })).toBeVisible();
+
+  await page.locator("#threshold-decision-select").selectOption("recommend");
+  await page.getByRole("button", { name: "Commit Iteration" }).click();
+  await expect(page.getByLabel(/Frame question/i)).toHaveValue(
+    "Continue escalation assessment with the next discriminator.",
+  );
+
+  expect(packetCalls).toEqual(["start", "frame", "report", "report/lock", "threshold", "commit"]);
+  expect(legacyCalls).toEqual([]);
+});

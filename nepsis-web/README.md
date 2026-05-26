@@ -45,6 +45,8 @@ Development defaults:
 - Login codes can fall back to on-screen preview when local preview-code mode is enabled.
 - `/api/engine/mvp` is the deterministic v0.3 demo path; session, engine, and LLM flows are experimental.
 - `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` forces public-mode navigation locally for QA.
+- Deployment env should start from `nepsis-web/.env.public.example` or
+  `nepsis-web/.env.operator.example`; `.env.example` is for local development.
 
 ## Engine Proxy Routes
 
@@ -142,7 +144,15 @@ Production behavior is intentionally strict:
 - `/settings` and `/playground` do not display browser API-key fields in public-site mode.
 - `GET /api/playground-nepsis` reports model routes as disabled in public-site mode.
 
-Recommended deployment sequence:
+### Public site setup
+
+Use `nepsis-web/.env.public.example` for the frozen public `/mvp` site. It keeps
+`NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`, operator mode disabled,
+`NEPSIS_MODEL_ROUTES_ENABLED=false`, local preview codes disabled, anonymous
+engine controls disabled, and provider keys unset. Public `/mvp` does not
+require login or model credentials.
+
+Recommended public deployment sequence:
 
 1. Deploy the FastAPI backend from the repo-root `render.yaml`.
 2. Set Vercel `NEPSIS_API_BASE_URL` to the Render service origin.
@@ -153,6 +163,17 @@ Recommended deployment sequence:
 7. Set `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
 8. Verify `/mvp`, `/status`, `/login`, and gated `/engine` after the deployment is live.
 9. Run `NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh` from the repo root.
+
+### Private operator deployment
+
+Use `nepsis-web/.env.operator.example` only for a separate private deployment.
+That path sets `NEPSIS_DEPLOYMENT_MODE=operator`,
+`NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
+and `NEPSIS_MODEL_ROUTES_ENABLED=true`. It also requires backend auth,
+`NEPSIS_AUTH_SECRET`, real login email delivery through `RESEND_API_KEY` and
+`NEPSIS_AUTH_FROM_EMAIL`, and a server-side `OPENAI_API_KEY` or
+`NEPSIS_OPENAI_API_KEY`. Keep `NEPSIS_ENGINE_ALLOW_ANON=false` and
+`NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false` for shared operator deployments.
 
 Run the repository safety check before committing env or deployment changes:
 

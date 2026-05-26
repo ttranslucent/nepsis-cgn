@@ -1,6 +1,117 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+
+type LoginStatusPayload = {
+  auth?: {
+    loginConfigured: boolean;
+    authSecretConfigured?: boolean;
+    authSecretMode?: "configured" | "development-fallback" | "missing";
+    emailConfigured?: boolean;
+    previewCodesEnabled: boolean;
+    operatorLoginReady?: boolean;
+  };
+  mvp?: {
+    available?: boolean;
+    noLoginRequired?: boolean;
+    schemaId?: string | null;
+  };
+};
+
+function envFlagValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function envFalseValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off";
+}
+
+const PUBLIC_SITE_VALUE = process.env.NEXT_PUBLIC_NEPSIS_PUBLIC_SITE;
+const OPERATOR_SITE_MODE = envFlagValue(process.env.NEXT_PUBLIC_NEPSIS_OPERATOR_SITE);
+const PUBLIC_SITE_MODE =
+  !OPERATOR_SITE_MODE &&
+  (envFlagValue(PUBLIC_SITE_VALUE) || (!envFalseValue(PUBLIC_SITE_VALUE) && process.env.NODE_ENV === "production"));
+
+function operatorLoginReady(status: LoginStatusPayload | null): boolean {
+  const auth = status?.auth;
+  if (!auth) {
+    return false;
+  }
+  return auth.operatorLoginReady ?? (auth.loginConfigured && (Boolean(auth.emailConfigured) || auth.previewCodesEnabled));
+}
+
+function ReadinessNotice({
+  status,
+  error,
+}: {
+  status: LoginStatusPayload | null;
+  error: string | null;
+}) {
+  if (!status && !error) {
+    return (
+      <div className="mb-4 border-l-2 border-nepsis-border pl-3 text-xs leading-5 text-nepsis-muted">
+        Checking operator sign-in readiness...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mb-4 border-l-2 border-amber-400/70 pl-3 text-xs leading-5 text-amber-100">
+        <p className="font-semibold text-nepsis-text">Operator sign-in readiness could not be checked.</p>
+        <p>The server will still enforce whether code delivery is available.</p>
+      </div>
+    );
+  }
+
+  const auth = status?.auth;
+  const emailConfigured = Boolean(auth?.emailConfigured);
+  const previewCodesEnabled = Boolean(auth?.previewCodesEnabled);
+  const ready = operatorLoginReady(status);
+
+  if (!ready) {
+    return (
+      <div className="mb-4 border-l-2 border-amber-400/70 pl-3 text-xs leading-5 text-amber-100">
+        <p className="font-semibold text-nepsis-text">
+          {PUBLIC_SITE_MODE
+            ? "Operator sign-in is intentionally unavailable on this public deployment."
+            : "Operator sign-in is not ready in this environment."}
+        </p>
+        {!emailConfigured && !previewCodesEnabled && (
+          <p>Real login emails are not configured, and local preview-code mode is disabled here.</p>
+        )}
+        {auth && !auth.loginConfigured && <p>Auth cookies are not configured for operator sessions.</p>}
+        <p>The frozen /mvp demo remains available without login or model keys.</p>
+        <a className="inline-flex text-nepsis-accent transition hover:text-nepsis-accentSoft" href="/mvp">
+          Run frozen MVP demo
+        </a>
+      </div>
+    );
+  }
+
+  if (emailConfigured) {
+    return (
+      <div className="mb-4 border-l-2 border-emerald-400/70 pl-3 text-xs leading-5 text-emerald-100">
+        <p className="font-semibold text-nepsis-text">Real email delivery is configured.</p>
+        <p>Operator codes will be sent to the email address you enter.</p>
+        <p>
+          {previewCodesEnabled
+            ? "Local preview-code mode is enabled only as a fallback if email delivery fails."
+            : "Local preview-code mode is off."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 border-l-2 border-sky-400/70 pl-3 text-xs leading-5 text-sky-100">
+      <p className="font-semibold text-nepsis-text">Local preview-code mode is enabled.</p>
+      <p>No email will be sent; this page will show the one-time code after Send code.</p>
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const [step, setStep] = useState<"email" | "code">("email");
@@ -8,11 +119,42 @@ export default function LoginPage() {
   const [code, setCode] = useState("");
   const [delivery, setDelivery] = useState<"email" | "preview" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [status, setStatus] = useState<LoginStatusPayload | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const trimmedEmail = email.trim();
+  const checkingStatus = !status && !statusError;
+  const signInUnavailable = Boolean(status) && !operatorLoginReady(status);
+  const emailInputDisabled = loading || checkingStatus || signInUnavailable;
+  const sendDisabled = emailInputDisabled || !trimmedEmail;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStatus() {
+      try {
+        const response = await fetch("/api/status", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Status check failed (${response.status}).`);
+        }
+        const payload = (await response.json()) as LoginStatusPayload;
+        if (!cancelled) {
+          setStatus(payload);
+          setStatusError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setStatusError((err as Error)?.message ?? "Status check failed.");
+        }
+      }
+    }
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function sendCode() {
-    if (!trimmedEmail) {
+    if (!trimmedEmail || checkingStatus || signInUnavailable) {
       return;
     }
     setLoading(true);
@@ -86,9 +228,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm rounded-xl border border-nepsis-border bg-nepsis-panel p-6 shadow-2xl shadow-black/40">
         <h1 className="mb-2 text-lg font-semibold">Login to NepsisCGN</h1>
         <p className="mb-4 text-xs text-nepsis-muted">
-          Passwordless login. If email delivery is configured, you&apos;ll receive a one-time code. In local
-          preview-code mode, the code may be shown directly instead.
+          Passwordless operator login uses the deployment&apos;s configured code-delivery mode.
         </p>
+        <ReadinessNotice status={status} error={statusError} />
 
         {step === "email" ? (
           <form className="space-y-3" onSubmit={handleEmailSubmit}>
@@ -102,16 +244,17 @@ export default function LoginPage() {
                 type="email"
                 autoComplete="email"
                 value={email}
+                disabled={emailInputDisabled}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
               />
             </div>
             <button
               type="submit"
-              disabled={loading || !trimmedEmail}
+              disabled={sendDisabled}
               className="w-full rounded-full bg-nepsis-accent py-2 text-sm font-medium text-black transition hover:bg-nepsis-accentSoft disabled:opacity-60"
             >
-              {loading ? "Sending..." : "Send code"}
+              {loading ? "Sending..." : checkingStatus ? "Checking..." : "Send code"}
             </button>
           </form>
         ) : (

@@ -48,11 +48,15 @@ export function previewCodesAllowed(): boolean {
 }
 
 function isPlaceholderResendConfig(apiKey: string, from: string): boolean {
+  const normalizedKey = apiKey.trim().toLowerCase();
+  const normalizedFrom = from.trim().toLowerCase();
   return (
-    apiKey === "re_xxxxxxxxxxxxx" ||
-    apiKey === "your_resend_api_key_here" ||
-    from.includes("auth@example.com") ||
-    from.includes("example.com")
+    normalizedKey === "re_xxxxxxxxxxxxx" ||
+    normalizedKey === "your_resend_api_key_here" ||
+    normalizedKey.startsWith("replace-with-") ||
+    normalizedFrom.includes("auth@example.com") ||
+    normalizedFrom.includes("example.com") ||
+    normalizedFrom.includes("your-domain.")
   );
 }
 

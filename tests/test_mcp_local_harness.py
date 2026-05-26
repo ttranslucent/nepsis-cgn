@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DOC = ROOT / "docs" / "local-mcp-harness.md"
+VERIFIER = ROOT / "scripts" / "mcp-local-verify.py"
+
+
+def test_local_mcp_harness_docs_include_copy_paste_host_configs() -> None:
+    text = DOC.read_text(encoding="utf-8")
+
+    assert "~/.codex/config.toml" in text
+    assert "codex mcp add nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp" in text
+    assert "[mcp_servers.nepsiscgn]" in text
+    assert 'command = "/Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp"' in text
+    assert 'cwd = "/Users/trentthorn/Code/nepsiscgn"' in text
+
+    assert ".mcp.json" in text
+    assert 'claude mcp add --transport stdio --scope project nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp' in text
+    assert '"mcpServers"' in text
+    assert '"/Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp"' in text
+
+    assert "~/.gemini/settings.json" in text
+    assert '"nepsiscgn"' in text
+    assert '"timeout": 30000' in text
+
+    assert "ChatGPT web does not run local stdio MCP servers" in text
+    assert "/mvp remains deterministic and model-free" in text
+    assert "nepsiscgn-mcp" in text
+
+
+def test_mcp_local_verifier_is_valid_python() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "py_compile", str(VERIFIER)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_mcp_local_verifier_accepts_real_host_configs(tmp_path: Path) -> None:
+    wrapper = _write_nepsiscgn_mcp_wrapper(tmp_path)
+    cases = {
+        "codex": _write_codex_config(tmp_path, wrapper),
+        "claude": _write_claude_config(tmp_path, wrapper),
+        "gemini": _write_gemini_config(tmp_path, wrapper),
+    }
+
+    for client, config in cases.items():
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VERIFIER),
+                "--client",
+                client,
+                "--config",
+                str(config),
+                "--server",
+                "nepsiscgn",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is True
+        assert payload["client"] == client
+        assert payload["server"] == "nepsiscgn"
+        assert payload["mvp"]["schema_id"] == "nepsis.mvp_packet"
+        assert payload["operator"]["started_schema_id"] == "nepsis.operator_packet"
+        assert payload["operator"]["committed_schema_id"] == "nepsis.operator_packet"
+        assert payload["operator"]["last_commit_schema_id"] == "nepsis.operator_audit_packet"
+        assert payload["operator"]["phase_events"] == [
+            "LOCK_FRAME",
+            "RUN_REPORT",
+            "LOCK_REPORT",
+            "SET_THRESHOLD_DECISION",
+            "COMMIT_ITERATION",
+        ]
+        assert not (tmp_path / "mcp-sessions.json").exists()
+
+
+def test_mcp_local_verifier_reports_missing_codex_server_with_add_command(tmp_path: Path) -> None:
+    config = tmp_path / "codex-config.toml"
+    config.write_text("[mcp_servers.playwright]\ncommand = \"npx\"\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VERIFIER),
+            "--client",
+            "codex",
+            "--config",
+            str(config),
+            "--server",
+            "nepsiscgn",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "server 'nepsiscgn' not found in Codex config" in result.stderr
+    assert "codex mcp add nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp" in result.stderr
+
+
+def _write_nepsiscgn_mcp_wrapper(tmp_path: Path) -> Path:
+    wrapper = tmp_path / "nepsiscgn-mcp"
+    wrapper.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                f"export PYTHONPATH={ROOT / 'src'}",
+                f"export NEPSIS_API_STORE_PATH={tmp_path / 'mcp-sessions.json'}",
+                f"exec {sys.executable} -m nepsis_cgn.mcp.stdio",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+def _write_codex_config(tmp_path: Path, wrapper: Path) -> Path:
+    config = tmp_path / "codex-config.toml"
+    config.write_text(
+        "\n".join(
+            [
+                "[mcp_servers.nepsiscgn]",
+                f'command = "{wrapper}"',
+                'args = []',
+                f'cwd = "{ROOT}"',
+                "startup_timeout_sec = 10",
+                "tool_timeout_sec = 30",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def _write_claude_config(tmp_path: Path, wrapper: Path) -> Path:
+    config = tmp_path / ".mcp.json"
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "nepsiscgn": {
+                        "command": str(wrapper),
+                        "args": [],
+                        "env": {"PYTHONPATH": str(ROOT / "src")},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def _write_gemini_config(tmp_path: Path, wrapper: Path) -> Path:
+    config = tmp_path / "settings.json"
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "nepsiscgn": {
+                        "command": str(wrapper),
+                        "args": [],
+                        "cwd": str(ROOT),
+                        "env": {"PYTHONPATH": str(ROOT / "src")},
+                        "timeout": 30000,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return config

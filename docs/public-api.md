@@ -3,6 +3,18 @@
 The public website exposes only the deterministic MVP path to anonymous
 visitors. Operator session APIs and model routes stay behind deployment auth.
 
+## Public site setup
+
+Use `nepsis-web/.env.public.example` for the frozen public `/mvp` deployment.
+The public template belongs to the deterministic demo path: it enables
+`NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`, keeps `/operator` disabled, keeps
+`NEPSIS_MODEL_ROUTES_ENABLED=false`, leaves provider keys unset, and disables
+local-only preview codes and anonymous engine controls.
+
+Do not mix in variables from `nepsis-web/.env.operator.example` on the public
+site. Private operator deployments use a separate environment with real login
+and live model routes; see [operator-runbook.md](operator-runbook.md#private-operator-deployment).
+
 ## Web Proxy
 
 Use the Vercel web proxy for public-safe MVP runs:
@@ -112,6 +124,10 @@ MCP clients should authenticate to their own model provider separately. NepsisCG
 does not proxy visitor OpenAI, Claude, or Gemini accounts through the public web
 site, and stateless MCP tools do not create backend session files or packet
 stores.
+
+To prove hosted Codex connectivity end to end, configure Codex with a
+streamable-HTTP MCP server and run `scripts/mcp-hosted-verify.py`. See
+[hosted-mcp-codex.md](hosted-mcp-codex.md).
 
 ## Public MVP Visual Topology Mode
 

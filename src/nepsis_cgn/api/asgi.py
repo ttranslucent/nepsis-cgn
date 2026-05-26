@@ -10,7 +10,17 @@ from uuid import uuid4
 from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from ..mcp.handler import handle_mcp_request
-from .service import EngineApiService
+from .operator_packet import (
+    abandon_packet,
+    commit_iteration,
+    inspect_operator_packet,
+    lock_frame as lock_operator_packet_frame,
+    lock_report as lock_operator_packet_report,
+    run_report as run_operator_packet_report,
+    set_threshold_decision as set_operator_packet_threshold_decision,
+    start_operator_packet,
+)
+from .service import EngineApiService, Family
 
 LOGGER = logging.getLogger("nepsis_cgn.api.asgi")
 _RATE_LIMIT_LOCK = RLock()
@@ -26,6 +36,19 @@ def _default_store_path() -> str:
 
 API = EngineApiService(store_path=_default_store_path())
 PUBLIC_PATHS = {"/v1/health", "/v1/routes", "/v1/openapi.json", "/docs", "/openapi.json", "/mcp"}
+
+
+def _operator_family(value: Any) -> Family:
+    if value not in {"puzzle", "clinical", "safety"}:
+        raise ValueError("family must be one of: puzzle, clinical, safety")
+    return value
+
+
+def _required_operator_packet(body: dict[str, Any]) -> dict[str, Any]:
+    packet = body.get("packet")
+    if not isinstance(packet, dict):
+        raise ValueError("operator packet payload requires object field 'packet'")
+    return packet
 
 
 def create_app():
@@ -134,6 +157,152 @@ def create_app():
         if input_text is not None and not isinstance(input_text, str):
             raise HTTPException(status_code=400, detail="input_text must be a string when provided")
         return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+
+    @app.post("/v1/operator-packet/start")
+    async def start_operator_packet_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            family = _operator_family(body.get("family", "safety"))
+            frame = body.get("frame")
+            if frame is not None and not isinstance(frame, dict):
+                raise ValueError("frame must be an object when provided")
+            governance = body.get("governance_costs", body.get("governance"))
+            if governance is not None and not isinstance(governance, dict):
+                raise ValueError("governance must be an object when provided")
+            calibration = body.get("governance_calibration", body.get("calibration"))
+            if calibration is not None and not isinstance(calibration, dict):
+                raise ValueError("calibration must be an object when provided")
+            return start_operator_packet(
+                family=family,
+                frame=frame,
+                governance_costs=governance,
+                governance_calibration=calibration,
+                manifest_path=_validated_manifest_path(body.get("manifest_path")),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/state")
+    async def inspect_operator_packet_route(request: Request):
+        body = await _read_json_body(request)
+        packet = body.get("packet")
+        if packet is not None and not isinstance(packet, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="operator packet payload requires object field 'packet' when provided",
+            )
+        try:
+            return inspect_operator_packet(packet)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/frame")
+    async def lock_operator_packet_frame_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            packet = _required_operator_packet(body)
+            frame = body.get("frame")
+            if not isinstance(frame, dict):
+                raise ValueError("operator packet frame payload requires object field 'frame'")
+            family = body.get("family")
+            governance = body.get("governance_costs", body.get("governance"))
+            if governance is not None and not isinstance(governance, dict):
+                raise ValueError("governance must be an object when provided")
+            calibration = body.get("governance_calibration", body.get("calibration"))
+            if calibration is not None and not isinstance(calibration, dict):
+                raise ValueError("calibration must be an object when provided")
+            return _phase_json_response(
+                lock_operator_packet_frame(
+                    packet=packet,
+                    frame=frame,
+                    family=_operator_family(family) if family is not None else None,
+                    governance_costs=governance,
+                    governance_calibration=calibration,
+                    manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/report")
+    async def run_operator_packet_report_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            packet = _required_operator_packet(body)
+            report_text = body.get("report_text", body.get("reportText"))
+            sign = body.get("sign")
+            interpretation = body.get("interpretation")
+            if not isinstance(report_text, str):
+                raise ValueError("operator packet report payload requires string field 'report_text'")
+            if not isinstance(sign, dict):
+                raise ValueError("operator packet report payload requires object field 'sign'")
+            if interpretation is not None and not isinstance(interpretation, dict):
+                raise ValueError("interpretation must be an object when provided")
+            return _phase_json_response(
+                run_operator_packet_report(
+                    packet=packet,
+                    report_text=report_text,
+                    sign=sign,
+                    interpretation=interpretation,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/report/lock")
+    async def lock_operator_packet_report_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            return _phase_json_response(lock_operator_packet_report(packet=_required_operator_packet(body)))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/threshold")
+    async def set_operator_packet_threshold_decision_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            decision = body.get("decision")
+            hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+            if not isinstance(decision, str):
+                raise ValueError("operator packet threshold payload requires string field 'decision'")
+            if not isinstance(hold_reason, str):
+                raise ValueError("hold_reason must be a string when provided")
+            return _phase_json_response(
+                set_operator_packet_threshold_decision(
+                    packet=_required_operator_packet(body),
+                    decision=decision,
+                    hold_reason=hold_reason,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/commit")
+    async def commit_operator_packet_iteration_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
+            if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
+                raise ValueError("carry_forward_frame must be an object when provided")
+            return _phase_json_response(
+                commit_iteration(
+                    packet=_required_operator_packet(body),
+                    carry_forward_frame=carry_forward_frame,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/abandon")
+    async def abandon_operator_packet_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            reason = body.get("reason", "")
+            if not isinstance(reason, str):
+                raise ValueError("reason must be a string when provided")
+            return abandon_packet(packet=_required_operator_packet(body), reason=reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/v1/operator/session")
     async def get_operator_session_state():
@@ -587,6 +756,14 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
         {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
         {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
+        {"method": "POST", "path": "/v1/operator-packet/start", "description": "Start stateless operator packet"},
+        {"method": "POST", "path": "/v1/operator-packet/state", "description": "Inspect stateless operator packet state"},
+        {"method": "POST", "path": "/v1/operator-packet/frame", "description": "Lock frame into stateless operator packet"},
+        {"method": "POST", "path": "/v1/operator-packet/report", "description": "Run report through stateless operator packet"},
+        {"method": "POST", "path": "/v1/operator-packet/report/lock", "description": "Lock stateless operator packet report"},
+        {"method": "POST", "path": "/v1/operator-packet/threshold", "description": "Set stateless operator packet threshold decision"},
+        {"method": "POST", "path": "/v1/operator-packet/commit", "description": "Commit stateless operator packet iteration"},
+        {"method": "POST", "path": "/v1/operator-packet/abandon", "description": "Abandon stateless operator packet loop"},
         {"method": "GET", "path": "/v1/operator/session", "description": "Get ambient operator session phase state"},
         {"method": "POST", "path": "/v1/operator/frame", "description": "Lock ambient operator frame"},
         {"method": "POST", "path": "/v1/operator/report", "description": "Run ambient operator report"},
