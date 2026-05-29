@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 
 import { NEPSIS_USER_COOKIE, readNepsisUserFromCookieValue } from "@/lib/nepsisAuth";
 import { liveOperatorEnabled, publicSiteMode } from "@/lib/publicMode";
@@ -141,6 +142,7 @@ export default async function RootLayout({
             </div>
           </footer>
         </div>
+        <Analytics />
       </body>
     </html>
   );
