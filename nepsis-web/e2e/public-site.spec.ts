@@ -16,9 +16,10 @@ test("public MVP can run without login or model key", async ({ page }) => {
   await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
   await page.getByRole("button", { name: "Run Query" }).click();
 
-  await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
-  await page.getByRole("button", { name: "Full View" }).click();
-  await expect(page.getByText("nepsis.mvp_packet", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
+  await page.getByRole("button", { name: "Audit", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("nepsis.mvp_packet", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
   await expect(page.locator("main")).toContainText("action_priority");
   await expect(
@@ -28,33 +29,38 @@ test("public MVP can run without login or model key", async ({ page }) => {
   await expect(page.getByText("Engine backend request failed", { exact: false })).toHaveCount(0);
 });
 
-test("public MVP toggles between visual topology and full view", async ({ page }) => {
+test("public MVP toggles between provenance tabs", async ({ page }) => {
   await page.goto("/mvp");
   await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
   await page.getByRole("button", { name: "Run Query" }).click();
 
-  await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("RED Channel", { exact: true })).toBeVisible();
-  await expect(page.getByText("STILL 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("STILL Checkpoint", { exact: true })).toBeVisible();
   await expect(page.getByText("BLUE Channel", { exact: true })).toBeVisible();
-  await expect(page.getByText("STILL 2", { exact: true })).toBeVisible();
-  await expect(page.getByText("Commitment", { exact: true })).toBeVisible();
-  await expect(page.getByText("State feedback", { exact: true })).toBeVisible();
-  await expect(page.getByText("Audit", { exact: true })).toBeVisible();
-  await expect(page.getByText("Constraint conflict detected", { exact: true })).toBeVisible();
-  await expect(page.getByText("Retessellation required", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /collapse Collapse/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /zeroback Validation/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /final Output/ })).toBeVisible();
+  await expect(page.getByText("+ 3 hidden steps", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Full View" }).click();
-  await expect(page.getByRole("button", { name: "Full View" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Audit", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Audit", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
   await expect(page.getByText("Audit Trace", { exact: true })).toBeVisible();
   await expect(page.getByText("Raw JSON", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Visual topology" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Provenance topology" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Visual Topology" }).click();
-  await expect(page.getByRole("button", { name: "Visual Topology" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("region", { name: "Visual topology" })).toBeVisible();
+  await page.getByRole("button", { name: "Lineage", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Lineage", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Replay hook not attached on public MVP.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Topology" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Topology" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
 });
 
 test("public operator routes are gated and do not ask for browser API keys", async ({ page }) => {

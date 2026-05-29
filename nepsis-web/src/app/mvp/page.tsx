@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
+import { AuditTrailDrawer, type AuditDrawerTab } from "@/components/provenance/AuditTrailDrawer";
+import { ProvenanceTopology } from "@/components/provenance/ProvenanceTopology";
+import { ReplayControls } from "@/components/provenance/ReplayControls";
 import {
   EngineClientError,
   engineClient,
   type NepsisMvpCaseId,
   type NepsisMvpPacket,
 } from "@/lib/engineClient";
-
-import { VisualTopologyMode } from "./VisualTopologyMode";
+import { adaptMvpPacketToProvenance } from "@/lib/provenance/adapter";
 
 const CASES: Array<{ id: NepsisMvpCaseId; label: string; description: string }> = [
   {
@@ -25,7 +27,7 @@ const CASES: Array<{ id: NepsisMvpCaseId; label: string; description: string }> 
   },
 ];
 
-type ResultView = "topology" | "full";
+type ResultView = "topology" | "audit" | "lineage";
 
 function userFacingMvpError(err: unknown): string {
   if (err instanceof EngineClientError) {
@@ -43,6 +45,7 @@ export default function MvpDemoPage() {
   const [caseId, setCaseId] = useState<NepsisMvpCaseId>("jailing");
   const [queryText, setQueryText] = useState("");
   const [packet, setPacket] = useState<NepsisMvpPacket | null>(null);
+  const [previousPacket, setPreviousPacket] = useState<NepsisMvpPacket | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultView, setResultView] = useState<ResultView>("topology");
@@ -56,6 +59,7 @@ export default function MvpDemoPage() {
         case_id: caseId,
         input_text: trimmedQuery.length > 0 ? trimmedQuery : undefined,
       });
+      setPreviousPacket(packet);
       setResultView("topology");
       setPacket(result);
     } catch (err) {
@@ -131,7 +135,7 @@ export default function MvpDemoPage() {
               type="button"
               onClick={runDemo}
               disabled={isRunning}
-              className="mt-4 w-full rounded-full bg-nepsis-accent px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-nepsis-accentSoft disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-4 w-full scroll-mt-40 rounded-full bg-nepsis-accent px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-nepsis-accentSoft disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isRunning ? "Running..." : queryText.trim() ? "Run Query" : "Run Demo"}
             </button>
@@ -149,7 +153,12 @@ export default function MvpDemoPage() {
       </section>
 
       {packet ? (
-        <PacketView packet={packet} resultView={resultView} onResultViewChange={setResultView} />
+        <PacketView
+          packet={packet}
+          previousPacket={previousPacket}
+          resultView={resultView}
+          onResultViewChange={setResultView}
+        />
       ) : (
         <EmptyState />
       )}
@@ -167,21 +176,35 @@ function EmptyState() {
 
 function PacketView({
   packet,
+  previousPacket,
   resultView,
   onResultViewChange,
 }: {
   packet: NepsisMvpPacket;
+  previousPacket: NepsisMvpPacket | null;
   resultView: ResultView;
   onResultViewChange: (value: ResultView) => void;
 }) {
+  const provenance = useMemo(() => adaptMvpPacketToProvenance(packet, previousPacket), [packet, previousPacket]);
+  const [selectedNodeId, setSelectedNodeId] = useState("red");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [auditTab, setAuditTab] = useState<AuditDrawerTab>("summary");
+  const selectedNode = provenance.nodes.find((node) => node.id === selectedNodeId) ?? provenance.nodes[0] ?? null;
+
+  function showAudit(tab: AuditDrawerTab = "summary") {
+    setAuditTab(tab);
+    setDrawerOpen(true);
+  }
+
   return (
     <div className="mt-5 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-nepsis-border bg-nepsis-panel p-3">
-        <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Result view</div>
-        <div className="inline-flex rounded-full border border-nepsis-border bg-black/20 p-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-nepsis-border bg-nepsis-panel p-3">
+        <div className="text-xs uppercase tracking-[0.14em] text-nepsis-muted">Packet instrumentation</div>
+        <div className="inline-flex rounded-lg border border-nepsis-border bg-black/20 p-1">
           {[
-            { id: "topology", label: "Visual Topology" },
-            { id: "full", label: "Full View" },
+            { id: "topology", label: "Topology" },
+            { id: "audit", label: "Audit" },
+            { id: "lineage", label: "Lineage" },
           ].map((view) => {
             const selected = resultView === view.id;
             return (
@@ -189,8 +212,16 @@ function PacketView({
                 key={view.id}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => onResultViewChange(view.id as ResultView)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                onClick={() => {
+                  onResultViewChange(view.id as ResultView);
+                  if (view.id === "audit") {
+                    setDrawerOpen(true);
+                  }
+                  if (view.id === "lineage") {
+                    setAuditTab("replay");
+                  }
+                }}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
                   selected ? "bg-nepsis-accent text-black" : "text-nepsis-muted hover:text-nepsis-text"
                 }`}
               >
@@ -201,7 +232,55 @@ function PacketView({
         </div>
       </div>
 
-      {resultView === "topology" ? <VisualTopologyMode packet={packet} /> : <FullPacketView packet={packet} />}
+      {resultView === "topology" ? (
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
+          <ProvenanceTopology
+            packet={provenance}
+            selectedNodeId={selectedNode?.id ?? null}
+            onSelectedNodeIdChange={setSelectedNodeId}
+            onOpenAudit={() => showAudit("summary")}
+            onReplay={() => showAudit("replay")}
+          />
+          {drawerOpen ? (
+            <AuditTrailDrawer
+              packet={provenance}
+              selectedNode={selectedNode}
+              activeTab={auditTab}
+              onActiveTabChange={setAuditTab}
+            />
+          ) : (
+            <section className="rounded-xl border border-slate-800 bg-zinc-950/70 p-4 text-sm text-slate-400">
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Audit drawer</div>
+              <p className="mt-2 leading-6">Select a topology node to open its audit trail.</p>
+            </section>
+          )}
+        </div>
+      ) : null}
+
+      {resultView === "audit" ? (
+        <div className="space-y-5">
+          <AuditTrailDrawer
+            packet={provenance}
+            selectedNode={selectedNode}
+            activeTab={auditTab}
+            onActiveTabChange={setAuditTab}
+          />
+          <FullPacketView packet={packet} />
+        </div>
+      ) : null}
+
+      {resultView === "lineage" ? (
+        <section className="rounded-xl border border-slate-700/80 bg-zinc-950/80 p-4 md:p-5">
+          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">Lineage</div>
+          <h2 className="mt-2 text-xl font-semibold text-slate-50">Replayable deterministic chain</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+            This public view exposes packet-derived lineage only. Operator replay can attach to the same shape later.
+          </p>
+          <div className="mt-5">
+            <ReplayControls packet={provenance} />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
