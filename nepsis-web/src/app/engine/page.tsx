@@ -10,6 +10,7 @@ import {
   type EngineReframePayload,
   type EngineStageAuditResponse,
   type EngineStepResponse,
+  type PacketProvenanceRecord,
   isPhaseRejection,
 } from "@/lib/engineClient";
 import {
@@ -532,6 +533,23 @@ function buildPacketEvents(packets: Record<string, unknown>[]): PacketEvent[] {
   return events;
 }
 
+function provenanceForPacket(
+  records: PacketProvenanceRecord[] | null | undefined,
+  packetId: string | null | undefined,
+): PacketProvenanceRecord | null {
+  if (!records || !packetId) {
+    return null;
+  }
+  return records.find((record) => record.packet_id === packetId) ?? null;
+}
+
+function shortHash(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  return value.replace(/^sha256:/, "").slice(0, 12);
+}
+
 function deriveSafetySign(text: string): SignBuildResult {
   const lower = text.toLowerCase();
   const criticalFromTag = parseBoolTag(text, "critical_signal");
@@ -1007,10 +1025,14 @@ export default function EnginePage() {
     sessions,
     activeSession,
     packets,
+    provenance,
+    auditExport,
     refreshHealth,
     refreshSessions,
     loadSession,
     refreshPackets,
+    refreshProvenance,
+    exportSessionAudit,
     stageAudit,
     updateWorkspaceState,
     lockOperatorFrame,
@@ -1170,6 +1192,13 @@ export default function EnginePage() {
     setBranchCounter(parseBranchCounter(resolvedBranchId));
     setPendingBranchParentFrameId(activeSession.parent_frame_id ?? null);
   }, [activeSession]);
+
+  useEffect(() => {
+    if (!activeSession?.session_id || packets.length === 0) {
+      return;
+    }
+    void refreshProvenance(activeSession.session_id);
+  }, [activeSession?.session_id, packets.length, refreshProvenance]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2698,6 +2727,13 @@ export default function EnginePage() {
   const selectedPacket = selectedTimeline?.event
     ? asRecord(packets[selectedTimeline.event.packetIndex])
     : null;
+  const selectedPacketMeta = asRecord(selectedPacket?.meta);
+  const selectedPacketId =
+    readString(selectedPacketMeta?.packet_id) ??
+    readString(selectedPacket?.packet_id) ??
+    selectedTimeline?.event?.packetId ??
+    null;
+  const selectedProvenance = provenanceForPacket(provenance?.records, selectedPacketId);
   const selectedPacketResult = asRecord(selectedPacket?.result);
   const selectedPacketState = asRecord(selectedPacket?.state);
   const selectedPacketCarry = asRecord(selectedPacket?.carry_forward);
@@ -3902,6 +3938,76 @@ export default function EnginePage() {
                       <div className="text-nepsis-muted">Stage</div>
                       <div className="text-nepsis-text">{selectedTimeline.event.stage ?? "n/a"}</div>
                     </div>
+                  </div>
+                  <div className="rounded border border-nepsis-border px-2 py-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-nepsis-muted">Packet Provenance</div>
+                      <button
+                        type="button"
+                        onClick={() => activeSession?.session_id && void refreshProvenance(activeSession.session_id)}
+                        className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted hover:border-nepsis-accent hover:text-nepsis-text"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    {selectedProvenance ? (
+                      <div className="mt-2 grid gap-2 md:grid-cols-3">
+                        <div>
+                          <div className="text-nepsis-muted">Packet</div>
+                          <div className="font-mono text-nepsis-text">{selectedProvenance.packet_id}</div>
+                        </div>
+                        <div>
+                          <div className="text-nepsis-muted">Parent</div>
+                          <div className="font-mono text-nepsis-text">
+                            {selectedProvenance.parent_packet_id ?? "root"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-nepsis-muted">Hash</div>
+                          <div className="font-mono text-nepsis-text">
+                            {shortHash(selectedProvenance.payload_hash)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-nepsis-muted">Signature</div>
+                          <div className="text-nepsis-text">
+                            {selectedProvenance.signature.algorithm}
+                            {selectedProvenance.signature.key_id ? `:${selectedProvenance.signature.key_id}` : ""}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-nepsis-muted">Request</div>
+                          <div className="font-mono text-nepsis-text">
+                            {selectedProvenance.request.request_id ?? "n/a"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-nepsis-muted">Retention</div>
+                          <div className="text-nepsis-text">{selectedProvenance.retention.mode}</div>
+                        </div>
+                        <div className="md:col-span-3">
+                          <div className="text-nepsis-muted">Source</div>
+                          <div className="text-nepsis-text">{selectedProvenance.source}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-nepsis-muted">
+                        No provenance record loaded for this packet.
+                      </div>
+                    )}
+                    {auditExport && (
+                      <div className="mt-2 text-nepsis-muted">
+                        audit export: {auditExport.verification.record_count} records,{" "}
+                        {auditExport.verification.hash_failures.length} hash failures
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => activeSession?.session_id && void exportSessionAudit(activeSession.session_id)}
+                      className="mt-2 rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted hover:border-nepsis-accent hover:text-nepsis-text"
+                    >
+                      Verify Export
+                    </button>
                   </div>
                   {showOperatorControls ? (
                     <>

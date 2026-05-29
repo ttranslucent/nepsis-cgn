@@ -12,8 +12,10 @@ import {
   type EngineOperatorResponse,
   type EngineOperatorResult,
   type EnginePacketResponse,
+  type PacketProvenanceResponse,
   type EngineReframePayload,
   type EngineRoute,
+  type SessionAuditExport,
   type EngineStageAuditPayload,
   type EngineStageAuditResponse,
   type EngineSessionSummary,
@@ -32,6 +34,8 @@ type EngineState = {
   sessions: EngineSessionSummary[];
   activeSession: EngineSessionSummary | null;
   packets: Record<string, unknown>[];
+  provenance: PacketProvenanceResponse | null;
+  auditExport: SessionAuditExport | null;
   lastStep: EngineStepResponse | null;
   lastAudit: EngineStageAuditResponse | null;
 };
@@ -67,6 +71,8 @@ export function useEngineSession() {
     sessions: [],
     activeSession: null,
     packets: [],
+    provenance: null,
+    auditExport: null,
     lastStep: null,
     lastAudit: null,
   });
@@ -106,6 +112,8 @@ export function useEngineSession() {
           : result.step?.iteration_packet != null
             ? [...prev.packets, result.step.iteration_packet]
             : prev.packets,
+      provenance: null,
+      auditExport: null,
     }));
   }, []);
 
@@ -173,6 +181,8 @@ export function useEngineSession() {
         activeSession: session,
         sessions: upsertSession(prev.sessions, session),
         packets: [],
+        provenance: null,
+        auditExport: null,
         lastStep: null,
         lastAudit: null,
       }));
@@ -188,7 +198,8 @@ export function useEngineSession() {
           engineClient.getSession(sessionId),
           engineClient.getSessionPackets(sessionId),
         ]);
-        return { session, packetResponse };
+        const provenance = await engineClient.getSessionProvenance(sessionId).catch(() => null);
+        return { session, packetResponse, provenance };
       });
       if (!loaded) {
         return undefined;
@@ -198,6 +209,8 @@ export function useEngineSession() {
         activeSession: loaded.session,
         sessions: upsertSession(prev.sessions, loaded.session),
         packets: loaded.packetResponse.packets,
+        provenance: loaded.provenance,
+        auditExport: null,
         lastAudit: null,
       }));
       return loaded.session;
@@ -225,6 +238,8 @@ export function useEngineSession() {
           stepResult.iteration_packet != null
             ? [...prev.packets, stepResult.iteration_packet]
             : prev.packets,
+        provenance: null,
+        auditExport: null,
         lastAudit: prev.lastAudit,
       }));
       return stepResult;
@@ -282,6 +297,40 @@ export function useEngineSession() {
     [run, state.activeSession],
   );
 
+  const refreshProvenance = useCallback(
+    async (sessionId?: string): Promise<PacketProvenanceResponse | undefined> => {
+      const targetId = sessionId ?? state.activeSession?.session_id;
+      if (!targetId) {
+        setState((prev) => ({ ...prev, error: "No session selected for provenance refresh." }));
+        return undefined;
+      }
+      const provenance = await run(() => engineClient.getSessionProvenance(targetId));
+      if (!provenance) {
+        return undefined;
+      }
+      setState((prev) => ({ ...prev, provenance }));
+      return provenance;
+    },
+    [run, state.activeSession],
+  );
+
+  const exportSessionAudit = useCallback(
+    async (sessionId?: string): Promise<SessionAuditExport | undefined> => {
+      const targetId = sessionId ?? state.activeSession?.session_id;
+      if (!targetId) {
+        setState((prev) => ({ ...prev, error: "No session selected for audit export." }));
+        return undefined;
+      }
+      const auditExport = await run(() => engineClient.getSessionAuditExport(targetId));
+      if (!auditExport) {
+        return undefined;
+      }
+      setState((prev) => ({ ...prev, auditExport }));
+      return auditExport;
+    },
+    [run, state.activeSession],
+  );
+
   const updateWorkspaceState = useCallback(
     async (sessionId: string, payload: EngineWorkspacePayload): Promise<EngineSessionSummary | undefined> => {
       try {
@@ -327,6 +376,8 @@ export function useEngineSession() {
           sessions: nextSessions,
           activeSession,
           packets: activeSession ? prev.packets : [],
+          provenance: activeSession ? prev.provenance : null,
+          auditExport: activeSession ? prev.auditExport : null,
           lastStep: activeSession ? prev.lastStep : null,
           lastAudit: activeSession ? prev.lastAudit : null,
         };
@@ -428,6 +479,8 @@ export function useEngineSession() {
     step,
     reframe,
     refreshPackets,
+    refreshProvenance,
+    exportSessionAudit,
     deleteSession,
     stageAudit,
     updateWorkspaceState,

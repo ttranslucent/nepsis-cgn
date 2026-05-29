@@ -21,6 +21,7 @@ from ..api.operator_packet import (
     start_operator_packet,
 )
 from ..core.mvp import build_nepsis_mvp_packet
+from ..provenance import record_packet_observation
 
 LOGGER = logging.getLogger("nepsis_cgn.mcp.handler")
 PROTOCOL_VERSION = "2025-06-18"
@@ -261,6 +262,12 @@ def _call_tool(
         return response
 
     is_error = result.get("schema_id") == "nepsis.phase_rejection"
+    record_packet_observation(
+        packet=result,
+        source="mcp_tool_call",
+        retention_mode="hash_only",
+        request_context={"request_id": request_id, "method": "MCP", "path": f"tools/call/{name}"},
+    )
     response = _tool_result(jsonrpc_id, result, is_error=is_error)
     _log_tool_call(request_id, name, "phase_rejection" if is_error else "ok", auth.token_id, arguments, started, result)
     return response

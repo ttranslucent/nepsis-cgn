@@ -301,7 +301,7 @@ def _packet_from_transition(
 
 def _service_from_packet(packet: dict[str, Any]) -> EngineApiService:
     _validate_packet(packet)
-    svc = EngineApiService(store_path="")
+    svc = EngineApiService(store_path="", record_provenance=False)
     for entry in _packet_trace(packet):
         event = entry.get("event")
         args = entry.get("arguments")

@@ -7,4 +7,5 @@ src/nepsis_ra/data/
 .playwright-mcp/
 *.egg-info/
 ledger/sessions/engine_api_sessions.db*
+ledger/sessions/packet_provenance.jsonl
 .vercel

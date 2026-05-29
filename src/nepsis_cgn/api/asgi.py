@@ -10,6 +10,7 @@ from uuid import uuid4
 from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from ..mcp.handler import handle_mcp_request
+from ..provenance import record_packet_observation
 from .operator_packet import (
     abandon_packet,
     commit_iteration,
@@ -156,7 +157,14 @@ def create_app():
         input_text = body.get("input_text", body.get("inputText"))
         if input_text is not None and not isinstance(input_text, str):
             raise HTTPException(status_code=400, detail="input_text must be a string when provided")
-        return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+        packet = build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+        record_packet_observation(
+            packet=packet,
+            source="backend_mvp",
+            retention_mode="retained",
+            request_context=_request_context(request),
+        )
+        return packet
 
     @app.post("/v1/operator-packet/start")
     async def start_operator_packet_route(request: Request):
@@ -172,12 +180,15 @@ def create_app():
             calibration = body.get("governance_calibration", body.get("calibration"))
             if calibration is not None and not isinstance(calibration, dict):
                 raise ValueError("calibration must be an object when provided")
-            return start_operator_packet(
-                family=family,
-                frame=frame,
-                governance_costs=governance,
-                governance_calibration=calibration,
-                manifest_path=_validated_manifest_path(body.get("manifest_path")),
+            return _record_stateless_packet_result(
+                start_operator_packet(
+                    family=family,
+                    frame=frame,
+                    governance_costs=governance,
+                    governance_calibration=calibration,
+                    manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                ),
+                request,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -192,7 +203,7 @@ def create_app():
                 detail="operator packet payload requires object field 'packet' when provided",
             )
         try:
-            return inspect_operator_packet(packet)
+            return _record_stateless_packet_result(inspect_operator_packet(packet), request)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -212,13 +223,16 @@ def create_app():
             if calibration is not None and not isinstance(calibration, dict):
                 raise ValueError("calibration must be an object when provided")
             return _phase_json_response(
-                lock_operator_packet_frame(
-                    packet=packet,
-                    frame=frame,
-                    family=_operator_family(family) if family is not None else None,
-                    governance_costs=governance,
-                    governance_calibration=calibration,
-                    manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                _record_stateless_packet_result(
+                    lock_operator_packet_frame(
+                        packet=packet,
+                        frame=frame,
+                        family=_operator_family(family) if family is not None else None,
+                        governance_costs=governance,
+                        governance_calibration=calibration,
+                        manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                    ),
+                    request,
                 )
             )
         except ValueError as exc:
@@ -239,11 +253,14 @@ def create_app():
             if interpretation is not None and not isinstance(interpretation, dict):
                 raise ValueError("interpretation must be an object when provided")
             return _phase_json_response(
-                run_operator_packet_report(
-                    packet=packet,
-                    report_text=report_text,
-                    sign=sign,
-                    interpretation=interpretation,
+                _record_stateless_packet_result(
+                    run_operator_packet_report(
+                        packet=packet,
+                        report_text=report_text,
+                        sign=sign,
+                        interpretation=interpretation,
+                    ),
+                    request,
                 )
             )
         except ValueError as exc:
@@ -253,7 +270,12 @@ def create_app():
     async def lock_operator_packet_report_route(request: Request):
         body = await _read_json_body(request)
         try:
-            return _phase_json_response(lock_operator_packet_report(packet=_required_operator_packet(body)))
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    lock_operator_packet_report(packet=_required_operator_packet(body)),
+                    request,
+                )
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -268,10 +290,13 @@ def create_app():
             if not isinstance(hold_reason, str):
                 raise ValueError("hold_reason must be a string when provided")
             return _phase_json_response(
-                set_operator_packet_threshold_decision(
-                    packet=_required_operator_packet(body),
-                    decision=decision,
-                    hold_reason=hold_reason,
+                _record_stateless_packet_result(
+                    set_operator_packet_threshold_decision(
+                        packet=_required_operator_packet(body),
+                        decision=decision,
+                        hold_reason=hold_reason,
+                    ),
+                    request,
                 )
             )
         except ValueError as exc:
@@ -285,9 +310,12 @@ def create_app():
             if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
                 raise ValueError("carry_forward_frame must be an object when provided")
             return _phase_json_response(
-                commit_iteration(
-                    packet=_required_operator_packet(body),
-                    carry_forward_frame=carry_forward_frame,
+                _record_stateless_packet_result(
+                    commit_iteration(
+                        packet=_required_operator_packet(body),
+                        carry_forward_frame=carry_forward_frame,
+                    ),
+                    request,
                 )
             )
         except ValueError as exc:
@@ -300,7 +328,10 @@ def create_app():
             reason = body.get("reason", "")
             if not isinstance(reason, str):
                 raise ValueError("reason must be a string when provided")
-            return abandon_packet(packet=_required_operator_packet(body), reason=reason)
+            return _record_stateless_packet_result(
+                abandon_packet(packet=_required_operator_packet(body), reason=reason),
+                request,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -385,7 +416,12 @@ def create_app():
         if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
             raise HTTPException(status_code=400, detail="carry_forward_frame must be an object when provided")
         try:
-            return _phase_json_response(API.operator_commit_iteration(carry_forward_frame=carry_forward_frame))
+            return _phase_json_response(
+                API.operator_commit_iteration(
+                    carry_forward_frame=carry_forward_frame,
+                    request_context=_request_context(request),
+                )
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -395,7 +431,7 @@ def create_app():
         reason = body.get("reason", "")
         if not isinstance(reason, str):
             raise HTTPException(status_code=400, detail="reason must be a string when provided")
-        return API.operator_abandon_session(reason=reason)
+        return API.operator_abandon_session(reason=reason, request_context=_request_context(request))
 
     @app.get("/v1/sessions")
     async def list_sessions(request: Request, limit: int = 50, offset: int = 0):
@@ -457,6 +493,7 @@ def create_app():
                 override_reason=body.get("override_reason"),
                 carry_forward=body.get("carry_forward"),
                 owner_id=_request_owner_id(dict(request.headers)),
+                request_context=_request_context(request),
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -514,7 +551,11 @@ def create_app():
     @app.get("/v1/sessions/{session_id}/stage-audit")
     async def stage_audit_session(session_id: str, request: Request):
         try:
-            return API.stage_audit_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
+            return API.stage_audit_session(
+                session_id,
+                owner_id=_request_owner_id(dict(request.headers)),
+                request_context=_request_context(request),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PermissionError as exc:
@@ -538,6 +579,7 @@ def create_app():
                 context=context,
                 persist_context=bool(body.get("persist_context", False)),
                 owner_id=_request_owner_id(dict(request.headers)),
+                request_context=_request_context(request),
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -557,6 +599,54 @@ def create_app():
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.get("/v1/sessions/{session_id}/provenance")
+    async def packet_provenance(session_id: str, request: Request):
+        try:
+            return API.get_packet_provenance(
+                session_id,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.get("/v1/sessions/{session_id}/audit-export")
+    async def audit_export(session_id: str, request: Request):
+        try:
+            return API.export_session_audit(
+                session_id,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.get("/v1/provenance/requests/{request_id}")
+    async def request_provenance(request_id: str, request: Request):
+        try:
+            return API.get_request_provenance(
+                request_id,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.get("/v1/provenance/packets/{packet_id}/lineage")
+    async def packet_lineage(packet_id: str, request: Request):
+        try:
+            return API.get_packet_lineage(
+                packet_id,
+                owner_id=_request_owner_id(dict(request.headers)),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -668,6 +758,29 @@ def _phase_json_response(payload: dict[str, Any]):
 
     status_code = 409 if payload.get("schema_id") == "nepsis.phase_rejection" else 200
     return JSONResponse(payload, status_code=status_code)
+
+
+def _record_stateless_packet_result(payload: dict[str, Any], request: Any) -> dict[str, Any]:
+    if payload.get("schema_id") in {
+        "nepsis.operator_packet",
+        "nepsis.operator_packet_state",
+        "nepsis.phase_rejection",
+    }:
+        record_packet_observation(
+            packet=payload,
+            source="stateless_operator_packet",
+            retention_mode="hash_only",
+            request_context=_request_context(request),
+        )
+    return payload
+
+
+def _request_context(request: Any) -> dict[str, Any]:
+    return {
+        "request_id": getattr(request.state, "request_id", None),
+        "method": request.method,
+        "path": request.url.path,
+    }
 
 
 def _validated_manifest_path(manifest_path: Any) -> str | None:
@@ -782,6 +895,10 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
         {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
         {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
+        {"method": "GET", "path": "/v1/sessions/{session_id}/provenance", "description": "Get packet provenance graph"},
+        {"method": "GET", "path": "/v1/sessions/{session_id}/audit-export", "description": "Export session audit trail"},
+        {"method": "GET", "path": "/v1/provenance/requests/{request_id}", "description": "Reconstruct packet flow by request"},
+        {"method": "GET", "path": "/v1/provenance/packets/{packet_id}/lineage", "description": "Get packet lineage graph"},
     ]
 
 

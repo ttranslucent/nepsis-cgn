@@ -19,6 +19,13 @@ from ..core.interpretant import WordPuzzleSign
 from ..core.runtime import build_navigation_controller
 from ..manifolds.clinical import ClinicalSign
 from ..manifolds.red_blue import SafetySign
+from ..provenance import (
+    PacketProvenanceStore,
+    build_audit_export,
+    build_graph,
+    default_provenance_path,
+    record_packet_observation,
+)
 
 Family = Literal["puzzle", "clinical", "safety"]
 _STORE_SCHEMA_ID = "nepsis.engine_api_sessions"
@@ -84,10 +91,11 @@ class EngineSession:
 
 
 class EngineApiService:
-    def __init__(self, *, store_path: Optional[str] = None) -> None:
+    def __init__(self, *, store_path: Optional[str] = None, record_provenance: bool = True) -> None:
         self._sessions: Dict[str, EngineSession] = {}
         self._lock = RLock()
         self._store_path = _resolve_store_path(store_path)
+        self._record_provenance = record_provenance
         self._load_sessions()
         self._operator_session_id = self._find_ambient_operator_session_id()
         self._apply_retention_policy()
@@ -375,6 +383,7 @@ class EngineApiService:
         self,
         *,
         carry_forward_frame: Optional[Dict[str, Any]] = None,
+        request_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._ensure_operator_session()
@@ -404,7 +413,16 @@ class EngineApiService:
                 phase_event_log=event_log,
                 final_frame=final_frame,
             )
+            parent_packet_id = _packet_meta_value(_latest_iteration_packet(session), "packet_id")
             session.packets.append(packet)
+            self._record_packet(
+                session,
+                packet,
+                source="ambient_operator_audit",
+                retention_mode="retained",
+                request_context=request_context,
+                parent_packet_id=parent_packet_id,
+            )
             session.operator_phase = "frame_draft"
             session.operator_events = []
             session.operator_audit = {
@@ -429,11 +447,23 @@ class EngineApiService:
                 "session": self._session_summary(session),
             }
 
-    def operator_abandon_session(self, *, reason: str = "") -> Dict[str, Any]:
+    def operator_abandon_session(
+        self,
+        *,
+        reason: str = "",
+        request_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
             session = self._ensure_operator_session()
             old_session_id = session.session_id
             packet = _build_operator_abandoned_packet(session, reason=reason)
+            self._record_packet(
+                session,
+                packet,
+                source="ambient_operator_abandoned",
+                retention_mode="retained",
+                request_context=request_context,
+            )
             session.operator_ambient = False
             session.operator_phase = _OPERATOR_PHASE_INITIAL
             session.operator_events = []
@@ -481,6 +511,7 @@ class EngineApiService:
         override_reason: Optional[str] = None,
         carry_forward: Optional[Dict[str, Any]] = None,
         owner_id: Optional[str] = None,
+        request_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._require_session(session_id, owner_id=owner_id)
@@ -493,6 +524,8 @@ class EngineApiService:
                 carry_forward=carry_forward,
                 record_action=True,
                 persist=True,
+                request_context=request_context,
+                record_provenance=True,
             )
 
     def get_packets(
@@ -519,6 +552,66 @@ class EngineApiService:
                 },
             }
 
+    def get_packet_provenance(
+        self,
+        session_id: str,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require_session(session_id, owner_id=owner_id)
+            records = PacketProvenanceStore(default_provenance_path()).records_for_session(session.session_id)
+            return {
+                "session_id": session.session_id,
+                "count": len(records),
+                "records": records,
+                "graph": PacketProvenanceStore(default_provenance_path()).graph_for_session(session.session_id),
+            }
+
+    def get_request_provenance(
+        self,
+        request_id: str,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not request_id or not request_id.strip():
+            raise ValueError("request_id must be non-empty")
+        records = PacketProvenanceStore(default_provenance_path()).records_for_request(request_id.strip())
+        self._assert_provenance_owner_access(records, owner_id=owner_id)
+        return {
+            "request_id": request_id.strip(),
+            "count": len(records),
+            "records": records,
+            "graph": build_graph(records),
+        }
+
+    def get_packet_lineage(
+        self,
+        packet_id: str,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not packet_id or not packet_id.strip():
+            raise ValueError("packet_id must be non-empty")
+        graph = PacketProvenanceStore(default_provenance_path()).lineage_for_packet(packet_id.strip())
+        self._assert_provenance_owner_access(graph.get("nodes", []), owner_id=owner_id)
+        return {"packet_id": packet_id.strip(), **graph}
+
+    def export_session_audit(
+        self,
+        session_id: str,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            session = self._require_session(session_id, owner_id=owner_id)
+            records = PacketProvenanceStore(default_provenance_path()).records_for_session(session.session_id)
+            return build_audit_export(
+                session=self._session_summary(session),
+                packets=session.packets,
+                records=records,
+            )
+
     def stage_audit_session(
         self,
         session_id: str,
@@ -526,6 +619,7 @@ class EngineApiService:
         context: Optional[Dict[str, Any]] = None,
         persist_context: bool = False,
         owner_id: Optional[str] = None,
+        request_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._require_session(session_id, owner_id=owner_id)
@@ -549,6 +643,34 @@ class EngineApiService:
             threshold_packet = _build_threshold_stage_packet(
                 normalized_context.get("threshold"),
                 latest_packet,
+            )
+            latest_packet_id = _packet_meta_value(latest_packet, "packet_id")
+            self._record_packet(
+                session,
+                frame_packet,
+                source="stage_audit_frame",
+                retention_mode="retained",
+                request_context=request_context,
+                parent_packet_id=latest_packet_id,
+                sequence=0,
+            )
+            self._record_packet(
+                session,
+                interpretation_packet,
+                source="stage_audit_interpretation",
+                retention_mode="retained",
+                request_context=request_context,
+                parent_packet_id=latest_packet_id,
+                sequence=1,
+            )
+            self._record_packet(
+                session,
+                threshold_packet,
+                source="stage_audit_threshold",
+                retention_mode="retained",
+                request_context=request_context,
+                parent_packet_id=latest_packet_id,
+                sequence=2,
             )
 
             frame_checks = _evaluate_frame_checks(frame_packet)
@@ -650,6 +772,50 @@ class EngineApiService:
                 "cutoff_at": datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat(timespec="seconds"),
                 "remaining_sessions": len(self._sessions) if not dry_run else len(self._sessions),
             }
+
+    def _record_packet(
+        self,
+        session: EngineSession,
+        packet: Dict[str, Any],
+        *,
+        source: str,
+        retention_mode: str,
+        request_context: Optional[Dict[str, Any]] = None,
+        parent_packet_id: Optional[str] = None,
+        sequence: Optional[int] = None,
+    ) -> None:
+        if not self._record_provenance:
+            return
+        record_packet_observation(
+            packet=packet,
+            source=source,
+            retention_mode=retention_mode,  # type: ignore[arg-type]
+            request_context=request_context,
+            session_id=session.session_id,
+            owner_id=session.owner_id,
+            parent_packet_id=parent_packet_id,
+            sequence=sequence,
+        )
+
+    def _assert_provenance_owner_access(
+        self,
+        records_or_nodes: list[Dict[str, Any]],
+        *,
+        owner_id: Optional[str],
+    ) -> None:
+        normalized_owner = _normalize_owner_id(owner_id)
+        if normalized_owner is None:
+            return
+        with self._lock:
+            for item in records_or_nodes:
+                session_id = item.get("session_id")
+                if not isinstance(session_id, str) or not session_id:
+                    continue
+                session = self._sessions.get(session_id)
+                if session is None:
+                    raise PermissionError("session is not available for provenance owner verification")
+                if session.owner_id != normalized_owner:
+                    raise PermissionError("session owner mismatch")
 
     def _apply_retention_policy(self) -> None:
         retention_seconds = _configured_retention_seconds()
@@ -839,6 +1005,8 @@ class EngineApiService:
         carry_forward: Optional[Dict[str, Any]],
         record_action: bool,
         persist: bool,
+        request_context: Optional[Dict[str, Any]] = None,
+        record_provenance: bool = True,
     ) -> Dict[str, Any]:
         nav = session.navigation
         typed_sign = _build_sign(session.family, sign)
@@ -856,6 +1024,14 @@ class EngineApiService:
             # API session_id is canonical for all externally exposed packets.
             entry.iteration_packet["meta"]["session_id"] = session.session_id
             session.packets.append(entry.iteration_packet)
+            if record_provenance:
+                self._record_packet(
+                    session,
+                    entry.iteration_packet,
+                    source="runtime_iteration",
+                    retention_mode="retained",
+                    request_context=request_context,
+                )
             payload["iteration_packet"] = entry.iteration_packet
 
         if record_action:
@@ -1102,6 +1278,7 @@ class EngineApiService:
                         carry_forward=_json_copy(action.get("carry_forward")),
                         record_action=True,
                         persist=False,
+                        record_provenance=False,
                     )
                 elif kind == "reframe":
                     frame = _json_copy(action.get("frame"))
@@ -1728,10 +1905,15 @@ def _stored_stage_audit_context(workspace_state: Dict[str, Any]) -> Optional[Dic
 
 
 def _latest_iteration_packet(session: EngineSession) -> Optional[Dict[str, Any]]:
-    if not session.packets:
-        return None
-    candidate = session.packets[-1]
-    return candidate if isinstance(candidate, dict) else None
+    for candidate in reversed(session.packets):
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("schema_id") == "nepsis.iteration_packet":
+            return candidate
+        meta = candidate.get("meta")
+        if isinstance(meta, dict) and meta.get("packet_id"):
+            return candidate
+    return None
 
 
 def _packet_meta_value(packet: Optional[Dict[str, Any]], key: str) -> Any:

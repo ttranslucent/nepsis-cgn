@@ -18,6 +18,7 @@ from uuid import uuid4
 from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from ..mcp.handler import handle_mcp_request
+from ..provenance import record_packet_observation
 from .operator_packet import (
     abandon_packet,
     commit_iteration,
@@ -81,6 +82,10 @@ ROUTES = (
     {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
     {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
     {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
+    {"method": "GET", "path": "/v1/sessions/{session_id}/provenance", "description": "Get packet provenance graph"},
+    {"method": "GET", "path": "/v1/sessions/{session_id}/audit-export", "description": "Export session audit trail"},
+    {"method": "GET", "path": "/v1/provenance/requests/{request_id}", "description": "Reconstruct packet flow by request"},
+    {"method": "GET", "path": "/v1/provenance/packets/{packet_id}/lineage", "description": "Get packet lineage graph"},
 )
 
 
@@ -149,10 +154,40 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             self._safe(lambda: self._get_packets(session_id, query))
             return
 
+        m_provenance = re.fullmatch(r"/v1/sessions/([^/]+)/provenance", path)
+        if m_provenance:
+            session_id = m_provenance.group(1)
+            self._safe(lambda: API.get_packet_provenance(session_id, owner_id=_handler_owner_id(self)))
+            return
+
+        m_audit_export = re.fullmatch(r"/v1/sessions/([^/]+)/audit-export", path)
+        if m_audit_export:
+            session_id = m_audit_export.group(1)
+            self._safe(lambda: API.export_session_audit(session_id, owner_id=_handler_owner_id(self)))
+            return
+
+        m_request_provenance = re.fullmatch(r"/v1/provenance/requests/([^/]+)", path)
+        if m_request_provenance:
+            request_id = m_request_provenance.group(1)
+            self._safe(lambda: API.get_request_provenance(request_id, owner_id=_handler_owner_id(self)))
+            return
+
+        m_packet_lineage = re.fullmatch(r"/v1/provenance/packets/([^/]+)/lineage", path)
+        if m_packet_lineage:
+            packet_id = m_packet_lineage.group(1)
+            self._safe(lambda: API.get_packet_lineage(packet_id, owner_id=_handler_owner_id(self)))
+            return
+
         m_stage_audit = re.fullmatch(r"/v1/sessions/([^/]+)/stage-audit", path)
         if m_stage_audit:
             session_id = m_stage_audit.group(1)
-            self._safe(lambda: API.stage_audit_session(session_id, owner_id=_handler_owner_id(self)))
+            self._safe(
+                lambda: API.stage_audit_session(
+                    session_id,
+                    owner_id=_handler_owner_id(self),
+                    request_context=_handler_request_context(self),
+                )
+            )
             return
 
         self._send_json(404, {"error": "Not found"})
@@ -202,7 +237,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/operator-packet/report/lock":
-            self._safe(lambda: lock_operator_packet_report(packet=_required_operator_packet(body)))
+            self._safe(lambda: self._operator_packet_lock_report(body))
             return
 
         if path == "/v1/operator-packet/threshold":
@@ -313,6 +348,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             override_reason=body.get("override_reason"),
             carry_forward=body.get("carry_forward"),
             owner_id=_handler_owner_id(self),
+            request_context=_handler_request_context(self),
         )
 
     def _reframe_session(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -346,6 +382,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             context=context,
             persist_context=bool(body.get("persist_context", False)),
             owner_id=_handler_owner_id(self),
+            request_context=_handler_request_context(self),
         )
 
     def _update_workspace_state(self, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -365,7 +402,14 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         input_text = body.get("input_text", body.get("inputText"))
         if input_text is not None and not isinstance(input_text, str):
             raise ValueError("input_text must be a string when provided")
-        return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+        packet = build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+        record_packet_observation(
+            packet=packet,
+            source="backend_mvp",
+            retention_mode="retained",
+            request_context=_handler_request_context(self),
+        )
+        return packet
 
     def _operator_lock_frame(self, body: dict[str, Any]) -> dict[str, Any]:
         frame = body.get("frame")
@@ -417,13 +461,16 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
         if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
             raise ValueError("carry_forward_frame must be an object when provided")
-        return API.operator_commit_iteration(carry_forward_frame=carry_forward_frame)
+        return API.operator_commit_iteration(
+            carry_forward_frame=carry_forward_frame,
+            request_context=_handler_request_context(self),
+        )
 
     def _operator_abandon_session(self, body: dict[str, Any]) -> dict[str, Any]:
         reason = body.get("reason", "")
         if not isinstance(reason, str):
             raise ValueError("reason must be a string when provided")
-        return API.operator_abandon_session(reason=reason)
+        return API.operator_abandon_session(reason=reason, request_context=_handler_request_context(self))
 
     def _operator_packet_start(self, body: dict[str, Any]) -> dict[str, Any]:
         family = _operator_family(body.get("family", "safety"))
@@ -436,19 +483,47 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         calibration = body.get("governance_calibration", body.get("calibration"))
         if calibration is not None and not isinstance(calibration, dict):
             raise ValueError("calibration must be an object when provided")
-        return start_operator_packet(
-            family=family,
-            frame=frame,
-            governance_costs=governance,
-            governance_calibration=calibration,
-            manifest_path=_validated_manifest_path(body.get("manifest_path")),
+        return self._record_stateless_packet_result(
+            start_operator_packet(
+                family=family,
+                frame=frame,
+                governance_costs=governance,
+                governance_calibration=calibration,
+                manifest_path=_validated_manifest_path(body.get("manifest_path")),
+            )
         )
 
     def _operator_packet_state(self, body: dict[str, Any]) -> dict[str, Any]:
         packet = body.get("packet")
         if packet is not None and not isinstance(packet, dict):
             raise ValueError("operator packet payload requires object field 'packet' when provided")
-        return inspect_operator_packet(packet)
+        return self._record_stateless_packet_result(inspect_operator_packet(packet))
+
+    def _operator_packet_lock_report(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._record_stateless_packet_result(
+            lock_operator_packet_report(packet=_required_operator_packet(body))
+        )
+
+    def _record_stateless_packet_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        if result.get("schema_id") in {
+            "nepsis.operator_packet",
+            "nepsis.operator_packet_state",
+            "nepsis.phase_rejection",
+        }:
+            record_packet_observation(
+                packet=result,
+                source="stateless_operator_packet",
+                retention_mode="hash_only",
+                request_context=_handler_request_context(self),
+            )
+        return result
+
+    def _request_context(self) -> dict[str, Any]:
+        return {
+            "request_id": self._request_id,
+            "method": self.command,
+            "path": urlparse(self.path).path,
+        }
 
     def _operator_packet_lock_frame(self, body: dict[str, Any]) -> dict[str, Any]:
         packet = _required_operator_packet(body)
@@ -462,13 +537,15 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         calibration = body.get("governance_calibration", body.get("calibration"))
         if calibration is not None and not isinstance(calibration, dict):
             raise ValueError("calibration must be an object when provided")
-        return lock_operator_packet_frame(
-            packet=packet,
-            frame=frame,
-            family=_operator_family(family) if family is not None else None,
-            governance_costs=governance,
-            governance_calibration=calibration,
-            manifest_path=_validated_manifest_path(body.get("manifest_path")),
+        return self._record_stateless_packet_result(
+            lock_operator_packet_frame(
+                packet=packet,
+                frame=frame,
+                family=_operator_family(family) if family is not None else None,
+                governance_costs=governance,
+                governance_calibration=calibration,
+                manifest_path=_validated_manifest_path(body.get("manifest_path")),
+            )
         )
 
     def _operator_packet_run_report(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -482,11 +559,13 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             raise ValueError("operator packet report payload requires object field 'sign'")
         if interpretation is not None and not isinstance(interpretation, dict):
             raise ValueError("interpretation must be an object when provided")
-        return run_operator_packet_report(
-            packet=packet,
-            report_text=report_text,
-            sign=sign,
-            interpretation=interpretation,
+        return self._record_stateless_packet_result(
+            run_operator_packet_report(
+                packet=packet,
+                report_text=report_text,
+                sign=sign,
+                interpretation=interpretation,
+            )
         )
 
     def _operator_packet_set_threshold_decision(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -497,21 +576,25 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             raise ValueError("operator packet threshold payload requires string field 'decision'")
         if not isinstance(hold_reason, str):
             raise ValueError("hold_reason must be a string when provided")
-        return set_operator_packet_threshold_decision(packet=packet, decision=decision, hold_reason=hold_reason)
+        return self._record_stateless_packet_result(
+            set_operator_packet_threshold_decision(packet=packet, decision=decision, hold_reason=hold_reason)
+        )
 
     def _operator_packet_commit_iteration(self, body: dict[str, Any]) -> dict[str, Any]:
         packet = _required_operator_packet(body)
         carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
         if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
             raise ValueError("carry_forward_frame must be an object when provided")
-        return commit_iteration(packet=packet, carry_forward_frame=carry_forward_frame)
+        return self._record_stateless_packet_result(
+            commit_iteration(packet=packet, carry_forward_frame=carry_forward_frame)
+        )
 
     def _operator_packet_abandon(self, body: dict[str, Any]) -> dict[str, Any]:
         packet = _required_operator_packet(body)
         reason = body.get("reason", "")
         if not isinstance(reason, str):
             raise ValueError("reason must be a string when provided")
-        return abandon_packet(packet=packet, reason=reason)
+        return self._record_stateless_packet_result(abandon_packet(packet=packet, reason=reason))
 
     def _list_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=50)
@@ -810,6 +893,13 @@ def _request_owner_id(headers: Any) -> str | None:
 
 def _handler_owner_id(handler: Any) -> str | None:
     return _request_owner_id(getattr(handler, "headers", {}))
+
+
+def _handler_request_context(handler: Any) -> dict[str, Any] | None:
+    request_context = getattr(handler, "_request_context", None)
+    if not callable(request_context):
+        return None
+    return request_context()
 
 
 def _query_required_float(query: dict[str, list[str]], name: str) -> float:

@@ -243,6 +243,86 @@ export type EnginePacketResponse = {
   packets: Record<string, unknown>[];
 };
 
+export type PacketProvenanceRecord = {
+  schema_id: "nepsis.packet_provenance_record";
+  schema_version: string;
+  record_id: string;
+  created_at: string;
+  source: string;
+  direction: string;
+  packet_id: string;
+  packet_schema_id: string | null;
+  packet_schema_version: string | null;
+  session_id: string | null;
+  parent_packet_id: string | null;
+  payload_hash: string;
+  request: {
+    request_id: string | null;
+    method: string | null;
+    path: string | null;
+    sequence: number | null;
+    owner_hash?: string;
+  };
+  retention: {
+    mode: "retained" | "hash_only";
+    payload_retained: boolean;
+  };
+  integrity: {
+    payload_hash_verified: boolean | null;
+    signature_verified: boolean | null;
+  };
+  signature: {
+    algorithm: "unsigned" | "hmac-sha256" | string;
+    key_id: string | null;
+    signature: string | null;
+    signed_at: string | null;
+  };
+  payload?: Record<string, unknown>;
+};
+
+export type PacketProvenanceGraph = {
+  nodes: Array<{
+    packet_id: string;
+    packet_schema_id: string | null;
+    session_id: string | null;
+    source: string | null;
+    payload_hash: string | null;
+    signature: PacketProvenanceRecord["signature"] | null;
+    retention: PacketProvenanceRecord["retention"] | null;
+    created_at: string | null;
+    request_id: string | null;
+  }>;
+  edges: Array<{
+    parent_packet_id: string;
+    child_packet_id: string;
+  }>;
+};
+
+export type PacketProvenanceResponse = {
+  session_id: string;
+  count: number;
+  records: PacketProvenanceRecord[];
+  graph: PacketProvenanceGraph;
+};
+
+export type SessionAuditExport = {
+  schema_id: "nepsis.audit_export";
+  schema_version: string;
+  created_at: string;
+  session: EngineSessionSummary;
+  packets: Record<string, unknown>[];
+  provenance: {
+    records: PacketProvenanceRecord[];
+    graph: PacketProvenanceGraph;
+  };
+  verification: {
+    record_count: number;
+    hash_failures: string[];
+    signature_failures: string[];
+    hash_only_omissions: string[];
+  };
+};
+
 export type NepsisMvpAuditEvent = {
   order: number;
   stage: string;
@@ -533,6 +613,20 @@ export const engineClient = {
     return requestEngine<EnginePacketResponse>(`/sessions/${encodeURIComponent(sessionId)}/packets`, {
       method: "GET",
     });
+  },
+
+  getSessionProvenance(sessionId: string): Promise<PacketProvenanceResponse> {
+    return requestEngine<PacketProvenanceResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/provenance`,
+      { method: "GET" },
+    );
+  },
+
+  getSessionAuditExport(sessionId: string): Promise<SessionAuditExport> {
+    return requestEngine<SessionAuditExport>(
+      `/sessions/${encodeURIComponent(sessionId)}/audit-export`,
+      { method: "GET" },
+    );
   },
 
   updateWorkspaceState(
