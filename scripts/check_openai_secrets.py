@@ -35,6 +35,8 @@ SKIP_DIRS = {
 }
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 PUBLIC_SITE_FLAG = "NEXT_PUBLIC_NEPSIS_PUBLIC_SITE"
+OPERATOR_MODE_FLAG = "NEPSIS_DEPLOYMENT_MODE"
+OPERATOR_SITE_FLAG = "NEXT_PUBLIC_NEPSIS_OPERATOR_SITE"
 UNSAFE_PUBLIC_FLAGS = {
     "NEPSIS_MODEL_ROUTES_ENABLED",
     "NEPSIS_ENGINE_ALLOW_ANON",
@@ -185,33 +187,62 @@ def _scan_text(path: Path, text: str) -> list[Issue]:
     public_mode = _env_true(public_site.value if public_site else None) or (
         node_env is not None and node_env.value.strip().lower() == "production"
     )
-    if not public_mode:
-        return issues
+    if public_mode:
+        public_context = (
+            f"{PUBLIC_SITE_FLAG}=true"
+            if public_site and _env_true(public_site.value)
+            else "NODE_ENV=production"
+        )
+        for name in sorted(UNSAFE_PUBLIC_FLAGS):
+            assignment = assignments.get(name)
+            if assignment and _env_true(assignment.value):
+                issues.append(
+                    Issue(
+                        path=path,
+                        line=assignment.line,
+                        message=f"{name}=true cannot be used when {public_context}.",
+                    )
+                )
 
-    public_context = (
-        f"{PUBLIC_SITE_FLAG}=true"
-        if public_site and _env_true(public_site.value)
-        else "NODE_ENV=production"
-    )
-    for name in sorted(UNSAFE_PUBLIC_FLAGS):
-        assignment = assignments.get(name)
-        if assignment and _env_true(assignment.value):
+        for name in sorted(OPENAI_SERVER_KEY_NAMES):
+            assignment = assignments.get(name)
+            if assignment and assignment.value.strip():
+                issues.append(
+                    Issue(
+                        path=path,
+                        line=assignment.line,
+                        message=f"{name} must stay unset when {public_context}.",
+                    )
+                )
+
+    deployment_mode = assignments.get(OPERATOR_MODE_FLAG)
+    operator_site = assignments.get(OPERATOR_SITE_FLAG)
+    operator_mode = (
+        deployment_mode is not None and deployment_mode.value.strip().lower() == "operator"
+    ) or _env_true(operator_site.value if operator_site else None)
+    if operator_mode:
+        operator_context = (
+            f"{OPERATOR_MODE_FLAG}=operator"
+            if deployment_mode is not None and deployment_mode.value.strip().lower() == "operator"
+            else f"{OPERATOR_SITE_FLAG}=true"
+        )
+        preview = assignments.get("NEPSIS_AUTH_ALLOW_CODE_PREVIEW")
+        if preview and _env_true(preview.value):
             issues.append(
                 Issue(
                     path=path,
-                    line=assignment.line,
-                    message=f"{name}=true cannot be used when {public_context}.",
+                    line=preview.line,
+                    message=f"NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true cannot be used when {operator_context}.",
                 )
             )
 
-    for name in sorted(OPENAI_SERVER_KEY_NAMES):
-        assignment = assignments.get(name)
-        if assignment and assignment.value.strip():
+        allowed_emails = assignments.get("NEPSIS_AUTH_ALLOWED_EMAILS")
+        if not allowed_emails or not allowed_emails.value.strip():
             issues.append(
                 Issue(
                     path=path,
-                    line=assignment.line,
-                    message=f"{name} must stay unset when {public_context}.",
+                    line=deployment_mode.line if deployment_mode else operator_site.line if operator_site else 1,
+                    message=f"NEPSIS_AUTH_ALLOWED_EMAILS must be set when {operator_context}.",
                 )
             )
 

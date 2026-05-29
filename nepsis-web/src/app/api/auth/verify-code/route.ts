@@ -8,6 +8,7 @@ import {
   cookieOptions,
   createLoginSession,
   normalizeEmail,
+  operatorEmailAllowed,
   readCookieFromHeader,
   verifyLoginChallenge,
 } from "@/lib/nepsisAuth";
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
   const email = normalizeEmail((body as { email?: unknown } | null)?.email);
   const rawCode = (body as { code?: unknown } | null)?.code;
   const code = typeof rawCode === "string" ? rawCode.trim() : "";
+  const rememberDevice = (body as { rememberDevice?: unknown } | null)?.rememberDevice !== false;
   if (!email || !code) {
     return NextResponse.json({ error: "Email and code required" }, { status: 400 });
   }
@@ -35,6 +37,10 @@ export async function POST(req: Request) {
       { error: rateLimit.error, retryAfterSeconds: rateLimit.retryAfterSeconds },
       { status: 429 },
     );
+  }
+
+  if (!operatorEmailAllowed(email)) {
+    return NextResponse.json({ error: "Code expired or not found" }, { status: 400 });
   }
 
   const challenge = readCookieFromHeader(
@@ -72,7 +78,7 @@ export async function POST(req: Request) {
   response.cookies.set(
     NEPSIS_USER_COOKIE,
     sessionToken,
-    cookieOptions(LOGIN_SESSION_TTL_SECONDS),
+    cookieOptions(rememberDevice ? LOGIN_SESSION_TTL_SECONDS : undefined),
   );
   response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
   return response;

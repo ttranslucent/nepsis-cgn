@@ -29,8 +29,11 @@ type StatusPayload = {
     loginConfigured: boolean;
     authSecretConfigured?: boolean;
     authSecretMode?: "configured" | "development-fallback" | "missing";
+    allowedEmailsConfigured?: boolean;
     emailConfigured?: boolean;
     previewCodesEnabled: boolean;
+    persistentSessionDays?: number;
+    sessionRevokeBeforeConfigured?: boolean;
     operatorLoginReady?: boolean;
   };
   models: {
@@ -234,8 +237,19 @@ export default function StatusPage() {
           >
             <p>Public MVP access does not require login.</p>
             <p>{authSecretLabel(status.auth)}</p>
+            <p>
+              {status.auth.allowedEmailsConfigured
+                ? "Operator email allowlist configured."
+                : "Operator email allowlist missing."}
+            </p>
             <p>{status.auth.emailConfigured ? "Email login configured." : "Email login not configured."}</p>
             <p>{status.auth.previewCodesEnabled ? "Preview codes enabled." : "Preview codes disabled."}</p>
+            <p>Persistent session window: {status.auth.persistentSessionDays ?? 30} days.</p>
+            <p>
+              {status.auth.sessionRevokeBeforeConfigured
+                ? "Global session revocation configured."
+                : "Global session revocation not configured."}
+            </p>
           </StatusCard>
 
           <StatusCard title="Model Routes" ok={!status.models.enabled || status.models.hasServerOpenAiKey}>

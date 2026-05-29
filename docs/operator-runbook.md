@@ -65,6 +65,8 @@ npm run dev
 - Web has `NEPSIS_API_BASE_URL=https://<render-service>` and matching
   `NEPSIS_API_TOKEN`.
 - Web has a long random `NEPSIS_AUTH_SECRET`.
+- Web sets `NEPSIS_AUTH_ALLOWED_EMAILS` to the exact operator email addresses
+  permitted to request OTP login.
 - Web sets `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and
   `NEPSIS_MODEL_ROUTES_ENABLED=false` for the public production site.
 - Web does not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`,
@@ -75,7 +77,8 @@ npm run dev
   `NEPSIS_MODEL_ROUTES_ENABLED=true`, and a server-side model key. Do not reuse
   that configuration for the public demo deployment.
 - Login email delivery is configured with `RESEND_API_KEY` and
-  `NEPSIS_AUTH_FROM_EMAIL`.
+  `NEPSIS_AUTH_FROM_EMAIL`; preview-code login stays disabled on shared
+  operator deployments.
 - `.venv/bin/python scripts/check_openai_secrets.py --all` passes before
   deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
@@ -96,6 +99,8 @@ NEPSIS_LIVE_OPERATOR_ENABLED=true
 NEPSIS_API_BASE_URL=https://<private-render-service>
 NEPSIS_API_TOKEN=<private-backend-token>
 NEPSIS_AUTH_SECRET=<long-random-secret>
+NEPSIS_AUTH_ALLOWED_EMAILS=<operator-email-list>
+NEPSIS_AUTH_SESSION_REVOKE_BEFORE=
 RESEND_API_KEY=<resend-api-key>
 NEPSIS_AUTH_FROM_EMAIL=Nepsis Operator <login@operator.example>
 NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false

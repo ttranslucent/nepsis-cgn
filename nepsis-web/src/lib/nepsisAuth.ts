@@ -1,10 +1,11 @@
 import crypto from "crypto";
-import { envFlag, publicSiteMode } from "@/lib/publicMode";
+import { envFlag, operatorSiteMode, publicSiteMode } from "@/lib/publicMode";
 
 export const NEPSIS_USER_COOKIE = "nepsis_user";
 export const NEPSIS_LOGIN_CHALLENGE_COOKIE = "nepsis_login_challenge";
 export const LOGIN_CODE_TTL_SECONDS = 10 * 60;
-export const LOGIN_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+export const LOGIN_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+export const LOGIN_SESSION_DAYS = 30;
 const RESEND_REQUEST_TIMEOUT_MS = 8000;
 const LOGIN_REQUEST_WINDOW_SECONDS = 15 * 60;
 const LOGIN_REQUEST_MAX_ATTEMPTS = 5;
@@ -41,7 +42,7 @@ type LoginRateLimitResult =
   | { ok: false; retryAfterSeconds: number; error: string };
 
 export function previewCodesAllowed(): boolean {
-  if (publicSiteMode()) {
+  if (process.env.NODE_ENV === "production" || publicSiteMode() || operatorSiteMode()) {
     return false;
   }
   return envFlag("NEPSIS_AUTH_ALLOW_CODE_PREVIEW");
@@ -66,6 +67,28 @@ export function loginEmailConfigured(): boolean {
   return Boolean(resendApiKey && from && !isPlaceholderResendConfig(resendApiKey, from));
 }
 
+function allowedOperatorEmailSet(): Set<string> {
+  const raw = process.env.NEPSIS_AUTH_ALLOWED_EMAILS?.trim() ?? "";
+  const emails = raw
+    .split(/[\s,]+/)
+    .map((value) => normalizeEmail(value))
+    .filter((value): value is string => Boolean(value));
+  return new Set(emails);
+}
+
+export function operatorEmailAllowlistConfigured(): boolean {
+  return allowedOperatorEmailSet().size > 0;
+}
+
+export function operatorEmailAllowed(email: string): boolean {
+  const normalized = normalizeEmail(email);
+  return Boolean(normalized && allowedOperatorEmailSet().has(normalized));
+}
+
+export function sessionRevokeBeforeConfigured(): boolean {
+  return Boolean(process.env.NEPSIS_AUTH_SESSION_REVOKE_BEFORE?.trim());
+}
+
 export function authSecretStatus(): AuthSecretStatus {
   const configured = process.env.NEPSIS_AUTH_SECRET?.trim();
   if (configured) {
@@ -78,7 +101,7 @@ export function authSecretStatus(): AuthSecretStatus {
 }
 
 export function operatorLoginReady(): boolean {
-  return authSecretStatus().ready && (loginEmailConfigured() || previewCodesAllowed());
+  return authSecretStatus().ready && operatorEmailAllowlistConfigured() && (loginEmailConfigured() || previewCodesAllowed());
 }
 
 function authSecret(): string {
@@ -234,6 +257,18 @@ export function createLoginSession(email: string): string {
   });
 }
 
+function sessionRevokeBeforeMs(): number | null {
+  const raw = process.env.NEPSIS_AUTH_SESSION_REVOKE_BEFORE?.trim();
+  if (!raw) {
+    return null;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return parsed;
+}
+
 export function readNepsisUserFromCookieValue(token: string | null | undefined): string | null {
   if (!token) {
     return null;
@@ -254,6 +289,10 @@ export function readNepsisUserFromCookieValue(token: string | null | undefined):
   if (Date.now() > session.expiresAt) {
     return null;
   }
+  const revokeBefore = sessionRevokeBeforeMs();
+  if (revokeBefore !== null && session.issuedAt < revokeBefore) {
+    return null;
+  }
   return email;
 }
 
@@ -269,17 +308,17 @@ export function normalizeEmail(value: unknown): string | null {
 }
 
 export function generateLoginCode(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 }
 
-export function hashLoginCode(code: string): string {
-  return crypto.createHash("sha256").update(code).digest("hex");
+export function hashLoginCode(email: string, code: string): string {
+  return crypto.createHmac("sha256", authSecret()).update(`${email}\0${code.trim()}`).digest("base64url");
 }
 
 export function createLoginChallenge(email: string, code: string): string {
   return encodeSignedPayload({
     email,
-    hash: hashLoginCode(code),
+    hash: hashLoginCode(email, code),
     expiresAt: Date.now() + LOGIN_CODE_TTL_SECONDS * 1000,
   });
 }
@@ -302,7 +341,7 @@ export function verifyLoginChallenge(
   if (Date.now() > challenge.expiresAt) {
     return { ok: false, error: "Code expired or not found" };
   }
-  if (challenge.hash !== hashLoginCode(code.trim())) {
+  if (challenge.hash !== hashLoginCode(email, code)) {
     return { ok: false, error: "Invalid code" };
   }
   return { ok: true };
@@ -327,14 +366,17 @@ export function readNepsisUserFromRequest(request: Request): string | null {
   return readNepsisUserFromCookieValue(readCookieFromHeader(cookieHeader, NEPSIS_USER_COOKIE));
 }
 
-export function cookieOptions(maxAge: number) {
-  return {
+export function cookieOptions(maxAge?: number) {
+  const options = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
-    maxAge,
   };
+  if (typeof maxAge === "number") {
+    return { ...options, maxAge };
+  }
+  return options;
 }
 
 async function sendWithResend(email: string, code: string): Promise<boolean> {

@@ -16,6 +16,7 @@ export default defineConfig({
     command:
       `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=false ` +
       `NEPSIS_AUTH_SECRET=playwright-preview-auth-secret ` +
+      `NEPSIS_AUTH_ALLOWED_EMAILS=operator@example.com ` +
       `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true ` +
       `RESEND_API_KEY= NEPSIS_AUTH_FROM_EMAIL= ` +
       `npm run dev -- --hostname 127.0.0.1 --port ${port}`,

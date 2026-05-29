@@ -43,7 +43,8 @@ The script defaults to `python3.11`. If that executable is unavailable, it uses
 - Keep `/mvp` as the frozen deterministic demo path.
 - Public production should set `NEPSIS_API_BASE_URL`, matching
   `NEPSIS_API_TOKEN`, `NEPSIS_AUTH_SECRET`, `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`,
-  and `NEPSIS_MODEL_ROUTES_ENABLED=false`.
+  and `NEPSIS_MODEL_ROUTES_ENABLED=false`. Operator deployments additionally
+  require `NEPSIS_AUTH_ALLOWED_EMAILS` for exact-email OTP login.
 - Public backend deployment should keep `NEPSIS_API_ALLOW_ANON=false`; public
   visitors reach the frozen MVP through the web proxy, not direct anonymous API
   access.

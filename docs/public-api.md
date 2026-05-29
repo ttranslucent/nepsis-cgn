@@ -60,9 +60,9 @@ routes such as `POST /api/operator/model`, model output is advisory draft input
 for operator review, not a commitment or packet substitute.
 
 Public demo deployments should keep `/operator` gated and model routes disabled.
-Private operator deployments must configure backend auth, login email delivery,
-rate limits, token caps, and server-side model credentials before enabling live
-model routes.
+Private operator deployments must configure backend auth, exact-email OTP
+allowlisting, login email delivery, rate limits, token caps, and server-side
+model credentials before enabling live model routes.
 
 ## MCP Endpoint
 

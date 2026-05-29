@@ -10,10 +10,13 @@ import {
 import { hasConfiguredOpenAiKey } from "@/lib/openaiClient";
 import { buildBundledMvpFallbackResponse } from "@/lib/mvpFallback";
 import {
+  LOGIN_SESSION_DAYS,
   authSecretStatus,
   loginEmailConfigured,
+  operatorEmailAllowlistConfigured,
   operatorLoginReady,
   previewCodesAllowed,
+  sessionRevokeBeforeConfigured,
 } from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
@@ -166,7 +169,9 @@ export async function GET() {
   ]);
   const authSecret = authSecretStatus();
   const emailConfigured = loginEmailConfigured();
+  const allowedEmailsConfigured = operatorEmailAllowlistConfigured();
   const previewCodesEnabled = previewCodesAllowed();
+  const revokeBeforeConfigured = sessionRevokeBeforeConfigured();
   const modelsEnabled = modelRoutesEnabled();
   const operatorMode = operatorSiteMode();
   const operatorEnabled = liveOperatorEnabled();
@@ -213,8 +218,11 @@ export async function GET() {
       loginConfigured: authSecret.ready,
       authSecretConfigured: authSecret.configured,
       authSecretMode: authSecret.mode,
+      allowedEmailsConfigured,
       emailConfigured,
       previewCodesEnabled,
+      persistentSessionDays: LOGIN_SESSION_DAYS,
+      sessionRevokeBeforeConfigured: revokeBeforeConfigured,
       operatorLoginReady: operatorLoginReady(),
     },
     models: {
@@ -283,10 +291,16 @@ export async function GET() {
           },
           {
             id: "real-login",
-            ok: authSecret.ready && emailConfigured && !previewCodesEnabled,
-            label: "Real passwordless login ready",
-            detail: "Operator login should use signed cookies and email delivery, not preview codes.",
-            env: ["NEPSIS_AUTH_SECRET", "RESEND_API_KEY", "NEPSIS_AUTH_FROM_EMAIL", "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false"],
+            ok: authSecret.ready && allowedEmailsConfigured && emailConfigured && !previewCodesEnabled,
+            label: "Real operator OTP login ready",
+            detail: "Operator login should use signed cookies, exact-email authorization, and email delivery, not preview codes.",
+            env: [
+              "NEPSIS_AUTH_SECRET",
+              "NEPSIS_AUTH_ALLOWED_EMAILS",
+              "RESEND_API_KEY",
+              "NEPSIS_AUTH_FROM_EMAIL",
+              "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false",
+            ],
           },
           {
             id: "live-model-routes",

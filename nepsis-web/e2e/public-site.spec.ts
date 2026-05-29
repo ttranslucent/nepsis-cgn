@@ -109,9 +109,12 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mvp.schemaId).toBe("nepsis.mvp_packet");
   expect(payload.mvp.noLoginRequired).toBe(true);
   expect(payload.auth.loginConfigured).toBe(true);
+  expect(payload.auth.allowedEmailsConfigured).toBe(false);
   expect(payload.auth.emailConfigured).toBe(false);
   expect(payload.auth.previewCodesEnabled).toBe(false);
   expect(payload.auth.operatorLoginReady).toBe(false);
+  expect(payload.auth.persistentSessionDays).toBe(30);
+  expect(payload.auth.sessionRevokeBeforeConfigured).toBe(false);
   expect(payload.models.enabled).toBe(false);
   expect(payload.models.hasServerOpenAiKey).toBe(false);
   expect(payload.mcp.local.available).toBe(true);
@@ -159,7 +162,14 @@ test("status page exposes safe public system posture", async ({ page }) => {
           authReady: false,
           modelReady: false,
         },
-        auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
+        auth: {
+          loginConfigured: false,
+          allowedEmailsConfigured: false,
+          emailConfigured: false,
+          previewCodesEnabled: false,
+          persistentSessionDays: 30,
+          sessionRevokeBeforeConfigured: false,
+        },
         models: { enabled: false, hasServerOpenAiKey: false },
         setup: {
           publicSite: {

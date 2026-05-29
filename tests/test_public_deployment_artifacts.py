@@ -41,6 +41,8 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
     assert public["NEPSIS_MODEL_ROUTES_ENABLED"] == "false"
     assert public["NEPSIS_ENGINE_ALLOW_ANON"] == "false"
     assert public["NEPSIS_AUTH_ALLOW_CODE_PREVIEW"] == "false"
+    assert public.get("NEPSIS_AUTH_ALLOWED_EMAILS", "") == ""
+    assert public.get("NEPSIS_AUTH_SESSION_REVOKE_BEFORE", "") == ""
     assert public.get("NEPSIS_DEPLOYMENT_MODE", "") != "operator"
     assert public.get("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE", "") != "true"
     assert public.get("NEPSIS_LIVE_OPERATOR_ENABLED", "") != "true"
@@ -54,6 +56,8 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
     assert operator["NEPSIS_MODEL_ROUTES_ENABLED"] == "true"
     assert operator["NEPSIS_ENGINE_ALLOW_ANON"] == "false"
     assert operator["NEPSIS_AUTH_ALLOW_CODE_PREVIEW"] == "false"
+    assert operator["NEPSIS_AUTH_ALLOWED_EMAILS"]
+    assert operator.get("NEPSIS_AUTH_SESSION_REVOKE_BEFORE", "") == ""
     assert operator["NEPSIS_AUTH_SECRET"]
     assert operator["RESEND_API_KEY"]
     assert operator["NEPSIS_AUTH_FROM_EMAIL"]
@@ -160,6 +164,9 @@ def test_site_smoke_script_checks_hosted_mcp_boundary() -> None:
                         },
                         "auth": {
                             "previewCodesEnabled": False,
+                            "allowedEmailsConfigured": False,
+                            "persistentSessionDays": 30,
+                            "sessionRevokeBeforeConfigured": False,
                             "emailConfigured": False,
                             "operatorLoginReady": False,
                         },

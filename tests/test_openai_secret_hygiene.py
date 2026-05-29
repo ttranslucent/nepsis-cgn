@@ -72,6 +72,30 @@ def test_scan_blocks_bad_public_site_env_combinations(tmp_path: Path) -> None:
     assert "OPENAI_API_KEY must stay unset when NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true" in result.stdout
 
 
+def test_scan_blocks_bad_operator_auth_env_combinations(tmp_path: Path) -> None:
+    target = tmp_path / ".env.operator"
+    target.write_text(
+        textwrap.dedent(
+            """
+            NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=false
+            NEPSIS_DEPLOYMENT_MODE=operator
+            NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true
+            NEPSIS_AUTH_SECRET=from-secret-manager
+            RESEND_API_KEY=from-secret-manager
+            NEPSIS_AUTH_FROM_EMAIL=login@operator.example
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_scan(target)
+
+    assert result.returncode == 1
+    assert "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true cannot be used when NEPSIS_DEPLOYMENT_MODE=operator" in result.stdout
+    assert "NEPSIS_AUTH_ALLOWED_EMAILS must be set when NEPSIS_DEPLOYMENT_MODE=operator" in result.stdout
+
+
 def test_current_web_env_examples_pass_secret_hygiene_scan() -> None:
     result = run_scan(
         ROOT / "nepsis-web" / ".env.example",

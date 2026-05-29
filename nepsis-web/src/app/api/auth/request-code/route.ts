@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { publicSiteMode } from "@/lib/publicMode";
 
 import {
   LOGIN_CODE_TTL_SECONDS,
@@ -9,6 +10,8 @@ import {
   deliverLoginCode,
   generateLoginCode,
   normalizeEmail,
+  operatorEmailAllowlistConfigured,
+  operatorEmailAllowed,
 } from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
@@ -32,6 +35,25 @@ export async function POST(req: Request) {
       { error: rateLimit.error, retryAfterSeconds: rateLimit.retryAfterSeconds },
       { status: 429 },
     );
+  }
+
+  if (!operatorEmailAllowlistConfigured()) {
+    const allowlistError = "Operator OTP login is not configured. Set NEPSIS_AUTH_ALLOWED_EMAILS.";
+    const publicDeliveryError =
+      "Login email delivery is required in public-site mode. Set RESEND_API_KEY and NEPSIS_AUTH_FROM_EMAIL.";
+    return NextResponse.json(
+      { error: publicSiteMode() ? `${allowlistError} ${publicDeliveryError}` : allowlistError },
+      { status: 503 },
+    );
+  }
+
+  if (!operatorEmailAllowed(email)) {
+    return NextResponse.json({
+      ok: true,
+      delivery: "email",
+      previewCode: null,
+      expiresInSeconds: LOGIN_CODE_TTL_SECONDS,
+    });
   }
 
   const code = generateLoginCode();

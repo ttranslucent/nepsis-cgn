@@ -8,6 +8,7 @@ export default function LoginPage() {
   const [code, setCode] = useState("");
   const [delivery, setDelivery] = useState<"email" | "preview" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [rememberDevice, setRememberDevice] = useState(true);
   const [loading, setLoading] = useState(false);
   const trimmedEmail = email.trim();
 
@@ -34,7 +35,7 @@ export default function LoginPage() {
           setMessage(`Email delivery is not configured here. Use this one-time code: ${data.previewCode}`);
         } else {
           setCode("");
-          setMessage("Code sent. Check your inbox for the one-time code.");
+          setMessage("If this address is authorized, check your inbox for the one-time code.");
         }
       } else {
         setMessage(data.error || "Failed to send code.");
@@ -54,7 +55,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/verify-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
+        body: JSON.stringify({ email, code, rememberDevice }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -135,6 +136,15 @@ export default function LoginPage() {
                 maxLength={6}
               />
             </div>
+            <label className="flex items-center gap-2 text-xs text-nepsis-muted">
+              <input
+                type="checkbox"
+                checked={rememberDevice}
+                onChange={(event) => setRememberDevice(event.target.checked)}
+                className="h-4 w-4 rounded border-nepsis-border bg-black/30"
+              />
+              Remember this device for 30 days
+            </label>
             <button
               type="submit"
               disabled={loading || code.trim().length === 0}

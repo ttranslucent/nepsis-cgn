@@ -85,11 +85,13 @@ Engine connectivity:
 Passwordless auth:
 
 - `NEPSIS_AUTH_SECRET`: Required in production. Cookie-signing secret for login challenge and user session cookies.
+- `NEPSIS_AUTH_ALLOWED_EMAILS`: Required for operator login. Exact email addresses allowed to request OTP login, separated by commas or spaces.
+- `NEPSIS_AUTH_SESSION_REVOKE_BEFORE`: Optional ISO timestamp that invalidates older signed browser sessions globally.
 - `RESEND_API_KEY`: Required if the deployment should send real login emails.
 - `NEPSIS_AUTH_FROM_EMAIL`: Required with `RESEND_API_KEY`. Verified sender identity for login emails.
-- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional local-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable. Ignored in public-site mode.
+- `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`: Optional local-only escape hatch that lets the UI display the one-time code directly when email delivery is unavailable. Ignored in public-site and operator modes.
 
-For local login without email, leave `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` blank and set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true`. The `/login` page will show the one-time code after `Send code`.
+For local login without email, set `NEPSIS_AUTH_ALLOWED_EMAILS` to the local test address, leave `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` blank, and set `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true`. The `/login` page will show the one-time code after `Send code`.
 
 OpenAI-backed playground routes:
 
@@ -139,7 +141,9 @@ Production behavior is intentionally strict:
   reports the backend gap.
 - `/api/status` checks the frozen MVP packet path in addition to backend health.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
-- If email delivery is not configured, `/login` shows a preview code only in non-public local mode; otherwise it tells the operator which auth env vars are missing.
+- Operator login requires `NEPSIS_AUTH_ALLOWED_EMAILS`; unlisted addresses receive a generic response and no OTP.
+- If email delivery is not configured, `/login` shows a preview code only in non-public, non-operator local mode; otherwise it tells the operator which auth env vars are missing.
+- Signed browser sessions persist for 30 days by default. Set `NEPSIS_AUTH_SESSION_REVOKE_BEFORE` to an ISO timestamp to invalidate older sessions globally.
 - Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside public-site mode.
 - `/settings` and `/playground` do not display browser API-key fields in public-site mode.
 - `GET /api/playground-nepsis` reports model routes as disabled in public-site mode.
@@ -160,7 +164,7 @@ Recommended public deployment sequence:
 4. Set `NEPSIS_AUTH_SECRET` to a long random secret.
 5. Set `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and `NEPSIS_MODEL_ROUTES_ENABLED=false` for public production.
 6. Do not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` for public production.
-7. Set `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
+7. Set `NEPSIS_AUTH_ALLOWED_EMAILS`, `RESEND_API_KEY`, and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
 8. Verify `/mvp`, `/status`, `/login`, and gated `/engine` after the deployment is live.
 9. Run `NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh` from the repo root.
 
@@ -170,9 +174,9 @@ Use `nepsis-web/.env.operator.example` only for a separate private deployment.
 That path sets `NEPSIS_DEPLOYMENT_MODE=operator`,
 `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
 and `NEPSIS_MODEL_ROUTES_ENABLED=true`. It also requires backend auth,
-`NEPSIS_AUTH_SECRET`, real login email delivery through `RESEND_API_KEY` and
-`NEPSIS_AUTH_FROM_EMAIL`, and a server-side `OPENAI_API_KEY` or
-`NEPSIS_OPENAI_API_KEY`. Keep `NEPSIS_ENGINE_ALLOW_ANON=false` and
+`NEPSIS_AUTH_SECRET`, `NEPSIS_AUTH_ALLOWED_EMAILS`, real login email delivery
+through `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL`, and a server-side
+`OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`. Keep `NEPSIS_ENGINE_ALLOW_ANON=false` and
 `NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false` for shared operator deployments.
 
 Run the repository safety check before committing env or deployment changes:
