@@ -17,7 +17,18 @@ from uuid import uuid4
 
 from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
-from .service import EngineApiService
+from ..mcp.handler import handle_mcp_request
+from .operator_packet import (
+    abandon_packet,
+    commit_iteration,
+    inspect_operator_packet,
+    lock_frame as lock_operator_packet_frame,
+    lock_report as lock_operator_packet_report,
+    run_report as run_operator_packet_report,
+    set_threshold_decision as set_operator_packet_threshold_decision,
+    start_operator_packet,
+)
+from .service import EngineApiService, Family
 
 LOGGER = logging.getLogger("nepsis_cgn.api")
 _RATE_LIMIT_LOCK = RLock()
@@ -39,10 +50,19 @@ def _default_store_path() -> str:
 
 API = EngineApiService(store_path=_default_store_path())
 ROUTES = (
+    {"method": "POST", "path": "/mcp", "description": "Model Context Protocol JSON-RPC tool endpoint"},
     {"method": "GET", "path": "/v1/health", "description": "Health check"},
     {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
     {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
     {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
+    {"method": "POST", "path": "/v1/operator-packet/start", "description": "Start stateless operator packet"},
+    {"method": "POST", "path": "/v1/operator-packet/state", "description": "Inspect stateless operator packet state"},
+    {"method": "POST", "path": "/v1/operator-packet/frame", "description": "Lock frame into stateless operator packet"},
+    {"method": "POST", "path": "/v1/operator-packet/report", "description": "Run report through stateless operator packet"},
+    {"method": "POST", "path": "/v1/operator-packet/report/lock", "description": "Lock stateless operator packet report"},
+    {"method": "POST", "path": "/v1/operator-packet/threshold", "description": "Set stateless operator packet threshold decision"},
+    {"method": "POST", "path": "/v1/operator-packet/commit", "description": "Commit stateless operator packet iteration"},
+    {"method": "POST", "path": "/v1/operator-packet/abandon", "description": "Abandon stateless operator packet loop"},
     {"method": "GET", "path": "/v1/operator/session", "description": "Get ambient operator session phase state"},
     {"method": "POST", "path": "/v1/operator/frame", "description": "Lock ambient operator frame"},
     {"method": "POST", "path": "/v1/operator/report", "description": "Run ambient operator report"},
@@ -62,6 +82,19 @@ ROUTES = (
     {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
     {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
 )
+
+
+def _operator_family(value: Any) -> Family:
+    if value not in {"puzzle", "clinical", "safety"}:
+        raise ValueError("family must be one of: puzzle, clinical, safety")
+    return value
+
+
+def _required_operator_packet(body: dict[str, Any]) -> dict[str, Any]:
+    packet = body.get("packet")
+    if not isinstance(packet, dict):
+        raise ValueError("operator packet payload requires object field 'packet'")
+    return packet
 
 
 class EngineApiHandler(BaseHTTPRequestHandler):
@@ -144,8 +177,44 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             self._safe(lambda: self._run_mvp(body))
             return
 
+        if path == "/mcp":
+            self._handle_mcp(body)
+            return
+
         if path == "/v1/operator/frame":
             self._safe(lambda: self._operator_lock_frame(body))
+            return
+
+        if path == "/v1/operator-packet/start":
+            self._safe(lambda: self._operator_packet_start(body))
+            return
+
+        if path == "/v1/operator-packet/state":
+            self._safe(lambda: self._operator_packet_state(body))
+            return
+
+        if path == "/v1/operator-packet/frame":
+            self._safe(lambda: self._operator_packet_lock_frame(body))
+            return
+
+        if path == "/v1/operator-packet/report":
+            self._safe(lambda: self._operator_packet_run_report(body))
+            return
+
+        if path == "/v1/operator-packet/report/lock":
+            self._safe(lambda: lock_operator_packet_report(packet=_required_operator_packet(body)))
+            return
+
+        if path == "/v1/operator-packet/threshold":
+            self._safe(lambda: self._operator_packet_set_threshold_decision(body))
+            return
+
+        if path == "/v1/operator-packet/commit":
+            self._safe(lambda: self._operator_packet_commit_iteration(body))
+            return
+
+        if path == "/v1/operator-packet/abandon":
+            self._safe(lambda: self._operator_packet_abandon(body))
             return
 
         if path == "/v1/operator/report":
@@ -356,6 +425,94 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             raise ValueError("reason must be a string when provided")
         return API.operator_abandon_session(reason=reason)
 
+    def _operator_packet_start(self, body: dict[str, Any]) -> dict[str, Any]:
+        family = _operator_family(body.get("family", "safety"))
+        frame = body.get("frame")
+        if frame is not None and not isinstance(frame, dict):
+            raise ValueError("frame must be an object when provided")
+        governance = body.get("governance_costs", body.get("governance"))
+        if governance is not None and not isinstance(governance, dict):
+            raise ValueError("governance must be an object when provided")
+        calibration = body.get("governance_calibration", body.get("calibration"))
+        if calibration is not None and not isinstance(calibration, dict):
+            raise ValueError("calibration must be an object when provided")
+        return start_operator_packet(
+            family=family,
+            frame=frame,
+            governance_costs=governance,
+            governance_calibration=calibration,
+            manifest_path=_validated_manifest_path(body.get("manifest_path")),
+        )
+
+    def _operator_packet_state(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = body.get("packet")
+        if packet is not None and not isinstance(packet, dict):
+            raise ValueError("operator packet payload requires object field 'packet' when provided")
+        return inspect_operator_packet(packet)
+
+    def _operator_packet_lock_frame(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        frame = body.get("frame")
+        if not isinstance(frame, dict):
+            raise ValueError("operator packet frame payload requires object field 'frame'")
+        family = body.get("family")
+        governance = body.get("governance_costs", body.get("governance"))
+        if governance is not None and not isinstance(governance, dict):
+            raise ValueError("governance must be an object when provided")
+        calibration = body.get("governance_calibration", body.get("calibration"))
+        if calibration is not None and not isinstance(calibration, dict):
+            raise ValueError("calibration must be an object when provided")
+        return lock_operator_packet_frame(
+            packet=packet,
+            frame=frame,
+            family=_operator_family(family) if family is not None else None,
+            governance_costs=governance,
+            governance_calibration=calibration,
+            manifest_path=_validated_manifest_path(body.get("manifest_path")),
+        )
+
+    def _operator_packet_run_report(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        report_text = body.get("report_text", body.get("reportText"))
+        sign = body.get("sign")
+        interpretation = body.get("interpretation")
+        if not isinstance(report_text, str):
+            raise ValueError("operator packet report payload requires string field 'report_text'")
+        if not isinstance(sign, dict):
+            raise ValueError("operator packet report payload requires object field 'sign'")
+        if interpretation is not None and not isinstance(interpretation, dict):
+            raise ValueError("interpretation must be an object when provided")
+        return run_operator_packet_report(
+            packet=packet,
+            report_text=report_text,
+            sign=sign,
+            interpretation=interpretation,
+        )
+
+    def _operator_packet_set_threshold_decision(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        decision = body.get("decision")
+        hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+        if not isinstance(decision, str):
+            raise ValueError("operator packet threshold payload requires string field 'decision'")
+        if not isinstance(hold_reason, str):
+            raise ValueError("hold_reason must be a string when provided")
+        return set_operator_packet_threshold_decision(packet=packet, decision=decision, hold_reason=hold_reason)
+
+    def _operator_packet_commit_iteration(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
+        if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
+            raise ValueError("carry_forward_frame must be an object when provided")
+        return commit_iteration(packet=packet, carry_forward_frame=carry_forward_frame)
+
+    def _operator_packet_abandon(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        reason = body.get("reason", "")
+        if not isinstance(reason, str):
+            raise ValueError("reason must be a string when provided")
+        return abandon_packet(packet=packet, reason=reason)
+
     def _list_sessions(self, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _query_optional_int(query, "limit", default=50)
         offset = _query_optional_int(query, "offset", default=0)
@@ -440,7 +597,10 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if allowed_origin is not None:
             self.send_header("Access-Control-Allow-Origin", allowed_origin)
             self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Request-ID")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Authorization, X-API-Key, X-Request-ID, X-Nepsis-Capability-Token",
+            )
             self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
             self.send_header("Access-Control-Max-Age", "600")
 
@@ -493,7 +653,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
 
         if method == "OPTIONS":
             return True
-        if path in {"/health", "/v1/health", "/v1/routes", "/v1/openapi.json"}:
+        if path in {"/health", "/v1/health", "/v1/routes", "/v1/openapi.json", "/mcp"}:
             return True
 
         expected_token = _configured_api_token()
@@ -536,6 +696,20 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             bucket.append(now)
             _RATE_LIMIT_STATE[key] = bucket
         return True
+
+    def _handle_mcp(self, body: dict[str, Any]) -> None:
+        response = handle_mcp_request(
+            body,
+            headers=dict(self.headers),
+            require_capability_token=True,
+            server_name="nepsis-cgn",
+            route_manifest_fn=route_manifest,
+            request_id=self._request_id,
+        )
+        if response is None:
+            self._send_json(202, {})
+            return
+        self._send_json(200, response)
 
 
 def run(host: str = "127.0.0.1", port: int = 8787) -> None:

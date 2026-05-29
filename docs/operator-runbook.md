@@ -43,14 +43,16 @@ npm run dev
 - `/engine`, session APIs, playground routes, and LLM/model sandbox flows are
   experimental operator tools.
 - `/operator` is the product-facing live operator path. It must stay signed-in
-  and backed by configured backend auth plus server-side model credentials.
+  and backed by configured backend auth. Hosted model routes require separate
+  caps and server-side credentials; MCP users should normally bring their own
+  authenticated model client.
 - Clinical demo packets are not medical advice, not diagnosis, and not clinical
   decision support.
 - Browser-stored OpenAI keys are local-demo only. Do not use them as a shared
   deployment secret flow.
-- The local launcher is model-free. Future account-based OpenAI/Codex, Claude,
-  or Gemini harness work should use supported host or CLI authentication flows
-  and receive separate v0.4 design review.
+- The local launcher is model-free. MCP harness work should use supported host
+  or CLI authentication flows for OpenAI/Codex, Claude, or Gemini instead of
+  collecting provider keys in NepsisCGN.
 
 ## Shared Deployment Checklist
 
@@ -78,6 +80,34 @@ npm run dev
   deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
 
+## Private operator deployment
+
+Use `nepsis-web/.env.operator.example` only for a separate private deployment.
+It belongs to the signed-in `/operator` path with real email login and live
+model routes. It is not a public `/mvp` template.
+
+Required private operator web env:
+
+```bash
+NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=false
+NEPSIS_DEPLOYMENT_MODE=operator
+NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true
+NEPSIS_LIVE_OPERATOR_ENABLED=true
+NEPSIS_API_BASE_URL=https://<private-render-service>
+NEPSIS_API_TOKEN=<private-backend-token>
+NEPSIS_AUTH_SECRET=<long-random-secret>
+RESEND_API_KEY=<resend-api-key>
+NEPSIS_AUTH_FROM_EMAIL=Nepsis Operator <login@operator.example>
+NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false
+NEPSIS_ENGINE_ALLOW_ANON=false
+NEPSIS_MODEL_ROUTES_ENABLED=true
+OPENAI_API_KEY=<server-side-openai-key>
+```
+
+For the frozen public `/mvp` deployment, use
+`nepsis-web/.env.public.example` instead and keep model routes and live operator
+mode disabled.
+
 ## Public Site Smoke
 
 After Vercel and Render are connected:
@@ -101,7 +131,9 @@ with the provider and clear browser storage for `https://nepsis-cgn.vercel.app`.
 ## MCP Surface
 
 Backend `/mcp` exposes NepsisCGN as a tool endpoint with public deterministic
-tools (`run_mvp`, `get_mvp_schema`, `health`) and protected operator metadata
-(`get_routes`). MCP clients should use their own ChatGPT/Codex, Claude Code, or
-Gemini authentication; NepsisCGN should not collect or subsidize visitor model
-accounts.
+discovery (`initialize`, `tools/list`) and capability-token-protected tool
+calls. The operator flow is stateless packet-in/packet-out: each tool receives a
+`nepsis.operator_packet` v2 object and returns the next packet, with
+RED-before-BLUE gates enforced by phase transitions. MCP clients should use
+their own ChatGPT/Codex, Claude Code, or Gemini authentication; NepsisCGN should
+not collect or subsidize visitor model accounts.

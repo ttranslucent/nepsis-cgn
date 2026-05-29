@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi.testclient import TestClient
 
 from nepsis_cgn.api import asgi
@@ -57,37 +59,43 @@ def test_asgi_mvp_cors_allows_configured_origin(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://nepsis-cgn.vercel.app"
 
 
-def test_asgi_mcp_lists_and_runs_public_mvp_tool(monkeypatch) -> None:
+def test_asgi_mcp_lists_without_capability_token(monkeypatch) -> None:
     monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
     monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("NEPSIS_MCP_CAPABILITY_TOKEN_HASHES", raising=False)
 
     client = TestClient(asgi.create_app())
+    initialized = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}},
+    )
     listed = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
     )
-    called = client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {"name": "run_mvp", "arguments": {"case_id": "jailing"}},
-        },
-    )
 
+    assert initialized.status_code == 200
+    assert initialized.json()["result"]["serverInfo"]["name"] == "nepsis-cgn"
     assert listed.status_code == 200
     tool_names = {tool["name"] for tool in listed.json()["result"]["tools"]}
-    assert {"run_mvp", "get_mvp_schema", "health", "get_routes"} <= tool_names
-    assert called.status_code == 200
-    content = called.json()["result"]["content"]
-    assert content[0]["type"] == "text"
-    assert "nepsis.mvp_packet" in content[0]["text"]
+    assert {
+        "run_mvp",
+        "get_mvp_schema",
+        "health",
+        "start_operator_packet",
+        "lock_frame",
+        "run_report",
+        "lock_report",
+        "set_threshold_decision",
+        "commit_iteration",
+        "abandon_packet",
+    } <= tool_names
 
 
-def test_asgi_mcp_rejects_protected_tool_without_token(monkeypatch) -> None:
+def test_asgi_mcp_rejects_tool_call_without_capability_token(monkeypatch) -> None:
     monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
-    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+    monkeypatch.delenv("NEPSIS_MCP_CAPABILITY_TOKEN_HASHES", raising=False)
 
     client = TestClient(asgi.create_app())
     response = client.post(
@@ -103,7 +111,35 @@ def test_asgi_mcp_rejects_protected_tool_without_token(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["error"]["code"] == -32001
-    assert "authorization" in payload["error"]["message"].lower()
+    assert "capability" in payload["error"]["message"].lower()
+
+
+def test_asgi_mcp_runs_stateless_tool_with_capability_token(monkeypatch, tmp_path) -> None:
+    token = "capability-test-token"
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+    monkeypatch.setenv("NEPSIS_MCP_CAPABILITY_TOKEN_HASHES", f"test-token:{digest}")
+    monkeypatch.setenv("NEPSIS_API_STORE_PATH", str(tmp_path / "mcp-should-not-exist.json"))
+
+    client = TestClient(asgi.create_app())
+    response = client.post(
+        "/mcp",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "start_operator_packet", "arguments": {}},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["result"]["content"]
+    assert content[0]["type"] == "text"
+    assert "nepsis.operator_packet" in content[0]["text"]
+    assert not (tmp_path / "mcp-should-not-exist.json").exists()
 
 
 def test_asgi_operator_routes_require_token(monkeypatch) -> None:
@@ -113,8 +149,35 @@ def test_asgi_operator_routes_require_token(monkeypatch) -> None:
 
     client = TestClient(asgi.create_app())
     response = client.get("/v1/operator/session")
+    packet_response = client.post("/v1/operator-packet/start", json={})
 
     assert response.status_code == 401
+    assert packet_response.status_code == 401
+
+
+def test_asgi_operator_packet_phase_rejection_maps_to_409(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    headers = {"Authorization": "Bearer test-token"}
+
+    client = TestClient(asgi.create_app())
+    started = client.post("/v1/operator-packet/start", headers=headers, json={})
+    response = client.post(
+        "/v1/operator-packet/report",
+        headers=headers,
+        json={
+            "packet": started.json(),
+            "report_text": "obs: critical signal present",
+            "sign": {"critical_signal": True, "policy_violation": False},
+        },
+    )
+
+    assert started.status_code == 200
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["schema_id"] == "nepsis.phase_rejection"
+    assert payload["attempted_tool"] == "run_report"
+    assert payload["legal_next_tools"] == ["start_operator_packet", "lock_frame", "abandon_packet"]
 
 
 def test_asgi_operator_phase_rejection_maps_to_409(monkeypatch) -> None:

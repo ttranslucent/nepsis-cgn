@@ -53,20 +53,21 @@ def test_mcp_stdio_lists_public_and_operator_phase_tools(tmp_path: Path) -> None
         "run_mvp",
         "get_mvp_schema",
         "health",
-        "get_session_state",
+        "start_operator_packet",
         "lock_frame",
         "run_report",
         "lock_report",
         "set_threshold_decision",
         "commit_iteration",
-        "abandon_session",
+        "abandon_packet",
     } <= tool_names
     assert "step_session" not in tool_names
     assert "reframe_session" not in tool_names
     assert not stderr.strip()
 
 
-def test_mcp_stdio_run_mvp_and_phase_rejection_are_json_rpc(tmp_path: Path) -> None:
+def test_mcp_stdio_run_mvp_and_stateless_phase_rejection_are_json_rpc(tmp_path: Path) -> None:
+    store_path = tmp_path / "mcp-sessions.json"
     proc = _start_mcp_stdio(tmp_path)
     try:
         _send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
@@ -79,15 +80,26 @@ def test_mcp_stdio_run_mvp_and_phase_rejection_are_json_rpc(tmp_path: Path) -> N
                 "params": {"name": "run_mvp", "arguments": {"case_id": "jailing"}},
             },
         )
-        rejected = _send(
+        started = _send(
             proc,
             {
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "tools/call",
+                "params": {"name": "start_operator_packet", "arguments": {}},
+            },
+        )
+        packet = _tool_text(started)
+        rejected = _send(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
                 "params": {
                     "name": "run_report",
                     "arguments": {
+                        "packet": packet,
                         "report_text": "obs: critical signal present",
                         "sign": {"critical_signal": True, "policy_violation": False},
                     },
@@ -100,9 +112,12 @@ def test_mcp_stdio_run_mvp_and_phase_rejection_are_json_rpc(tmp_path: Path) -> N
 
     assert mvp["result"]["isError"] is False
     assert _tool_text(mvp)["schema_id"] == "nepsis.mvp_packet"
+    assert started["result"]["isError"] is False
+    assert packet["schema_id"] == "nepsis.operator_packet"
     assert rejected["result"]["isError"] is True
     rejection = _tool_text(rejected)
     assert rejection["schema_id"] == "nepsis.phase_rejection"
     assert rejection["attempted_tool"] == "run_report"
     assert rejection["current_phase"] == "frame_draft"
     assert not stderr.strip()
+    assert not store_path.exists()

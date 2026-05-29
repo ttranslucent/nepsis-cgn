@@ -9,7 +9,18 @@ from uuid import uuid4
 
 from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
-from .service import EngineApiService
+from ..mcp.handler import handle_mcp_request
+from .operator_packet import (
+    abandon_packet,
+    commit_iteration,
+    inspect_operator_packet,
+    lock_frame as lock_operator_packet_frame,
+    lock_report as lock_operator_packet_report,
+    run_report as run_operator_packet_report,
+    set_threshold_decision as set_operator_packet_threshold_decision,
+    start_operator_packet,
+)
+from .service import EngineApiService, Family
 
 LOGGER = logging.getLogger("nepsis_cgn.api.asgi")
 _RATE_LIMIT_LOCK = RLock()
@@ -25,6 +36,19 @@ def _default_store_path() -> str:
 
 API = EngineApiService(store_path=_default_store_path())
 PUBLIC_PATHS = {"/v1/health", "/v1/routes", "/v1/openapi.json", "/docs", "/openapi.json", "/mcp"}
+
+
+def _operator_family(value: Any) -> Family:
+    if value not in {"puzzle", "clinical", "safety"}:
+        raise ValueError("family must be one of: puzzle, clinical, safety")
+    return value
+
+
+def _required_operator_packet(body: dict[str, Any]) -> dict[str, Any]:
+    packet = body.get("packet")
+    if not isinstance(packet, dict):
+        raise ValueError("operator packet payload requires object field 'packet'")
+    return packet
 
 
 def create_app():
@@ -72,7 +96,9 @@ def create_app():
         if origin and _is_origin_allowed(origin):
             response.headers["Access-Control-Allow-Origin"] = origin if "*" not in _allowed_origins() else "*"
             response.headers["Vary"] = "Origin"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-API-Key, X-Request-ID"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Content-Type, Authorization, X-API-Key, X-Request-ID, X-Nepsis-Capability-Token"
+            )
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
             response.headers["Access-Control-Max-Age"] = "600"
         LOGGER.info(
@@ -109,7 +135,17 @@ def create_app():
     @app.post("/mcp")
     async def mcp_endpoint(request: Request):
         body = await _read_json_body(request)
-        return _mcp_handle_request(body, dict(request.headers))
+        response = handle_mcp_request(
+            body,
+            headers=dict(request.headers),
+            require_capability_token=True,
+            server_name="nepsis-cgn",
+            route_manifest_fn=route_manifest,
+            request_id=getattr(request.state, "request_id", None),
+        )
+        if response is None:
+            return JSONResponse({}, status_code=202)
+        return response
 
     @app.post("/v1/mvp")
     async def run_mvp(request: Request):
@@ -121,6 +157,152 @@ def create_app():
         if input_text is not None and not isinstance(input_text, str):
             raise HTTPException(status_code=400, detail="input_text must be a string when provided")
         return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
+
+    @app.post("/v1/operator-packet/start")
+    async def start_operator_packet_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            family = _operator_family(body.get("family", "safety"))
+            frame = body.get("frame")
+            if frame is not None and not isinstance(frame, dict):
+                raise ValueError("frame must be an object when provided")
+            governance = body.get("governance_costs", body.get("governance"))
+            if governance is not None and not isinstance(governance, dict):
+                raise ValueError("governance must be an object when provided")
+            calibration = body.get("governance_calibration", body.get("calibration"))
+            if calibration is not None and not isinstance(calibration, dict):
+                raise ValueError("calibration must be an object when provided")
+            return start_operator_packet(
+                family=family,
+                frame=frame,
+                governance_costs=governance,
+                governance_calibration=calibration,
+                manifest_path=_validated_manifest_path(body.get("manifest_path")),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/state")
+    async def inspect_operator_packet_route(request: Request):
+        body = await _read_json_body(request)
+        packet = body.get("packet")
+        if packet is not None and not isinstance(packet, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="operator packet payload requires object field 'packet' when provided",
+            )
+        try:
+            return inspect_operator_packet(packet)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/frame")
+    async def lock_operator_packet_frame_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            packet = _required_operator_packet(body)
+            frame = body.get("frame")
+            if not isinstance(frame, dict):
+                raise ValueError("operator packet frame payload requires object field 'frame'")
+            family = body.get("family")
+            governance = body.get("governance_costs", body.get("governance"))
+            if governance is not None and not isinstance(governance, dict):
+                raise ValueError("governance must be an object when provided")
+            calibration = body.get("governance_calibration", body.get("calibration"))
+            if calibration is not None and not isinstance(calibration, dict):
+                raise ValueError("calibration must be an object when provided")
+            return _phase_json_response(
+                lock_operator_packet_frame(
+                    packet=packet,
+                    frame=frame,
+                    family=_operator_family(family) if family is not None else None,
+                    governance_costs=governance,
+                    governance_calibration=calibration,
+                    manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/report")
+    async def run_operator_packet_report_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            packet = _required_operator_packet(body)
+            report_text = body.get("report_text", body.get("reportText"))
+            sign = body.get("sign")
+            interpretation = body.get("interpretation")
+            if not isinstance(report_text, str):
+                raise ValueError("operator packet report payload requires string field 'report_text'")
+            if not isinstance(sign, dict):
+                raise ValueError("operator packet report payload requires object field 'sign'")
+            if interpretation is not None and not isinstance(interpretation, dict):
+                raise ValueError("interpretation must be an object when provided")
+            return _phase_json_response(
+                run_operator_packet_report(
+                    packet=packet,
+                    report_text=report_text,
+                    sign=sign,
+                    interpretation=interpretation,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/report/lock")
+    async def lock_operator_packet_report_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            return _phase_json_response(lock_operator_packet_report(packet=_required_operator_packet(body)))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/threshold")
+    async def set_operator_packet_threshold_decision_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            decision = body.get("decision")
+            hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+            if not isinstance(decision, str):
+                raise ValueError("operator packet threshold payload requires string field 'decision'")
+            if not isinstance(hold_reason, str):
+                raise ValueError("hold_reason must be a string when provided")
+            return _phase_json_response(
+                set_operator_packet_threshold_decision(
+                    packet=_required_operator_packet(body),
+                    decision=decision,
+                    hold_reason=hold_reason,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/commit")
+    async def commit_operator_packet_iteration_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
+            if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
+                raise ValueError("carry_forward_frame must be an object when provided")
+            return _phase_json_response(
+                commit_iteration(
+                    packet=_required_operator_packet(body),
+                    carry_forward_frame=carry_forward_frame,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/abandon")
+    async def abandon_operator_packet_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            reason = body.get("reason", "")
+            if not isinstance(reason, str):
+                raise ValueError("reason must be a string when provided")
+            return abandon_packet(packet=_required_operator_packet(body), reason=reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/v1/operator/session")
     async def get_operator_session_state():
@@ -574,6 +756,14 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
         {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
         {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
+        {"method": "POST", "path": "/v1/operator-packet/start", "description": "Start stateless operator packet"},
+        {"method": "POST", "path": "/v1/operator-packet/state", "description": "Inspect stateless operator packet state"},
+        {"method": "POST", "path": "/v1/operator-packet/frame", "description": "Lock frame into stateless operator packet"},
+        {"method": "POST", "path": "/v1/operator-packet/report", "description": "Run report through stateless operator packet"},
+        {"method": "POST", "path": "/v1/operator-packet/report/lock", "description": "Lock stateless operator packet report"},
+        {"method": "POST", "path": "/v1/operator-packet/threshold", "description": "Set stateless operator packet threshold decision"},
+        {"method": "POST", "path": "/v1/operator-packet/commit", "description": "Commit stateless operator packet iteration"},
+        {"method": "POST", "path": "/v1/operator-packet/abandon", "description": "Abandon stateless operator packet loop"},
         {"method": "GET", "path": "/v1/operator/session", "description": "Get ambient operator session phase state"},
         {"method": "POST", "path": "/v1/operator/frame", "description": "Lock ambient operator frame"},
         {"method": "POST", "path": "/v1/operator/report", "description": "Run ambient operator report"},
@@ -624,169 +814,6 @@ def openapi_spec() -> dict[str, Any]:
         },
         "paths": paths,
     }
-
-
-def _mcp_tools() -> list[dict[str, Any]]:
-    return [
-        {
-            "name": "run_mvp",
-            "description": "Run the public deterministic NepsisCGN v0.3 MVP packet demo.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "case_id": {
-                        "type": "string",
-                        "enum": ["jailing", "clinical"],
-                        "description": "Canonical MVP case to run.",
-                    },
-                    "input_text": {
-                        "type": "string",
-                        "description": "Optional source text override for the deterministic packet.",
-                    },
-                },
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "get_mvp_schema",
-            "description": "Return the canonical MVP packet schema fields and supported cases.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-        {
-            "name": "health",
-            "description": "Return NepsisCGN API health.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-        {
-            "name": "get_routes",
-            "description": "Return the NepsisCGN API route manifest. Requires API bearer auth when backend auth is enabled.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-    ]
-
-
-def _mcp_handle_request(body: dict[str, Any], headers: dict[str, Any]) -> dict[str, Any]:
-    request_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params", {})
-    if body.get("jsonrpc") != "2.0" or not isinstance(method, str):
-        return _mcp_error(request_id, -32600, "Invalid JSON-RPC request.")
-    if params is None:
-        params = {}
-    if not isinstance(params, dict):
-        return _mcp_error(request_id, -32602, "JSON-RPC params must be an object.")
-
-    if method == "initialize":
-        return _mcp_result(
-            request_id,
-            {
-                "protocolVersion": "2025-06-18",
-                "serverInfo": {"name": "nepsis-cgn", "version": "0.3.0"},
-                "capabilities": {"tools": {}},
-            },
-        )
-    if method == "tools/list":
-        return _mcp_result(request_id, {"tools": _mcp_tools()})
-    if method == "tools/call":
-        return _mcp_call_tool(request_id, params, headers)
-    if method == "notifications/initialized":
-        return _mcp_result(request_id, {})
-    return _mcp_error(request_id, -32601, f"Unsupported MCP method: {method}")
-
-
-def _mcp_call_tool(request_id: Any, params: dict[str, Any], headers: dict[str, Any]) -> dict[str, Any]:
-    name = params.get("name")
-    arguments = params.get("arguments", {})
-    if not isinstance(name, str):
-        return _mcp_error(request_id, -32602, "MCP tools/call requires string field 'name'.")
-    if arguments is None:
-        arguments = {}
-    if not isinstance(arguments, dict):
-        return _mcp_error(request_id, -32602, "MCP tool arguments must be an object.")
-
-    if _mcp_tool_requires_auth(name) and not _mcp_authorized(headers):
-        return _mcp_error(request_id, -32001, "MCP tool requires API bearer authorization.")
-
-    try:
-        if name == "run_mvp":
-            result = _mcp_run_mvp(arguments)
-        elif name == "get_mvp_schema":
-            result = _mcp_mvp_schema()
-        elif name == "health":
-            result = {"ok": True}
-        elif name == "get_routes":
-            result = {"routes": route_manifest()}
-        else:
-            return _mcp_error(request_id, -32601, f"Unknown MCP tool: {name}")
-    except ValueError as exc:
-        return _mcp_error(request_id, -32602, str(exc))
-
-    return _mcp_result(
-        request_id,
-        {
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps(result, sort_keys=True),
-                }
-            ],
-            "isError": False,
-        },
-    )
-
-
-def _mcp_run_mvp(arguments: dict[str, Any]) -> dict[str, Any]:
-    case_id = arguments.get("case_id", arguments.get("case", "jailing"))
-    if case_id not in {"jailing", "clinical"}:
-        raise ValueError("case_id must be one of: jailing, clinical")
-    input_text = arguments.get("input_text", arguments.get("inputText"))
-    if input_text is not None and not isinstance(input_text, str):
-        raise ValueError("input_text must be a string when provided")
-    return build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
-
-
-def _mcp_mvp_schema() -> dict[str, Any]:
-    return {
-        "schema_id": "nepsis.mvp_packet",
-        "supported_cases": ["jailing", "clinical"],
-        "top_level_fields": [
-            "case_id",
-            "input_text",
-            "observations",
-            "constraints",
-            "red_channel",
-            "still",
-            "blue_channel",
-            "contradiction_monitor",
-            "denominator_collapse",
-            "non_quiescence",
-            "zeroback",
-            "voronoi_commitment",
-            "state_feedback",
-            "audit_trace",
-            "final_output",
-        ],
-    }
-
-
-def _mcp_tool_requires_auth(name: str) -> bool:
-    return name == "get_routes" and _auth_required()
-
-
-def _mcp_authorized(headers: dict[str, Any]) -> bool:
-    expected = _configured_api_token()
-    if expected is None:
-        return not _auth_required()
-    return _request_api_token(headers) == expected
-
-
-def _mcp_result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "result": result}
-
-
-def _mcp_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
-
 
 def entrypoint(argv: list[str] | None = None) -> None:  # pragma: no cover
     del argv

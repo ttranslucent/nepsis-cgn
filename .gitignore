@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 src/nepsis_ra/data/
 .claude/
+.playwright-mcp/
 *.egg-info/
 ledger/sessions/engine_api_sessions.db*
 .vercel

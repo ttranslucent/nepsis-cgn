@@ -1,10 +1,97 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _env_assignments(path: Path) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        assignments[name.strip()] = value.strip().strip("\"'")
+    return assignments
+
+
+def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
+    public_env = ROOT / "nepsis-web" / ".env.public.example"
+    operator_env = ROOT / "nepsis-web" / ".env.operator.example"
+
+    assert public_env.exists()
+    assert operator_env.exists()
+    gitignore = (ROOT / "nepsis-web" / ".gitignore").read_text(encoding="utf-8")
+    assert "!.env.public.example" in gitignore
+    assert "!.env.operator.example" in gitignore
+
+    public = _env_assignments(public_env)
+    operator = _env_assignments(operator_env)
+
+    assert public["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE"] == "true"
+    assert public["NEPSIS_MODEL_ROUTES_ENABLED"] == "false"
+    assert public["NEPSIS_ENGINE_ALLOW_ANON"] == "false"
+    assert public["NEPSIS_AUTH_ALLOW_CODE_PREVIEW"] == "false"
+    assert public.get("NEPSIS_DEPLOYMENT_MODE", "") != "operator"
+    assert public.get("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE", "") != "true"
+    assert public.get("NEPSIS_LIVE_OPERATOR_ENABLED", "") != "true"
+    assert public.get("OPENAI_API_KEY", "") == ""
+    assert public.get("NEPSIS_OPENAI_API_KEY", "") == ""
+
+    assert operator["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE"] == "false"
+    assert operator["NEPSIS_DEPLOYMENT_MODE"] == "operator"
+    assert operator["NEXT_PUBLIC_NEPSIS_OPERATOR_SITE"] == "true"
+    assert operator["NEPSIS_LIVE_OPERATOR_ENABLED"] == "true"
+    assert operator["NEPSIS_MODEL_ROUTES_ENABLED"] == "true"
+    assert operator["NEPSIS_ENGINE_ALLOW_ANON"] == "false"
+    assert operator["NEPSIS_AUTH_ALLOW_CODE_PREVIEW"] == "false"
+    assert operator["NEPSIS_AUTH_SECRET"]
+    assert operator["RESEND_API_KEY"]
+    assert operator["NEPSIS_AUTH_FROM_EMAIL"]
+    assert operator["OPENAI_API_KEY"]
+
+
+def test_web_env_examples_are_linked_from_docs() -> None:
+    public_example = "nepsis-web/.env.public.example"
+    operator_example = "nepsis-web/.env.operator.example"
+    sources = [
+        ROOT / "README.md",
+        ROOT / "nepsis-web" / "README.md",
+        ROOT / "docs" / "public-api.md",
+        ROOT / "docs" / "operator-runbook.md",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in sources)
+
+    assert public_example in combined
+    assert operator_example in combined
+    assert "Public site setup" in combined
+    assert "Private operator deployment" in combined
+
+
+def test_status_api_exposes_public_and_operator_readiness_paths() -> None:
+    route = ROOT / "nepsis-web" / "src" / "app" / "api" / "status" / "route.ts"
+    text = route.read_text(encoding="utf-8")
+
+    assert "setup" in text
+    assert "publicSite" in text
+    assert "operatorMode" in text
+    assert "nepsis-web/.env.public.example" in text
+    assert "nepsis-web/.env.operator.example" in text
+    assert "docs/public-api.md#public-site-setup" in text
+    assert "docs/operator-runbook.md#private-operator-deployment" in text
+    assert "NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true" in text
+    assert "NEPSIS_DEPLOYMENT_MODE=operator" in text
+    assert "RESEND_API_KEY" in text
+    assert "OPENAI_API_KEY or NEPSIS_OPENAI_API_KEY" in text
 
 
 def test_render_blueprint_deploys_existing_asgi_entrypoint() -> None:
@@ -16,6 +103,7 @@ def test_render_blueprint_deploys_existing_asgi_entrypoint() -> None:
     assert "NEPSIS_API_PORT" in text
     assert "$PORT" in text
     assert "NEPSIS_API_TOKEN" in text
+    assert "NEPSIS_MCP_CAPABILITY_TOKEN_HASHES" in text
     assert "NEPSIS_API_ALLOW_ANON" in text
     assert 'value: "false"' in text
     assert "NEPSIS_API_ALLOWED_ORIGINS" in text
@@ -43,3 +131,217 @@ def test_site_smoke_script_is_stdlib_python_and_has_expected_routes() -> None:
     assert "operatorLoginReady" in text
     assert "modelRoutesEnabled" in text
     assert "hasServerKey" in text
+    assert "publicSite" in text
+    assert "operatorMode" in text
+    assert "nepsis-web/.env.public.example" in text
+    assert "nepsis-web/.env.operator.example" in text
+    assert "NEPSIS_MCP_CAPABILITY_TOKEN" in text
+    assert "start_operator_packet" in text
+
+
+def test_site_smoke_script_checks_hosted_mcp_boundary() -> None:
+    requests: list[dict[str, Any]] = []
+
+    class SmokeHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            requests.append({"method": "GET", "path": self.path})
+            if self.path in {"/", "/mvp", "/login", "/engine", "/operator"}:
+                self._send(200, "ok", content_type="text/plain")
+                return
+            if self.path == "/api/status":
+                endpoint = f"http://127.0.0.1:{self.server.server_port}/mcp"
+                self._send_json(
+                    200,
+                    {
+                        "mvp": {
+                            "available": True,
+                            "schemaId": "nepsis.mvp_packet",
+                            "noLoginRequired": True,
+                        },
+                        "auth": {
+                            "previewCodesEnabled": False,
+                            "emailConfigured": False,
+                            "operatorLoginReady": False,
+                        },
+                        "models": {"enabled": False, "hasServerOpenAiKey": False},
+                        "operator": {"enabled": False},
+                        "setup": {
+                            "publicSite": {
+                                "ready": True,
+                                "envExample": "nepsis-web/.env.public.example",
+                                "assertions": [],
+                            },
+                            "operatorMode": {
+                                "ready": False,
+                                "envExample": "nepsis-web/.env.operator.example",
+                                "assertions": [],
+                            },
+                        },
+                        "mcp": {
+                            "discoverableMethods": ["initialize", "tools/list"],
+                            "protectedTools": ["run_mvp", "get_routes", "start_operator_packet"],
+                            "hosted": {
+                                "available": True,
+                                "endpoint": endpoint,
+                                "requiresBackendAuth": False,
+                                "requiresCapabilityToken": True,
+                                "modelKeysRequired": False,
+                            },
+                        },
+                    },
+                )
+                return
+            if self.path == "/api/auth/session":
+                self._send_json(200, {"authenticated": False, "engineControlAllowed": False})
+                return
+            if self.path == "/api/playground-nepsis":
+                self._send_json(200, {"modelRoutesEnabled": False, "hasServerKey": False})
+                return
+            if self.path == "/api/engine/health":
+                self._send_json(200, {"ok": True})
+                return
+            self._send_json(404, {"error": "not found"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length).decode("utf-8") if length else ""
+            body = json.loads(raw) if raw else {}
+            requests.append(
+                {
+                    "method": "POST",
+                    "path": self.path,
+                    "body": body,
+                    "authorization": self.headers.get("Authorization"),
+                    "capability": self.headers.get("X-Nepsis-Capability-Token"),
+                }
+            )
+            if self.path == "/api/engine/mvp":
+                self._send_json(200, {"schema_id": "nepsis.mvp_packet"})
+                return
+            if self.path in {"/api/playground-nepsis", "/api/run-with-nepsis", "/api/operator/model"}:
+                self._send_json(403, {"error": "forbidden"})
+                return
+            if self.path == "/mcp":
+                method = body.get("method")
+                if method == "initialize":
+                    self._send_json(
+                        200,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": body.get("id"),
+                            "result": {
+                                "serverInfo": {"name": "nepsis-cgn"},
+                                "capabilities": {"tools": {}},
+                            },
+                        },
+                    )
+                    return
+                if method == "tools/list":
+                    self._send_json(
+                        200,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": body.get("id"),
+                            "result": {
+                                "tools": [
+                                    {"name": "run_mvp"},
+                                    {"name": "get_routes"},
+                                    {"name": "start_operator_packet"},
+                                ]
+                            },
+                        },
+                    )
+                    return
+                if method == "tools/call":
+                    if self.headers.get("Authorization") == "Bearer site-smoke-token":
+                        self._send_json(
+                            200,
+                            {
+                                "jsonrpc": "2.0",
+                                "id": body.get("id"),
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                {
+                                                    "schema_id": "nepsis.operator_packet",
+                                                    "phase": "frame_draft",
+                                                }
+                                            ),
+                                        }
+                                    ],
+                                    "isError": False,
+                                },
+                            },
+                        )
+                        return
+                    self._send_json(
+                        200,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": body.get("id"),
+                            "error": {
+                                "code": -32001,
+                                "message": "MCP tool requires a valid Nepsis capability token.",
+                            },
+                        },
+                    )
+                    return
+            self._send_json(404, {"error": "not found"})
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+        def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+            self._send(status, json.dumps(payload), content_type="application/json")
+
+        def _send(self, status: int, payload: str, *, content_type: str) -> None:
+            encoded = payload.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SmokeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        env = {
+            **os.environ,
+            "NEPSIS_SITE_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+            "NEPSIS_MCP_CAPABILITY_TOKEN": "site-smoke-token",
+            "PYTHON_BIN": sys.executable,
+        }
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "site-smoke.sh")],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    mcp_methods = [
+        request["body"].get("method")
+        for request in requests
+        if request["method"] == "POST" and request["path"] == "/mcp"
+    ]
+    assert mcp_methods == ["initialize", "tools/list", "tools/call", "tools/call"]
+    tool_calls = [
+        request
+        for request in requests
+        if request["method"] == "POST"
+        and request["path"] == "/mcp"
+        and request["body"].get("method") == "tools/call"
+    ]
+    assert tool_calls[0]["authorization"] is None
+    assert tool_calls[0]["capability"] is None
+    assert tool_calls[1]["authorization"] == "Bearer site-smoke-token"
+    assert tool_calls[1]["body"]["params"]["name"] == "start_operator_packet"

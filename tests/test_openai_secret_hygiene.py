@@ -72,8 +72,12 @@ def test_scan_blocks_bad_public_site_env_combinations(tmp_path: Path) -> None:
     assert "OPENAI_API_KEY must stay unset when NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true" in result.stdout
 
 
-def test_current_web_env_example_passes_secret_hygiene_scan() -> None:
-    result = run_scan(ROOT / "nepsis-web" / ".env.example")
+def test_current_web_env_examples_pass_secret_hygiene_scan() -> None:
+    result = run_scan(
+        ROOT / "nepsis-web" / ".env.example",
+        ROOT / "nepsis-web" / ".env.public.example",
+        ROOT / "nepsis-web" / ".env.operator.example",
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
 

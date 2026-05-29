@@ -117,8 +117,19 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mcp.local.available).toBe(true);
   expect(payload.mcp.local.command).toBe("nepsiscgn-mcp");
   expect(payload.mcp.local.transport).toBe("stdio");
+  expect(payload.mcp.local.lifecycle).toContain("stateless packet-in/packet-out");
   expect(payload.mcp.hosted.available).toBe(false);
   expect(payload.mcp.hosted.deferred).toBe(true);
+  expect(payload.mcp.hosted.requiresCapabilityToken).toBe(true);
+  expect(payload.mcp.hosted.modelKeysRequired).toBe(false);
+  expect(payload.setup.publicSite.ready).toBe(true);
+  expect(payload.setup.publicSite.envExample).toBe("nepsis-web/.env.public.example");
+  expect(payload.setup.publicSite.docs[0].href).toBe("docs/public-api.md#public-site-setup");
+  expect(payload.setup.operatorMode.ready).toBe(false);
+  expect(payload.setup.operatorMode.envExample).toBe("nepsis-web/.env.operator.example");
+  expect(payload.setup.operatorMode.docs[0].href).toBe(
+    "docs/operator-runbook.md#private-operator-deployment",
+  );
 
   const engineHealth = await request.get("/api/engine/health");
   expect(engineHealth.ok()).toBeTruthy();
@@ -150,19 +161,66 @@ test("status page exposes safe public system posture", async ({ page }) => {
         },
         auth: { loginConfigured: false, emailConfigured: false, previewCodesEnabled: false },
         models: { enabled: false, hasServerOpenAiKey: false },
+        setup: {
+          publicSite: {
+            ready: true,
+            envExample: "nepsis-web/.env.public.example",
+            docs: [{ label: "Public site setup", href: "docs/public-api.md#public-site-setup" }],
+            assertions: [
+              {
+                id: "public-site-mode",
+                ok: true,
+                label: "Public site mode active",
+                detail: "The web deployment is rendering the frozen public /mvp posture.",
+                env: ["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true"],
+              },
+            ],
+          },
+          operatorMode: {
+            ready: false,
+            envExample: "nepsis-web/.env.operator.example",
+            docs: [
+              {
+                label: "Private operator deployment",
+                href: "docs/operator-runbook.md#private-operator-deployment",
+              },
+            ],
+            assertions: [
+              {
+                id: "operator-mode",
+                ok: false,
+                label: "Private operator mode active",
+                detail: "The deployment is explicitly configured as a live operator surface.",
+                env: ["NEPSIS_DEPLOYMENT_MODE=operator"],
+              },
+            ],
+          },
+        },
         mcp: {
-          publicTools: ["run_mvp", "health", "get_mvp_schema"],
-          operatorTools: ["get_session_state", "lock_frame", "run_report"],
+          discoverableMethods: ["initialize", "tools/list"],
+          publicTools: [],
+          protectedTools: [
+            "run_mvp",
+            "get_mvp_schema",
+            "health",
+            "get_routes",
+            "start_operator_packet",
+          ],
+          operatorTools: ["start_operator_packet", "get_session_state", "lock_frame", "run_report"],
           local: {
             available: true,
             command: "nepsiscgn-mcp",
             transport: "stdio",
             modelKeysRequired: false,
+            lifecycle: "stateless packet-in/packet-out; the model host stores the packet",
           },
           hosted: {
             available: false,
             endpoint: null,
             deferred: true,
+            requiresCapabilityToken: true,
+            capabilityTokenConfigured: false,
+            modelKeysRequired: false,
           },
         },
       }),
@@ -175,12 +233,17 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Public Site Setup" })).toBeVisible();
+  await expect(page.getByText("Env example: nepsis-web/.env.public.example")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Private Operator Setup" })).toBeVisible();
+  await expect(page.getByText("Env example: nepsis-web/.env.operator.example")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Live Operator" })).toBeVisible();
   await expect(page.getByText("Live operator route is disabled.")).toBeVisible();
   await expect(page.getByText("Local MCP Bridge")).toBeVisible();
   await expect(page.getByText("Command: nepsiscgn-mcp")).toBeVisible();
   await expect(page.getByText("Hosted MCP Endpoint")).toBeVisible();
-  await expect(page.getByText("Deferred until backend auth and deployment are configured.")).toBeVisible();
+  await expect(page.getByText("Deferred until the backend endpoint is configured.")).toBeVisible();
+  await expect(page.getByText("Tool calls require a Nepsis capability token.")).toBeVisible();
   await expect(page.getByText("No server OpenAI key configured")).toBeVisible();
 
   const operatorLogin = page.locator("section").filter({

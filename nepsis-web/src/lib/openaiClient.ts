@@ -1,6 +1,30 @@
 export const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
 const API_URL = process.env.OPENAI_API_URL ?? "https://api.openai.com/v1/responses";
-const ENV_API_KEY = process.env.OPENAI_API_KEY ?? process.env.NEPSIS_OPENAI_API_KEY ?? "";
+
+function normalizeApiKey(value?: string | null): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isPlaceholderOpenAiKey(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === "your_openai_api_key_here" ||
+    normalized.startsWith("replace-with-") ||
+    normalized.includes("server-side-openai-key")
+  );
+}
+
+function configuredEnvApiKey(): string {
+  for (const candidate of [process.env.OPENAI_API_KEY, process.env.NEPSIS_OPENAI_API_KEY]) {
+    const normalized = normalizeApiKey(candidate);
+    if (normalized && !isPlaceholderOpenAiKey(normalized)) {
+      return normalized;
+    }
+  }
+  return "";
+}
+
+const ENV_API_KEY = configuredEnvApiKey();
 
 type CreateResponseArgs = {
   model?: string;
@@ -50,12 +74,9 @@ class SimpleOpenAiClient {
   };
 }
 
-function normalizeApiKey(value?: string | null): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
 export function createOpenAiClient(apiKeyOverride?: string | null): SimpleOpenAiClient {
-  const apiKey = normalizeApiKey(apiKeyOverride) || ENV_API_KEY;
+  const override = normalizeApiKey(apiKeyOverride);
+  const apiKey = override && !isPlaceholderOpenAiKey(override) ? override : ENV_API_KEY;
   return new SimpleOpenAiClient(apiKey, API_URL);
 }
 
