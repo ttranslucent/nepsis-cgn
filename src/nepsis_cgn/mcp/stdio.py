@@ -10,6 +10,12 @@ from .handler import handle_mcp_request
 LOGGER = logging.getLogger("nepsis_cgn.mcp.stdio")
 
 
+def _route_manifest() -> list[dict[str, str]]:
+    from ..api.server import route_manifest
+
+    return route_manifest()
+
+
 def _write_response(response: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
     sys.stdout.flush()
@@ -32,6 +38,7 @@ def run_stdio() -> None:
                 response = handle_mcp_request(
                     body,
                     require_capability_token=False,
+                    route_manifest_fn=_route_manifest,
                     server_name="nepsis-cgn-local",
                 )
         except Exception as exc:

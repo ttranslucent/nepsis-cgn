@@ -25,12 +25,13 @@ class WordPuzzleManifold(ManifoldSpec):
 
 
 WORDLIST_PATH = pathlib.Path(__file__).parent.parent / "data" / "wordlist.txt"
+FALLBACK_WORDS = ["jingall", "jingal"]
 
 
 @lru_cache(maxsize=1)
 def load_dictionary() -> List[str]:
   if not WORDLIST_PATH.exists():
-    return []
+    return list(FALLBACK_WORDS)
 
   with WORDLIST_PATH.open() as f:
     return [line.strip().lower() for line in f if line.strip()]

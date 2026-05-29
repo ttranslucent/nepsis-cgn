@@ -295,8 +295,9 @@ def _tool_payload(
             manifest_path=_optional_string(arguments, "manifest_path"),
         )
     if name == "get_session_state":
-        packet = arguments.get("packet")
-        return inspect_operator_packet(packet if isinstance(packet, dict) else None)
+        if "packet" in arguments:
+            return inspect_operator_packet(_required_object(arguments, "packet"))
+        return inspect_operator_packet()
     if name == "lock_frame":
         return lock_frame(
             packet=_required_object(arguments, "packet"),
@@ -319,7 +320,7 @@ def _tool_payload(
         return set_threshold_decision(
             packet=_required_object(arguments, "packet"),
             decision=_required_string(arguments, "decision"),
-            hold_reason=str(arguments.get("hold_reason") or ""),
+            hold_reason=_optional_string(arguments, "hold_reason") or "",
         )
     if name == "commit_iteration":
         return commit_iteration(
@@ -327,7 +328,10 @@ def _tool_payload(
             carry_forward_frame=_optional_object(arguments, "carry_forward_frame"),
         )
     if name == "abandon_packet":
-        return abandon_packet(packet=_required_object(arguments, "packet"), reason=str(arguments.get("reason") or ""))
+        return abandon_packet(
+            packet=_required_object(arguments, "packet"),
+            reason=_optional_string(arguments, "reason") or "",
+        )
     raise KeyError(name)
 
 

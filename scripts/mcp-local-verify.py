@@ -353,10 +353,14 @@ def _expand_value(value: str) -> str:
 
 
 def _missing_server_message(config_label: str, server: str) -> str:
+    documented_command = Path("/Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp")
     local_command = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "nepsiscgn-mcp"
+    local_hint = ""
+    if local_command != documented_command:
+        local_hint = f" Current checkout command: codex mcp add {server} -- {local_command}"
     return (
         f"server {server!r} not found in {config_label}. "
-        f"For Codex, add it with: codex mcp add {server} -- {local_command}"
+        f"For Codex, add it with: codex mcp add {server} -- {documented_command}.{local_hint}"
     )
 
 

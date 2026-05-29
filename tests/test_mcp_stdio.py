@@ -66,6 +66,28 @@ def test_mcp_stdio_lists_public_and_operator_phase_tools(tmp_path: Path) -> None
     assert not stderr.strip()
 
 
+def test_mcp_stdio_get_routes_returns_route_manifest(tmp_path: Path) -> None:
+    proc = _start_mcp_stdio(tmp_path)
+    try:
+        response = _send(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "get_routes", "arguments": {}},
+            },
+        )
+    finally:
+        proc.terminate()
+        _, stderr = proc.communicate(timeout=5)
+
+    routes = _tool_text(response)["routes"]
+    assert any(route["path"] == "/mcp" and route["method"] == "POST" for route in routes)
+    assert any(route["path"] == "/v1/mvp" and route["method"] == "POST" for route in routes)
+    assert not stderr.strip()
+
+
 def test_mcp_stdio_run_mvp_and_stateless_phase_rejection_are_json_rpc(tmp_path: Path) -> None:
     store_path = tmp_path / "mcp-sessions.json"
     proc = _start_mcp_stdio(tmp_path)
