@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { publicSiteMode } from "@/lib/publicMode";
+import { requireSameOriginRequest } from "@/lib/requestSecurity";
 
 import {
   LOGIN_CODE_TTL_SECONDS,
@@ -17,6 +18,11 @@ import {
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const sameOriginFailure = requireSameOriginRequest(req);
+  if (sameOriginFailure) {
+    return sameOriginFailure;
+  }
+
   let body: unknown;
   try {
     body = await req.json();

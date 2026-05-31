@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
+import { requireSameOriginRequest } from "@/lib/requestSecurity";
 
 import {
+  NEPSIS_CSRF_COOKIE,
   LOGIN_SESSION_TTL_SECONDS,
   NEPSIS_LOGIN_CHALLENGE_COOKIE,
   NEPSIS_USER_COOKIE,
   checkLoginRateLimit,
   cookieOptions,
+  createCsrfToken,
   createLoginSession,
+  csrfCookieOptions,
   normalizeEmail,
   operatorEmailAllowed,
   readCookieFromHeader,
@@ -16,6 +20,11 @@ import {
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const sameOriginFailure = requireSameOriginRequest(req);
+  if (sameOriginFailure) {
+    return sameOriginFailure;
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -79,6 +88,11 @@ export async function POST(req: Request) {
     NEPSIS_USER_COOKIE,
     sessionToken,
     cookieOptions(rememberDevice ? LOGIN_SESSION_TTL_SECONDS : undefined),
+  );
+  response.cookies.set(
+    NEPSIS_CSRF_COOKIE,
+    createCsrfToken(sessionToken),
+    csrfCookieOptions(rememberDevice ? LOGIN_SESSION_TTL_SECONDS : undefined),
   );
   response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
   return response;

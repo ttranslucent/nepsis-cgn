@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { getStoredOpenAiKey, hasStoredOpenAiKey } from "@/lib/clientStorage";
+import { withCsrfHeader } from "@/lib/csrfClient";
 import { publicSiteMode } from "@/lib/publicMode";
 
 type PackOption = {
@@ -85,7 +86,7 @@ export default function PlaygroundPage() {
       const apiKey = getStoredOpenAiKey();
       const res = await fetch("/api/playground-nepsis", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           prompt,
           packId,

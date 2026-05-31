@@ -5,6 +5,7 @@ import {
   proxyJsonResponse,
   requireEngineControlAuth,
 } from "@/lib/engineApi";
+import { requireCsrfToken } from "@/lib/requestSecurity";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,10 @@ export async function POST(req: Request) {
   if (unauthorized) {
     return unauthorized;
   }
+  const csrfFailure = requireCsrfToken(req);
+  if (csrfFailure) {
+    return csrfFailure;
+  }
   const owner = engineControlOwner(req);
   const body = await req.text();
   try {
@@ -47,6 +52,10 @@ export async function DELETE(req: Request) {
   const unauthorized = requireEngineControlAuth(req);
   if (unauthorized) {
     return unauthorized;
+  }
+  const csrfFailure = requireCsrfToken(req);
+  if (csrfFailure) {
+    return csrfFailure;
   }
   const owner = engineControlOwner(req);
   const url = new URL(req.url);

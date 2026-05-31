@@ -1,3 +1,5 @@
+import { withCsrfHeader } from "@/lib/csrfClient";
+
 export type EngineFamily = "puzzle" | "clinical" | "safety";
 export type NepsisMvpCaseId = "jailing" | "clinical";
 
@@ -509,12 +511,13 @@ async function parseResponse<T>(res: Response): Promise<T> {
 }
 
 async function requestEngine<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const headers =
+    method === "GET" || method === "HEAD" ? new Headers(init?.headers) : withCsrfHeader(init?.headers);
   const res = await fetch(`${ENGINE_PROXY_BASE}${path}`, {
     ...init,
     cache: "no-store",
-    headers: {
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
   return parseResponse<T>(res);
 }
@@ -523,12 +526,13 @@ async function requestEngineAllowingPhaseRejection<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T | EnginePhaseRejection> {
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const headers =
+    method === "GET" || method === "HEAD" ? new Headers(init?.headers) : withCsrfHeader(init?.headers);
   const res = await fetch(`${ENGINE_PROXY_BASE}${path}`, {
     ...init,
     cache: "no-store",
-    headers: {
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
   const contentType = res.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await res.json() : await res.text();

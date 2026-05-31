@@ -10,6 +10,16 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test("public responses include baseline browser security headers", async ({ request }) => {
+  const response = await request.get("/mvp");
+
+  expect(response.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+  expect(response.headers()["x-frame-options"]).toBe("DENY");
+  expect(response.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(response.headers()["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+  expect(response.headers()["permissions-policy"]).toContain("camera=()");
+});
+
 test("public MVP can run without login or model key", async ({ page }) => {
   await page.goto("/mvp");
   await expect(page.getByRole("heading", { name: /RED/i })).toBeVisible();

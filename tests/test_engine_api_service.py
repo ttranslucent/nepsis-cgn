@@ -235,6 +235,21 @@ def test_session_owner_limits_cross_user_access() -> None:
         )
 
 
+def test_sqlite_store_owner_lookup_rejects_sql_like_owner_input(tmp_path) -> None:
+    db_path = tmp_path / "engine_sessions.db"
+    svc = EngineApiService(store_path=str(db_path))
+    created = svc.create_session(family="safety", owner_id="alice@example.com")
+    sid = created["session_id"]
+    svc.create_session(family="safety", owner_id="bob@example.com")
+
+    restored = EngineApiService(store_path=str(db_path))
+    injected_owner = "alice@example.com' OR '1'='1"
+
+    assert restored.list_sessions(owner_id=injected_owner)["pagination"]["total"] == 0
+    with pytest.raises(PermissionError):
+        restored.get_session(sid, owner_id=injected_owner)
+
+
 def test_reframe_increments_frame_version() -> None:
     svc = EngineApiService()
     created = svc.create_session(

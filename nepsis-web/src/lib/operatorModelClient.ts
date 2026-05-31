@@ -1,3 +1,5 @@
+import { withCsrfHeader } from "@/lib/csrfClient";
+
 export type OperatorModelMode = "draft_frame" | "interpret_report" | "threshold_review";
 
 export type OperatorFrameDraft = {
@@ -29,7 +31,7 @@ export async function requestOperatorModel(payload: {
 }): Promise<OperatorModelResponse> {
   const response = await fetch("/api/operator/model", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withCsrfHeader({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   const data = await response.json();

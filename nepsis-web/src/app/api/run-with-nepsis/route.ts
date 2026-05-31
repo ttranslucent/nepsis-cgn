@@ -7,6 +7,7 @@ import {
 } from "@/lib/openaiClient";
 import { requireEngineControlAuth } from "@/lib/engineApi";
 import { browserModelKeysAllowed, modelRoutesEnabled } from "@/lib/publicMode";
+import { requireCsrfToken } from "@/lib/requestSecurity";
 
 export async function POST(req: Request) {
   try {
@@ -23,6 +24,10 @@ export async function POST(req: Request) {
     const authFailure = requireEngineControlAuth(req);
     if (authFailure) {
       return authFailure;
+    }
+    const csrfFailure = requireCsrfToken(req);
+    if (csrfFailure) {
+      return csrfFailure;
     }
 
     const { prompt, apiKey, model } = await req.json();

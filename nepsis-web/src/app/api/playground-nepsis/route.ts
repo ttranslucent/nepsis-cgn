@@ -7,6 +7,7 @@ import {
 } from "@/lib/openaiClient";
 import { browserModelKeysAllowed, modelRoutesEnabled } from "@/lib/publicMode";
 import { requireEngineControlAuth } from "@/lib/engineApi";
+import { requireCsrfToken } from "@/lib/requestSecurity";
 import { buildProtoStateFromOutput, extractJingallCandidate, letterDelta } from "@/lib/protoPuzzleFromLlm";
 import { evaluateProtoPuzzleTs, type ProtoEvaluation } from "@/lib/protoPuzzle";
 
@@ -44,6 +45,10 @@ export async function POST(req: Request) {
   const authFailure = requireEngineControlAuth(req);
   if (authFailure) {
     return authFailure;
+  }
+  const csrfFailure = requireCsrfToken(req);
+  if (csrfFailure) {
+    return csrfFailure;
   }
 
   const body = await req.json().catch(() => null);

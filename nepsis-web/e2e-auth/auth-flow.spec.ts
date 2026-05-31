@@ -3,6 +3,7 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 const THIRTY_DAYS_SECONDS = 60 * 60 * 24 * 30;
 const AUTH_SECRET = "playwright-preview-auth-secret";
+const CSRF_COOKIE = "nepsis_csrf";
 const SESSION_REVOKE_BEFORE_MS = Date.parse("2001-01-01T00:00:00.000Z");
 const OPERATOR_EMAIL = "operator@example.com";
 const LOGOUT_OPERATOR_EMAIL = "operator+logout@example.com";
@@ -118,6 +119,11 @@ test("allowed operator OTP verifies and creates a 30-day remembered session", as
   expect(sessionCookie?.sameSite).toBe("Lax");
   expect(sessionCookie?.expires).toBeGreaterThan(Math.floor(Date.now() / 1000) + THIRTY_DAYS_SECONDS - 120);
   expect(sessionCookie?.expires).toBeLessThan(Math.floor(Date.now() / 1000) + THIRTY_DAYS_SECONDS + 120);
+
+  const csrfCookie = (await context.cookies()).find((cookie) => cookie.name === CSRF_COOKIE);
+  expect(csrfCookie).toBeTruthy();
+  expect(csrfCookie?.httpOnly).toBe(false);
+  expect(csrfCookie?.sameSite).toBe("Lax");
 });
 
 test("signed-in operator can open live operator route", async ({ page }) => {
@@ -141,6 +147,17 @@ test("non-allowlisted email does not receive a preview OTP", async ({ page }) =>
   await expect(status).toContainText("If this address is authorized");
   await expect(status).not.toContainText("Use this one-time code");
   await expect(page.getByLabel("Code")).toHaveValue("");
+});
+
+test("auth mutation endpoints reject cross-origin posts", async ({ request }) => {
+  for (const path of ["/api/auth/request-code", "/api/auth/verify-code", "/api/auth/logout"]) {
+    const response = await request.post(path, {
+      headers: { Origin: "https://attacker.example" },
+      data: { email: OPERATOR_EMAIL, code: "123456" },
+    });
+    expect(response.status(), path).toBe(403);
+    await expect(response.json(), path).resolves.toEqual({ error: "Same-origin request required" });
+  }
 });
 
 test("logout clears session and challenge cookies and locks engine access again", async ({ page, context }) => {
@@ -170,8 +187,42 @@ test("logout clears session and challenge cookies and locks engine access again"
   cookieNames = (await context.cookies()).map((cookie) => cookie.name);
   expect(cookieNames).not.toContain("nepsis_user");
   expect(cookieNames).not.toContain("nepsis_login_challenge");
+  expect(cookieNames).not.toContain(CSRF_COOKIE);
   await expectLoggedOutSession(page);
   await expectEngineAccessLocked(page);
+});
+
+test("signed-in engine mutations require the CSRF token header", async ({ page }) => {
+  await useIsolatedRateLimitBucket(page, "csrf-engine-mutation");
+  await requestPreviewCode(page, OPERATOR_EMAIL);
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  await expect(page).toHaveURL(/\/engine$/);
+
+  const missingToken = await page.evaluate(async () => {
+    const response = await fetch("/api/engine/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ family: "safety" }),
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  expect(missingToken.status).toBe(403);
+  expect(missingToken.body).toMatchObject({ error: "CSRF token required" });
+
+  const acceptedToken = await page.evaluate(async () => {
+    const csrfToken =
+      document.cookie
+        .split("; ")
+        .find((segment) => segment.startsWith("nepsis_csrf="))
+        ?.split("=")[1] ?? "";
+    const response = await fetch("/api/engine/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Nepsis-CSRF": decodeURIComponent(csrfToken) },
+      body: JSON.stringify({ family: "safety" }),
+    });
+    return { status: response.status };
+  });
+  expect(acceptedToken.status).not.toBe(403);
 });
 
 test("rememberDevice=false creates a browser-session auth cookie", async ({ page, context }) => {

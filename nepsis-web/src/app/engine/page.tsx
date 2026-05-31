@@ -38,6 +38,7 @@ import {
   requestOperatorModel,
   type OperatorModelResponse,
 } from "@/lib/operatorModelClient";
+import { withCsrfHeader } from "@/lib/csrfClient";
 
 type ChatRole = "human" | "nepsis";
 type DetachedRole = "human" | "assistant";
@@ -2118,7 +2119,7 @@ export default function EnginePage() {
       const apiKey = getStoredOpenAiKey();
       const res = await fetch("/api/run-with-nepsis", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           prompt: text,
           model: detachedModel,

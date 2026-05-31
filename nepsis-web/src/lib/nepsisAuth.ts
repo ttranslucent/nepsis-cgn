@@ -1,8 +1,12 @@
 import crypto from "crypto";
 import { envFlag, operatorSiteMode, publicSiteMode } from "@/lib/publicMode";
+import {
+  NEPSIS_CSRF_COOKIE,
+  NEPSIS_LOGIN_CHALLENGE_COOKIE,
+  NEPSIS_USER_COOKIE,
+} from "@/lib/securityConstants";
 
-export const NEPSIS_USER_COOKIE = "nepsis_user";
-export const NEPSIS_LOGIN_CHALLENGE_COOKIE = "nepsis_login_challenge";
+export { NEPSIS_CSRF_COOKIE, NEPSIS_LOGIN_CHALLENGE_COOKIE, NEPSIS_USER_COOKIE };
 export const LOGIN_CODE_TTL_SECONDS = 10 * 60;
 export const LOGIN_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 export const LOGIN_SESSION_DAYS = 30;
@@ -23,6 +27,12 @@ type LoginSessionPayload = {
   email: string;
   issuedAt: number;
   expiresAt: number;
+};
+
+type CsrfTokenPayload = {
+  sessionHash: string;
+  nonce: string;
+  issuedAt: number;
 };
 
 type LoginCodeDelivery =
@@ -257,6 +267,40 @@ export function createLoginSession(email: string): string {
   });
 }
 
+function csrfSessionHash(sessionToken: string): string {
+  return crypto.createHash("sha256").update(sessionToken).digest("base64url");
+}
+
+export function createCsrfToken(sessionToken: string): string {
+  return encodeSignedPayload({
+    sessionHash: csrfSessionHash(sessionToken),
+    nonce: crypto.randomBytes(16).toString("base64url"),
+    issuedAt: Date.now(),
+  });
+}
+
+export function verifyCsrfToken(sessionToken: string, csrfToken: string | null | undefined): boolean {
+  if (!sessionToken || !csrfToken) {
+    return false;
+  }
+  const parsed = decodeSignedPayload(csrfToken);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    typeof (parsed as CsrfTokenPayload).sessionHash !== "string" ||
+    typeof (parsed as CsrfTokenPayload).nonce !== "string" ||
+    typeof (parsed as CsrfTokenPayload).issuedAt !== "number" ||
+    !Number.isFinite((parsed as CsrfTokenPayload).issuedAt)
+  ) {
+    return false;
+  }
+  const expectedHash = csrfSessionHash(sessionToken);
+  const actualHash = (parsed as CsrfTokenPayload).sessionHash;
+  const expectedBuffer = Buffer.from(expectedHash, "base64url");
+  const actualBuffer = Buffer.from(actualHash, "base64url");
+  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
 function sessionRevokeBeforeMs(): number | null {
   const raw = process.env.NEPSIS_AUTH_SESSION_REVOKE_BEFORE?.trim();
   if (!raw) {
@@ -376,6 +420,14 @@ export function cookieOptions(maxAge?: number) {
   if (typeof maxAge === "number") {
     return { ...options, maxAge };
   }
+  return options;
+}
+
+export function csrfCookieOptions(maxAge?: number) {
+  const options = {
+    ...cookieOptions(maxAge),
+    httpOnly: false,
+  };
   return options;
 }
 
