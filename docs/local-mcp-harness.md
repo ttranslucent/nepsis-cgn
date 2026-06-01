@@ -1,10 +1,11 @@
 # Local MCP Harness
 
 Use this when you want a model host you already pay for to call NepsisCGN
-tools locally. The local harness starts the existing `nepsiscgn-mcp` stdio
-entrypoint. NepsisCGN provides deterministic tools and stateless packet
-transitions; the client owns model authentication and stores the returned
-packet between calls.
+tools locally. The local harness starts the existing `nepsis_cgn.mcp.stdio`
+server either through the installed `nepsiscgn-mcp` console script or directly
+with `.venv/bin/python -m nepsis_cgn.mcp.stdio` from a source checkout.
+NepsisCGN provides deterministic tools and stateless packet transitions; the
+client owns model authentication and stores the returned packet between calls.
 
 `/mvp remains deterministic and model-free`. Do not wire `/mvp`,
 `POST /v1/mvp`, or `POST /api/engine/mvp` to a provider model or a hosted key
@@ -17,6 +18,9 @@ From the repo root:
 
 ```bash
 .venv/bin/python -m pip install -e '.[dev,api]'
+.venv/bin/python -c 'import nepsis_cgn.mcp.stdio'
+
+# Only required when using the installed console-script form:
 test -x /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp
 ```
 
@@ -26,13 +30,13 @@ in the snippets below with that absolute path.
 ## Codex / ChatGPT-Authenticated Codex
 
 Codex CLI and the Codex IDE extension share `~/.codex/config.toml`. The
-shortest reliable setup is:
+installed console-script setup is:
 
 ```bash
 codex mcp add nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp
 ```
 
-Equivalent manual server entry:
+Equivalent manual installed server entry:
 
 ```toml
 [mcp_servers.nepsiscgn]
@@ -42,6 +46,27 @@ cwd = "/Users/trentthorn/Code/nepsiscgn"
 startup_timeout_sec = 10
 tool_timeout_sec = 30
 ```
+
+For a source checkout, or when you need Codex pinned to the same Python
+interpreter and module path that the verifier is testing, use the direct module
+entrypoint:
+
+```toml
+[mcp_servers.nepsiscgn]
+command = "/Users/trentthorn/Code/nepsiscgn/.venv/bin/python"
+args = ["-m", "nepsis_cgn.mcp.stdio"]
+cwd = "/Users/trentthorn/Code/nepsiscgn"
+startup_timeout_sec = 10
+tool_timeout_sec = 30
+
+[mcp_servers.nepsiscgn.env]
+PYTHONPATH = "/Users/trentthorn/Code/nepsiscgn/src"
+```
+
+The installed script and direct module forms run the same stdio server. Prefer
+the direct module form when validating a source checkout or when the generated
+`.venv/bin/nepsiscgn-mcp` script may be stale. Prefer the installed script when
+you want the shortest host command after refreshing the editable install.
 
 Then verify Codex sees it:
 

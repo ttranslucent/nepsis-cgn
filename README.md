@@ -214,7 +214,8 @@ See [docs/hosted-mcp-codex.md](docs/hosted-mcp-codex.md) for hosted Codex
 streamable-HTTP MCP verification with a Nepsis capability token.
 See [docs/local-mcp-harness.md](docs/local-mcp-harness.md) for copy-paste
 local Codex, Claude Code, and Gemini CLI stdio config plus a host-config
-verification flow for `nepsiscgn-mcp`.
+verification flow for `nepsiscgn-mcp` or direct
+`python -m nepsis_cgn.mcp.stdio` entrypoints.
 
 ## Clickable UI Demo
 

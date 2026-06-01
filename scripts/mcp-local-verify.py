@@ -43,7 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Verify the local NepsisCGN MCP stdio entrypoint by reading a real "
-            "Codex, Claude Code, or Gemini CLI host config."
+            "Codex, Claude Code, or Gemini CLI host config. Supports the "
+            "installed nepsiscgn-mcp script and direct python -m "
+            "nepsis_cgn.mcp.stdio entries."
         )
     )
     parser.add_argument("--client", choices=["codex", "claude", "gemini"], required=True)
@@ -353,14 +355,19 @@ def _expand_value(value: str) -> str:
 
 
 def _missing_server_message(config_label: str, server: str) -> str:
+    repo_root = Path(__file__).resolve().parents[1]
     documented_command = Path("/Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp")
-    local_command = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "nepsiscgn-mcp"
+    local_command = repo_root / ".venv" / "bin" / "nepsiscgn-mcp"
+    local_python = repo_root / ".venv" / "bin" / "python"
     local_hint = ""
     if local_command != documented_command:
         local_hint = f" Current checkout command: codex mcp add {server} -- {local_command}"
     return (
         f"server {server!r} not found in {config_label}. "
-        f"For Codex, add it with: codex mcp add {server} -- {documented_command}.{local_hint}"
+        f"For Codex, add the installed script with: codex mcp add {server} -- {documented_command}. "
+        f'For a source-checkout direct module entry, set command = "{local_python!s}", '
+        f'args = ["-m", "nepsis_cgn.mcp.stdio"], and cwd = "{repo_root!s}".'
+        f"{local_hint}"
     )
 
 
