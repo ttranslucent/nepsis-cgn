@@ -20,6 +20,7 @@ dev = [
 ]
 api = [
     "fastapi>=0.110.0",
+    "httpx2>=2.3.0",
     "uvicorn[standard]>=0.30.0",
     "cryptography>=42.0.0",
 ]
