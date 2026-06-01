@@ -225,6 +225,47 @@ test("signed-in engine mutations require the CSRF token header", async ({ page }
   expect(acceptedToken.status).not.toBe(403);
 });
 
+test("session status backfills CSRF cookie for legacy remembered sessions", async ({ page, context, baseURL }) => {
+  await useIsolatedRateLimitBucket(page, "legacy-csrf-backfill");
+  const expiresAt = Date.now() + THIRTY_DAYS_SECONDS * 1000;
+  const legacySession = createSignedSession(OPERATOR_EMAIL, Date.now() - 1000, expiresAt);
+  await addAuthCookie(
+    context,
+    baseURL,
+    "nepsis_user",
+    legacySession,
+    Math.floor(expiresAt / 1000),
+  );
+
+  await page.goto("/login");
+  await expect.poll(() => readAuthSession(page)).toMatchObject({
+    authenticated: true,
+    engineControlAllowed: true,
+    user: OPERATOR_EMAIL,
+  });
+
+  const csrfCookie = (await context.cookies()).find((cookie) => cookie.name === CSRF_COOKIE);
+  expect(csrfCookie).toBeTruthy();
+  expect(csrfCookie?.httpOnly).toBe(false);
+  expect(csrfCookie?.sameSite).toBe("Lax");
+
+  const acceptedToken = await page.evaluate(async () => {
+    const csrfToken =
+      document.cookie
+        .split("; ")
+        .find((segment) => segment.startsWith("nepsis_csrf="))
+        ?.split("=")[1] ?? "";
+    const response = await fetch("/api/engine/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Nepsis-CSRF": decodeURIComponent(csrfToken) },
+      body: JSON.stringify({ family: "safety" }),
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  expect(acceptedToken.status).not.toBe(403);
+  expect(acceptedToken.body).not.toMatchObject({ error: "CSRF token required" });
+});
+
 test("rememberDevice=false creates a browser-session auth cookie", async ({ page, context }) => {
   await useIsolatedRateLimitBucket(page, "session-cookie");
   await requestPreviewCode(page, SESSION_COOKIE_OPERATOR_EMAIL);
