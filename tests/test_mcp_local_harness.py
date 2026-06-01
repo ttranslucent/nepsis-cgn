@@ -9,6 +9,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "local-mcp-harness.md"
 VERIFIER = ROOT / "scripts" / "mcp-local-verify.py"
+REQUIRED_LOCAL_MCP_TOOLS = [
+    "commit_iteration",
+    "get_mvp_schema",
+    "get_session_state",
+    "health",
+    "lock_frame",
+    "lock_report",
+    "run_mvp",
+    "run_report",
+    "set_threshold_decision",
+    "start_operator_packet",
+]
 
 
 def test_local_mcp_harness_docs_include_copy_paste_host_configs() -> None:
@@ -19,6 +31,9 @@ def test_local_mcp_harness_docs_include_copy_paste_host_configs() -> None:
     assert "[mcp_servers.nepsiscgn]" in text
     assert 'command = "/Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp"' in text
     assert 'cwd = "/Users/trentthorn/Code/nepsiscgn"' in text
+    assert 'command = "/Users/trentthorn/Code/nepsiscgn/.venv/bin/python"' in text
+    assert 'args = ["-m", "nepsis_cgn.mcp.stdio"]' in text
+    assert 'PYTHONPATH = "/Users/trentthorn/Code/nepsiscgn/src"' in text
 
     assert ".mcp.json" in text
     assert 'claude mcp add --transport stdio --scope project nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp' in text
@@ -91,6 +106,59 @@ def test_mcp_local_verifier_accepts_real_host_configs(tmp_path: Path) -> None:
         assert not (tmp_path / "mcp-sessions.json").exists()
 
 
+def test_mcp_local_verifier_validates_codex_fixture_stdio_entrypoint(tmp_path: Path) -> None:
+    store_path = tmp_path / "mcp-sessions.json"
+    config = _write_codex_stdio_config(tmp_path, store_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VERIFIER),
+            "--client",
+            "codex",
+            "--config",
+            str(config),
+            "--server",
+            "nepsiscgn",
+            "--timeout",
+            "5",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["client"] == "codex"
+    assert payload["server"] == "nepsiscgn"
+    assert payload["command"] == [sys.executable, "-m", "nepsis_cgn.mcp.stdio"]
+    assert payload["initialized"]["name"] == "nepsis-cgn-local"
+    assert payload["tools"]["required_present"] == REQUIRED_LOCAL_MCP_TOOLS
+    assert payload["tools"]["count"] >= len(REQUIRED_LOCAL_MCP_TOOLS)
+    assert payload["health"]["model_provider_keys_required"] is False
+    assert payload["mvp"] == {
+        "schema_id": "nepsis.mvp_packet",
+        "case_id": "jailing",
+        "model_free": True,
+    }
+    assert payload["operator"]["started_schema_id"] == "nepsis.operator_packet"
+    assert payload["operator"]["state_schema_id"] == "nepsis.operator_packet_state"
+    assert payload["operator"]["committed_schema_id"] == "nepsis.operator_packet"
+    assert payload["operator"]["committed_phase"] == "frame_draft"
+    assert payload["operator"]["last_commit_schema_id"] == "nepsis.operator_audit_packet"
+    assert payload["operator"]["phase_events"] == [
+        "LOCK_FRAME",
+        "RUN_REPORT",
+        "LOCK_REPORT",
+        "SET_THRESHOLD_DECISION",
+        "COMMIT_ITERATION",
+    ]
+    assert not store_path.exists()
+
+
 def test_mcp_local_verifier_reports_missing_codex_server_with_add_command(tmp_path: Path) -> None:
     config = tmp_path / "codex-config.toml"
     config.write_text("[mcp_servers.playwright]\ncommand = \"npx\"\n", encoding="utf-8")
@@ -115,6 +183,7 @@ def test_mcp_local_verifier_reports_missing_codex_server_with_add_command(tmp_pa
     assert result.returncode == 1
     assert "server 'nepsiscgn' not found in Codex config" in result.stderr
     assert "codex mcp add nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp" in result.stderr
+    assert 'args = ["-m", "nepsis_cgn.mcp.stdio"]' in result.stderr
 
 
 def _write_nepsiscgn_mcp_wrapper(tmp_path: Path) -> Path:
@@ -146,6 +215,29 @@ def _write_codex_config(tmp_path: Path, wrapper: Path) -> Path:
                 f'cwd = "{ROOT}"',
                 "startup_timeout_sec = 10",
                 "tool_timeout_sec = 30",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def _write_codex_stdio_config(tmp_path: Path, store_path: Path) -> Path:
+    config = tmp_path / "codex-stdio-config.toml"
+    config.write_text(
+        "\n".join(
+            [
+                "[mcp_servers.nepsiscgn]",
+                f"command = {json.dumps(sys.executable)}",
+                'args = ["-m", "nepsis_cgn.mcp.stdio"]',
+                f"cwd = {json.dumps(str(ROOT))}",
+                "startup_timeout_sec = 10",
+                "tool_timeout_sec = 30",
+                "",
+                "[mcp_servers.nepsiscgn.env]",
+                f"PYTHONPATH = {json.dumps(str(ROOT / 'src'))}",
+                f"NEPSIS_API_STORE_PATH = {json.dumps(str(store_path))}",
                 "",
             ]
         ),

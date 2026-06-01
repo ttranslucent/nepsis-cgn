@@ -11,6 +11,7 @@ const SESSION_COOKIE_OPERATOR_EMAIL = "operator+session-cookie@example.com";
 const REVOKED_OPERATOR_EMAIL = "operator+revoked@example.com";
 const INVALID_CODE_OPERATOR_EMAIL = "operator+invalid-code@example.com";
 const EXPIRED_CODE_OPERATOR_EMAIL = "operator+expired-code@example.com";
+const PROTECTED_PROVENANCE_PATH_SUFFIXES = ["provenance", "audit-export"] as const;
 
 async function useIsolatedRateLimitBucket(page: Page, label: string) {
   await page.context().setExtraHTTPHeaders({
@@ -59,6 +60,29 @@ async function expectEngineAccessLocked(page: Page) {
   await page.goto("/engine");
   await expect(page.getByText("Engine session controls are locked until you sign in.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign In" })).toBeVisible();
+}
+
+async function expectProtectedProvenanceReadsLocked(page: Page, sessionId = "auth-flow-session") {
+  const results = await page.evaluate(
+    async ({ pathSuffixes, sessionId }) =>
+      Promise.all(
+        pathSuffixes.map(async (suffix) => {
+          const response = await fetch(`/api/engine/sessions/${encodeURIComponent(sessionId)}/${suffix}`, {
+            cache: "no-store",
+          });
+          return { suffix, status: response.status, body: await response.json() };
+        }),
+      ),
+    { pathSuffixes: PROTECTED_PROVENANCE_PATH_SUFFIXES, sessionId },
+  );
+
+  for (const result of results) {
+    expect(result.status, result.suffix).toBe(401);
+    expect(result.body, result.suffix).toMatchObject({
+      error: "Unauthorized",
+      detail: "Sign in required for engine session controls",
+    });
+  }
 }
 
 async function addAuthCookie(
@@ -190,6 +214,7 @@ test("logout clears session and challenge cookies and locks engine access again"
   expect(cookieNames).not.toContain(CSRF_COOKIE);
   await expectLoggedOutSession(page);
   await expectEngineAccessLocked(page);
+  await expectProtectedProvenanceReadsLocked(page);
 });
 
 test("signed-in engine mutations require the CSRF token header", async ({ page }) => {
@@ -300,6 +325,7 @@ test("session revoke cutoff invalidates older remembered sessions", async ({ pag
 
   await expectLoggedOutSession(page);
   await expectEngineAccessLocked(page);
+  await expectProtectedProvenanceReadsLocked(page);
 });
 
 test("invalid OTP code fails closed without granting engine access", async ({ page, context }) => {
