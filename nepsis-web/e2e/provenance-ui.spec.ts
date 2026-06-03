@@ -11,14 +11,14 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-async function runMvp(page: Page, query: string) {
+async function runMvp(page: Page) {
   await page.goto("/mvp");
-  await page.getByLabel(/Visitor query/i).fill(query);
-  await page.getByRole("button", { name: "Run Query" }).click();
+  await expect(page.getByLabel(/Visitor query/i)).toHaveCount(0);
+  await page.getByRole("button", { name: "Run Demo" }).click();
 }
 
 test("public MVP exposes deterministic provenance topology, audit drawer, and replay stub", async ({ page }) => {
-  await runMvp(page, "Source says JINGALL, but a model answered JAILING.");
+  await runMvp(page);
 
   await expect(page.getByRole("button", { name: "Topology" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Audit", exact: true })).toBeVisible();
@@ -54,9 +54,9 @@ test("public MVP exposes deterministic provenance topology, audit drawer, and re
 });
 
 test("public MVP tracks previous deterministic packet for provenance diff", async ({ page }) => {
-  await runMvp(page, "Source says JINGALL, but a model answered JAILING.");
-  await page.getByRole("button", { name: /Clinical/ }).click();
-  await page.getByLabel(/Visitor query/i).fill("");
+  await runMvp(page);
+  await page.getByRole("button", { name: /Clinical/ }).focus();
+  await page.keyboard.press("Enter");
   await page.getByRole("button", { name: "Run Demo" }).focus();
   await page.keyboard.press("Enter");
 

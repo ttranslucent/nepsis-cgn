@@ -26,10 +26,11 @@ Content-Type: application/json
 {"case_id":"jailing"}
 ```
 
-Supported `case_id` values are `jailing` and `clinical`. Include optional
-`input_text` to run a visitor query through the selected deterministic MVP
-scaffold. The response is the frozen v0.3 `nepsis.mvp_packet` shape and is not a
-live model response.
+Supported `case_id` values are `jailing` and `clinical`. The public page runs
+those fixed cases without a visitor query box. Direct proxy callers may include
+optional `input_text` for deterministic packet-builder compatibility; the
+response is the frozen v0.3 `nepsis.mvp_packet` shape and is not a live model
+response.
 
 If the backend is not configured, the web UI shows a public-safe status message
 and `POST /api/engine/mvp` serves bundled frozen v0.3 packets for the canonical
@@ -129,12 +130,13 @@ To prove hosted Codex connectivity end to end, configure Codex with a
 streamable-HTTP MCP server and run `scripts/mcp-hosted-verify.py`. See
 [hosted-mcp-codex.md](hosted-mcp-codex.md).
 
-## Public MVP Visual Topology Mode
+## Public MVP Provenance Views
 
-The `/mvp` page may render a Visual Topology Mode for stakeholder review. This
-is a browser-side view over the canonical `nepsis.mvp_packet` response.
+The `/mvp` page may render provenance-oriented topology, audit, and lineage
+views for stakeholder review. These are browser-side views over the canonical
+`nepsis.mvp_packet` response.
 
-Visual Topology Mode does not add public API fields, does not require login,
-does not call provider models, and does not create runtime engine sessions. The
-raw telemetry and JSON packet remain available from the same page through the
-`Full View` result view.
+The provenance views do not add public API fields, do not require login, do not
+call provider models, and do not create runtime engine sessions. The raw
+telemetry and JSON packet remain available from the same page through the
+`Audit` result view.

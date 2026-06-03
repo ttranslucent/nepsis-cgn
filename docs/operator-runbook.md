@@ -32,9 +32,8 @@ npm run dev
 ## Boundaries
 
 - `/mvp` is the frozen deterministic demo path.
-- `/mvp` also accepts a short visitor query in the selected case scaffold. This
-  is still model-free and should be described as structured deterministic
-  inspection, not as a chatbot.
+- `/mvp` is a case-run demo. The public page does not expose a visitor query
+  box and should not be described as a chatbot or prompt surface.
 - `/status` is the first stop for deployment health, auth, model-route, and MCP
   readiness.
 - `POST /api/engine/mvp` should prefer the FastAPI backend. If the public web

@@ -22,9 +22,14 @@ test("public responses include baseline browser security headers", async ({ requ
 
 test("public MVP can run without login or model key", async ({ page }) => {
   await page.goto("/mvp");
-  await expect(page.getByRole("heading", { name: /RED/i })).toBeVisible();
-  await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
-  await page.getByRole("button", { name: "Run Query" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Detect constraint violations before an AI answer commits." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("RED \u2192 STILL \u2192 BLUE \u2192 STILL \u2192 commitment \u2192 state feedback \u2192 audit"),
+  ).toBeVisible();
+  await expect(page.getByLabel(/Visitor query/i)).toHaveCount(0);
+  await page.getByRole("button", { name: "Run Demo" }).click();
 
   await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
   await page.getByRole("button", { name: "Audit", exact: true }).focus();
@@ -33,7 +38,7 @@ test("public MVP can run without login or model key", async ({ page }) => {
   await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
   await expect(page.locator("main")).toContainText("action_priority");
   await expect(
-    page.locator("p").filter({ hasText: "Source says JINGALL, but a model answered JAILING." }),
+    page.locator("p").filter({ hasText: "Canonical Jailing/Jingall case" }),
   ).toBeVisible();
   await expect(page.locator("p").filter({ hasText: "Do not accept JAILING." })).toBeVisible();
   await expect(page.getByText("Engine backend request failed", { exact: false })).toHaveCount(0);
@@ -41,8 +46,8 @@ test("public MVP can run without login or model key", async ({ page }) => {
 
 test("public MVP toggles between provenance tabs", async ({ page }) => {
   await page.goto("/mvp");
-  await page.getByLabel(/Visitor query/i).fill("Source says JINGALL, but a model answered JAILING.");
-  await page.getByRole("button", { name: "Run Query" }).click();
+  await expect(page.getByLabel(/Visitor query/i)).toHaveCount(0);
+  await page.getByRole("button", { name: "Run Demo" }).click();
 
   await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Topology" })).toHaveAttribute("aria-pressed", "true");
