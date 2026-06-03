@@ -59,6 +59,25 @@ def test_asgi_mvp_cors_allows_configured_origin(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://nepsis-cgn.vercel.app"
 
 
+def test_asgi_mvp_accepts_input_text_for_direct_packet_builder_callers(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+    direct_input = "Direct caller compatibility: source says JINGALL, candidate says JAILING."
+
+    client = TestClient(asgi.create_app())
+    response = client.post(
+        "/v1/mvp",
+        json={"case_id": "jailing", "input_text": direct_input},
+    )
+
+    assert response.status_code == 200
+    packet = response.json()
+    assert packet["schema_id"] == "nepsis.mvp_packet"
+    assert packet["case_id"] == "jailing"
+    assert packet["input_text"] == direct_input
+    assert packet["red_channel"]["escalation_required"] is True
+
+
 def test_asgi_mcp_lists_without_capability_token(monkeypatch) -> None:
     monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
     monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
