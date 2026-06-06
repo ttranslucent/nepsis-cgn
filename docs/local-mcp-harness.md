@@ -6,6 +6,9 @@ server either through the installed `nepsiscgn-mcp` console script or directly
 with `.venv/bin/python -m nepsis_cgn.mcp.stdio` from a source checkout.
 NepsisCGN provides deterministic tools and stateless packet transitions; the
 client owns model authentication and stores the returned packet between calls.
+For the smallest Codex-mode rehearsal, use
+[`codex-local-mcp-demo.md`](codex-local-mcp-demo.md) and
+`scripts/codex-mcp-demo.sh`.
 
 `/mvp remains deterministic and model-free`. Do not wire `/mvp`,
 `POST /v1/mvp`, or `POST /api/engine/mvp` to a provider model or a hosted key

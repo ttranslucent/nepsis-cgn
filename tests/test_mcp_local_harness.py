@@ -8,6 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "local-mcp-harness.md"
+CODEX_DEMO_DOC = ROOT / "docs" / "codex-local-mcp-demo.md"
+CODEX_DEMO_SCRIPT = ROOT / "scripts" / "codex-mcp-demo.sh"
 VERIFIER = ROOT / "scripts" / "mcp-local-verify.py"
 REQUIRED_LOCAL_MCP_TOOLS = [
     "commit_iteration",
@@ -52,6 +54,39 @@ def test_local_mcp_harness_docs_include_copy_paste_host_configs() -> None:
 def test_mcp_local_verifier_is_valid_python() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "py_compile", str(VERIFIER)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_codex_mcp_demo_runbook_is_copy_pasteable() -> None:
+    text = CODEX_DEMO_DOC.read_text(encoding="utf-8")
+    script = CODEX_DEMO_SCRIPT.read_text(encoding="utf-8")
+
+    assert "Codex Local MCP Demo" in text
+    assert "scripts/mvp-local.sh" in text
+    assert "NEPSIS_SITE_BASE_URL=http://127.0.0.1:3000 scripts/codex-mcp-demo.sh" in text
+    assert "/api/status" in text
+    assert "scripts/mcp-local-verify.py --client codex" in text
+    assert "run_mvp" in text
+    assert "start_operator_packet" in text
+    assert "codex mcp add nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp" in text
+    assert "Use only the NepsisCGN MCP server named nepsiscgn" in text
+    assert "/mvp remains deterministic and model-free" in text
+
+    assert "scripts/mcp-local-verify.py" in script
+    assert "NEPSIS_SITE_BASE_URL" in script
+    assert "/api/status" in script
+    assert 'args = ["-m", "nepsis_cgn.mcp.stdio"]' in script
+    assert "run_mvp" in script
+    assert "start_operator_packet" in script
+
+    result = subprocess.run(
+        ["bash", "-n", str(CODEX_DEMO_SCRIPT)],
         cwd=ROOT,
         capture_output=True,
         text=True,
