@@ -38,7 +38,17 @@ npm run dev
   readiness.
 - `POST /api/engine/mvp` should prefer the FastAPI backend. If the public web
   deployment has no backend URL, it serves bundled frozen v0.3 packets as a
-  public-demo safety net and `/status` still reports the backend gap.
+  public-demo safety net and `/status` still reports the backend gap. Fallback
+  packets include `fallback_source` and `fallback_reason`; `backend_unconfigured`
+  means the public demo is intentionally using the bundled deterministic packet.
+- The v0.1.6 raw packet keeps hypothesis `likelihood` support-only and puts
+  RED/threshold standing in `post_constraint_standing` and `action_priority`.
+  Use contradiction `level`/`status` plus `density_channels` instead of treating
+  the scalar density as a runtime gate.
+- The Jailing/Jingall packet assumes `JINGALL` is the authoritative source
+  token. It does not prove detection of the harder corrupted-source-token
+  variant where `JAILING` is true; source-token verification remains a declared
+  next-cycle obligation.
 - `/engine`, session APIs, playground routes, and LLM/model sandbox flows are
   experimental operator tools.
 - `/operator` is the product-facing live operator path. It must stay signed-in

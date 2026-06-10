@@ -2,6 +2,7 @@
 
 import { motion, useReducedMotion } from "motion/react";
 
+import { formatTelemetryDensity } from "@/components/provenance/format";
 import { PacketDiffView } from "@/components/provenance/PacketDiffView";
 import { ReplayControls } from "@/components/provenance/ReplayControls";
 import type { ProvenanceNode, ProvenancePacket } from "@/lib/provenance/types";
@@ -106,7 +107,7 @@ function SummaryTab({ packet, selectedNode }: { packet: ProvenancePacket; select
         <Metric label="Run ID" value={packet.run_id} />
         <Metric label="Deterministic ID" value={metadataText(selectedNode, "deterministicCallId")} />
         <Metric label="Confidence" value={`${Math.round((selectedNode?.confidence ?? 0) * 100)}%`} />
-        <Metric label="Contradiction density" value={String(selectedNode?.contradictionDensity ?? 0)} />
+        <Metric label="Contradiction density" value={formatTelemetryDensity(selectedNode?.contradictionDensity)} />
       </div>
     </div>
   );
@@ -130,7 +131,7 @@ function WhyTab({ packet, selectedNode }: { packet: ProvenancePacket; selectedNo
         items={[
           `STILL: ${metadataText(selectedNode, "stillStatus")}`,
           `Node state: ${selectedNode?.state ?? "active"}`,
-          `Density: ${selectedNode?.contradictionDensity ?? 0}`,
+          `Density: ${formatTelemetryDensity(selectedNode?.contradictionDensity)}`,
         ]}
       />
       <SectionList

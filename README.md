@@ -116,7 +116,9 @@ The public site posture is intentionally narrow:
 - Public production must not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`, or `NEPSIS_MODEL_ROUTES_ENABLED=true`.
 - `POST /api/engine/mvp` uses the FastAPI backend when configured and falls back
   to bundled frozen v0.3 packets when production has no backend URL, so the
-  public demo remains usable while backend deployment is completed.
+  public demo remains usable while backend deployment is completed. Fallback
+  responses include `fallback_source` and `fallback_reason` so operators can
+  distinguish an intentional bundled packet from a proxied backend packet.
 
 Deploy the existing FastAPI backend as the API service. `render.yaml` defines a
 Render web service that installs `.[api]`, starts `nepsiscgn-api-asgi`, binds to

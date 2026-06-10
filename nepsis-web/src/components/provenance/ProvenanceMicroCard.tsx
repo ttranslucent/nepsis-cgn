@@ -2,6 +2,7 @@
 
 import { motion, useReducedMotion } from "motion/react";
 
+import { formatTelemetryDensity } from "@/components/provenance/format";
 import type { ProvenanceNode } from "@/lib/provenance/types";
 
 function textList(value: unknown): string {
@@ -69,7 +70,7 @@ export function ProvenanceMicroCard({
           </div>
           <div>
             <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">Density</dt>
-            <dd className="mt-0.5 text-slate-200">{node.contradictionDensity ?? 0}</dd>
+            <dd className="mt-0.5 text-slate-200">{formatTelemetryDensity(node.contradictionDensity)}</dd>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2">

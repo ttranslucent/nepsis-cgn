@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { AuditTrailDrawer, type AuditDrawerTab } from "@/components/provenance/AuditTrailDrawer";
+import { formatTelemetryDensity } from "@/components/provenance/format";
 import { ProvenanceTopology } from "@/components/provenance/ProvenanceTopology";
 import { ReplayControls } from "@/components/provenance/ReplayControls";
 import {
@@ -223,6 +224,7 @@ function PacketView({
             selectedNodeId={selectedNode?.id ?? null}
             onSelectedNodeIdChange={setSelectedNodeId}
             onOpenAudit={() => showAudit("summary")}
+            onOpenRawTrace={() => showAudit("raw")}
             onReplay={() => showAudit("replay")}
           />
           {drawerOpen ? (
@@ -334,7 +336,7 @@ function FullPacketView({ packet }: { packet: NepsisMvpPacket }) {
 
       <section className="grid gap-5 xl:grid-cols-2">
         <Panel title="Contradiction Monitor">
-          <KeyValue label="Density" value={String(packet.contradiction_monitor.contradiction_density)} />
+          <KeyValue label="Density" value={formatTelemetryDensity(packet.contradiction_monitor.contradiction_density)} />
           <KeyValue label="Density basis" value={formatDensityBasis(packet.contradiction_monitor.density_basis)} />
           <KeyValue label="Stability" value={packet.contradiction_monitor.stability_status} />
           <JsonList title="Contradictions" items={packet.contradiction_monitor.contradictions} />

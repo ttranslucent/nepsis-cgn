@@ -57,7 +57,12 @@ test("public MVP toggles between provenance tabs", async ({ page }) => {
   await expect(page.getByRole("button", { name: /collapse Collapse/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /zeroback Validation/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /final Output/ })).toBeVisible();
-  await expect(page.getByText("+ 3 hidden steps", { exact: true })).toBeVisible();
+  await expect(page.getByText("0.667", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("0.6666666666666666", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "+ 3 hidden steps" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("complementary", { name: "Audit trail drawer" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Raw Trace" })).toHaveAttribute("aria-selected", "true");
 
   await page.getByRole("button", { name: "Audit", exact: true }).focus();
   await page.keyboard.press("Enter");

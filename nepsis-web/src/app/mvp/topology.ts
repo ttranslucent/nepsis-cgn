@@ -1,4 +1,5 @@
 import type { NepsisMvpPacket } from "@/lib/engineClient";
+import { formatTelemetryDensity } from "@/components/provenance/format";
 
 export type MvpTopologyNodeId =
   | "red"
@@ -141,7 +142,7 @@ export function buildMvpTopology(packet: NepsisMvpPacket): MvpTopologyModel {
       { from: "feedback", to: "audit", label: "records lineage", emphasized: true },
     ],
     activeFacts: [
-      `Contradiction density: ${packet.contradiction_monitor.contradiction_density}`,
+      `Contradiction density: ${formatTelemetryDensity(packet.contradiction_monitor.contradiction_density)}`,
       `Density basis: ${packet.contradiction_monitor.density_basis.model}`,
       `Denominator collapse: ${packet.denominator_collapse.detected ? "detected" : "clear"}`,
       `ZeroBack: ${packet.zeroback.triggered ? "triggered" : "clear"}`,

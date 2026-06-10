@@ -9,6 +9,7 @@ def _stable_packet(packet: dict) -> dict:
     cleaned.pop("packet_id", None)
     cleaned.pop("created_at", None)
     cleaned.pop("fallback_source", None)
+    cleaned.pop("fallback_reason", None)
     return cleaned
 
 

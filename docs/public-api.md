@@ -34,8 +34,30 @@ response.
 
 If the backend is not configured, the web UI shows a public-safe status message
 and `POST /api/engine/mvp` serves bundled frozen v0.3 packets for the canonical
-`jailing` and `clinical` cases. `/status` still reports the backend as
-unconfigured so operators know the FastAPI service remains to be deployed.
+`jailing` and `clinical` cases. The fallback packet includes
+`fallback_source` and `fallback_reason`; `backend_unconfigured` means the public
+site is intentionally using the bundled deterministic packet because
+`NEPSIS_API_BASE_URL` is absent, not because a model or hidden engine path ran
+silently. `/status` still reports the backend as unconfigured so operators know
+the FastAPI service remains to be deployed.
+
+## MVP Packet Semantics
+
+The v0.1.6 MVP packet keeps legacy hypothesis `likelihood` fields for
+compatibility, but those values are support-only. RED/threshold standing lives
+in `post_constraint_standing` and `action_priority`, while `evaluation_axes`
+keeps support separate from action priority.
+
+`contradiction_monitor.contradiction_density` is a demo-only scalar summary.
+Use `density_channels` and each contradiction's `level` and `status` when
+inspecting whether object-level, meta-level, or action-threshold contradictions
+are open or resolved inside the packet.
+
+The Jailing/Jingall case is a hard RED demo. It assumes `JINGALL` is the
+authoritative source token, shows rejection of the fluent `JAILING`
+normalization, and records source-token verification as a next-cycle
+obligation. It does not demonstrate detection of the harder variant where the
+source token itself is corrupted and `JAILING` is true.
 
 ## Direct FastAPI
 

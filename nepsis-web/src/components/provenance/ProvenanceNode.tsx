@@ -3,6 +3,7 @@
 import { AnimatePresence } from "motion/react";
 import { forwardRef } from "react";
 
+import { formatTelemetryDensity } from "@/components/provenance/format";
 import { ProvenanceMicroCard } from "@/components/provenance/ProvenanceMicroCard";
 import { StalenessBadge } from "@/components/provenance/StalenessBadge";
 import type { ProvenanceNode as ProvenanceNodeModel } from "@/lib/provenance/types";
@@ -78,7 +79,7 @@ export const ProvenanceNode = forwardRef<
         <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[10px] text-slate-300">
           <div>
             <div className="uppercase tracking-[0.1em] text-slate-500">Density</div>
-            <div className="mt-1">{node.contradictionDensity ?? 0}</div>
+            <div className="mt-1">{formatTelemetryDensity(node.contradictionDensity)}</div>
           </div>
           <div>
             <div className="uppercase tracking-[0.1em] text-slate-500">Conf</div>

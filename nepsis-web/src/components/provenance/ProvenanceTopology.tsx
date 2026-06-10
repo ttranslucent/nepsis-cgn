@@ -34,12 +34,14 @@ export function ProvenanceTopology({
   selectedNodeId,
   onSelectedNodeIdChange,
   onOpenAudit,
+  onOpenRawTrace,
   onReplay,
 }: {
   packet: ProvenancePacket;
   selectedNodeId: string | null;
   onSelectedNodeIdChange: (nodeId: string) => void;
   onOpenAudit: () => void;
+  onOpenRawTrace: () => void;
   onReplay: () => void;
 }) {
   const [activeMicroCardId, setActiveMicroCardId] = useState<string | null>(null);
@@ -118,9 +120,13 @@ export function ProvenanceTopology({
                 />
                 {edge ? <ProvenanceEdge edge={edge} /> : null}
                 {index === 4 && packet.hidden_step_count > 0 ? (
-                  <div className="mx-2 mt-24 shrink-0 rounded-md border border-slate-700 bg-black/30 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.12em] text-slate-400">
+                  <button
+                    type="button"
+                    onClick={onOpenRawTrace}
+                    className="mx-2 mt-24 scroll-mt-28 shrink-0 rounded-md border border-slate-700 bg-black/30 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.12em] text-slate-400 transition hover:border-sky-300/60 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300/50"
+                  >
                     + {packet.hidden_step_count} hidden steps
-                  </div>
+                  </button>
                 ) : null}
               </div>
             );

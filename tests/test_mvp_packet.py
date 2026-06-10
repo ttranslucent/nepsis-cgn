@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nepsis_cgn.core.mvp import MVP_PACKET_SCHEMA_ID, build_nepsis_mvp_packet
+from nepsis_cgn.core.mvp import MVP_PACKET_SCHEMA_ID, MVP_PACKET_SCHEMA_VERSION, build_nepsis_mvp_packet
 
 
 MINIMUM_PACKET_FIELDS = {
@@ -18,6 +18,7 @@ MINIMUM_PACKET_FIELDS = {
     "blue_channel",
     "contradiction_monitor",
     "denominator_collapse",
+    "retessellation_state",
     "voronoi_commitment",
     "state_feedback",
     "non_quiescence",
@@ -25,6 +26,7 @@ MINIMUM_PACKET_FIELDS = {
     "zeroback",
     "audit_trace",
     "final_output",
+    "demo_limitations",
 }
 
 
@@ -38,6 +40,7 @@ def test_jailing_mvp_packet_preserves_constraint_and_retessellates() -> None:
     packet = build_nepsis_mvp_packet(case_id="jailing")
 
     assert packet["schema_id"] == MVP_PACKET_SCHEMA_ID
+    assert packet["schema_version"] == MVP_PACKET_SCHEMA_VERSION == "0.1.6"
     assert MINIMUM_PACKET_FIELDS.issubset(packet)
     assert packet["case_id"] == "jailing"
     assert packet["red_channel"]["escalation_required"] is True
@@ -50,8 +53,12 @@ def test_jailing_mvp_packet_preserves_constraint_and_retessellates() -> None:
     assert packet["still"]["commitment_readiness"]["status"] == "retessellate"
     assert packet["still"]["audit_events"]
     assert packet["zeroback"]["triggered"] is True
+    assert packet["retessellation_state"]["status"] == "completed_in_packet"
+    assert packet["retessellation_state"]["trigger_event_order"] == 8
+    assert packet["retessellation_state"]["completed_event_order"] == 9
+    assert "next-cycle source-token verification" in packet["retessellation_state"]["remaining_obligation"]
     assert packet["state_feedback"]["predicted_next_state"]["failure_conditions"]
-    assert packet["state_feedback"]["loop_decision"]["status"] == "retessellate"
+    assert packet["state_feedback"]["loop_decision"]["status"] == "pending_observation"
     assert packet["state_feedback"]["loop_decision"]["next_observation_required"]
     assert "JINGALL" in packet["final_output"]["concise_recommendation"]
     assert "JAILING" in packet["final_output"]["concise_recommendation"]
@@ -99,8 +106,15 @@ def test_mvp_blue_channel_separates_support_and_action_axes() -> None:
     packet = build_nepsis_mvp_packet(case_id="clinical")
     blue_channel = packet["blue_channel"]
     axes = blue_channel["evaluation_axes"]
+    hypotheses = {hypothesis["id"]: hypothesis for hypothesis in blue_channel["hypotheses"]}
 
     assert "weights" not in blue_channel
+    assert hypotheses["benign_radicular_spasm"]["likelihood"] == "medium_support"
+    assert hypotheses["benign_radicular_spasm"]["post_constraint_standing"] == "plausible_but_red_bounded"
+    assert hypotheses["benign_radicular_spasm"]["action_priority"] == "bounded_until_red_flags_resolved"
+    assert hypotheses["cauda_equina"]["likelihood"] == "uncertain_support"
+    assert hypotheses["cauda_equina"]["post_constraint_standing"] == "action_dominant_by_consequence"
+    assert hypotheses["cauda_equina"]["action_priority"] == "red-action-dominant"
     assert axes["support"]["by_hypothesis"]["benign_radicular_spasm"] == "medium"
     assert axes["support"]["by_hypothesis"]["cauda_equina"] == "uncertain"
     assert axes["action_priority"]["by_hypothesis"]["cauda_equina"] == "red-action-dominant"
@@ -124,7 +138,41 @@ def test_mvp_contradiction_density_declares_saturating_count_basis() -> None:
         assert basis["model"] == "saturating_count_v1"
         assert basis["formula"] == "contradiction_count / (contradiction_count + 1)"
         assert basis["contradiction_count"] == count
+        assert basis["aggregate_role"] == "demo_only_scalar_summary"
         assert basis["runtime_gate_input"] is False
+        assert basis["channel_note"]
+
+    jailing_monitor = jailing["contradiction_monitor"]
+    assert jailing_monitor["contradictions"][0] == {
+        "id": "candidate_token_mismatch",
+        "type": "constraint contradiction",
+        "level": "object",
+        "status": "resolved_in_packet",
+        "observation": "candidate_token=JAILING",
+        "conflicts_with": "Hard constraint requires JINGALL",
+        "introduced_at_order": 5,
+        "resolution_event_order": 11,
+    }
+    assert jailing_monitor["density_channels"]["object"]["contradiction_density"] == pytest.approx(1 / 2)
+    assert jailing_monitor["density_channels"]["object"]["resolved_count"] == 1
+    assert jailing_monitor["density_channels"]["meta"]["resolved_count"] == 1
+
+
+def test_mvp_jailing_packet_declares_support_constraint_and_limitations() -> None:
+    packet = build_nepsis_mvp_packet(case_id="jailing")
+    hypotheses = {hypothesis["id"]: hypothesis for hypothesis in packet["blue_channel"]["hypotheses"]}
+
+    assert hypotheses["constraint_preserving_token"]["likelihood"] == "high_support"
+    assert hypotheses["constraint_preserving_token"]["post_constraint_standing"] == "dominant_after_red_constraint"
+    assert hypotheses["constraint_preserving_token"]["action_priority"] == "commit_after_exact_token_match"
+    assert hypotheses["plausible_word_collapse"]["likelihood"] == "surface_plausible_only"
+    assert hypotheses["plausible_word_collapse"]["post_constraint_standing"] == "rejected_by_constraint"
+    assert hypotheses["plausible_word_collapse"]["action_priority"] == "blocked_by_red_boundary"
+
+    limitation_ids = {limitation["id"] for limitation in packet["demo_limitations"]}
+    limitation_text = " ".join(limitation["limitation"] for limitation in packet["demo_limitations"])
+    assert "source_token_corruption_not_detected" in limitation_ids
+    assert "source token itself is corrupted" in limitation_text
 
 
 def test_clinical_mvp_packet_holds_blue_inside_red_boundary() -> None:
@@ -138,10 +186,15 @@ def test_clinical_mvp_packet_holds_blue_inside_red_boundary() -> None:
     assert packet["non_quiescence"]["wrong_manifold_possible"] is True
     assert packet["still"]["checkpoints"][0]["trigger_status"] == "escalation_preserved"
     assert packet["still"]["commitment_readiness"]["status"] == "retessellate"
+    assert packet["retessellation_state"]["status"] == "completed_in_packet"
     assert packet["state_feedback"]["current_state"]["active_frame"] == (
         "high-consequence red-flag clinical uncertainty"
     )
     assert packet["state_feedback"]["predicted_next_state"]["failure_conditions"]
-    assert packet["state_feedback"]["loop_decision"]["status"] == "retessellate"
+    assert packet["state_feedback"]["loop_decision"]["status"] == "pending_observation"
     assert packet["state_feedback"]["loop_decision"]["next_observation_required"]
+    contradiction = packet["contradiction_monitor"]["contradictions"][0]
+    assert contradiction["level"] == "action_threshold"
+    assert contradiction["status"] == "open_pending_discriminators"
+    assert packet["contradiction_monitor"]["density_channels"]["action_threshold"]["open_count"] == 1
     assert "Do not close as benign spasm" in packet["final_output"]["concise_recommendation"]

@@ -4,6 +4,7 @@ import fallbackPackets from "@/data/mvpPackets.json";
 
 type MvpCaseId = "jailing" | "clinical";
 type FallbackPacket = Record<string, unknown>;
+export type MvpFallbackReason = "backend_unconfigured" | "upstream_non_ok" | "public_fallback_after_proxy_error";
 
 const PACKETS = fallbackPackets as Record<MvpCaseId, FallbackPacket>;
 
@@ -44,7 +45,10 @@ function readInputText(body: Record<string, unknown>): string | null {
   return trimmed;
 }
 
-export function buildBundledMvpFallbackResponse(body: string): Response {
+export function buildBundledMvpFallbackResponse(
+  body: string,
+  fallbackReason: MvpFallbackReason = "backend_unconfigured",
+): Response {
   let parsed: Record<string, unknown>;
   try {
     parsed = parseBody(body);
@@ -70,6 +74,7 @@ export function buildBundledMvpFallbackResponse(body: string): Response {
   packet.packet_id = randomUUID();
   packet.created_at = new Date().toISOString();
   packet.fallback_source = "nepsis-web bundled frozen v0.3 packet";
+  packet.fallback_reason = fallbackReason;
   if (inputText) {
     packet.input_text = inputText;
     const finalOutput = packet.final_output as { caveats?: unknown } | undefined;

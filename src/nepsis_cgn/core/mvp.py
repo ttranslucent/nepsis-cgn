@@ -9,7 +9,7 @@ from .still import build_still_pathway
 
 MvpCaseId = Literal["jailing", "clinical"]
 MVP_PACKET_SCHEMA_ID = "nepsis.mvp_packet"
-MVP_PACKET_SCHEMA_VERSION = "0.1.5"
+MVP_PACKET_SCHEMA_VERSION = "0.1.6"
 
 
 def build_nepsis_mvp_packet(
@@ -42,6 +42,33 @@ def _contradiction_density_from_count(contradictions: list[dict[str, Any]]) -> f
     return count / float(count + 1)
 
 
+def _build_density_channels(contradictions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    channels: dict[str, dict[str, Any]] = {}
+    for item in contradictions:
+        level = str(item.get("level") or "untyped")
+        channel = channels.setdefault(
+            level,
+            {
+                "contradiction_count": 0,
+                "open_count": 0,
+                "resolved_count": 0,
+                "contradiction_density": 0.0,
+                "runtime_gate_input": False,
+            },
+        )
+        channel["contradiction_count"] += 1
+        if str(item.get("status") or "").startswith("resolved"):
+            channel["resolved_count"] += 1
+        else:
+            channel["open_count"] += 1
+
+    for channel in channels.values():
+        channel["contradiction_density"] = _contradiction_density_from_count(
+            [{}] * int(channel["contradiction_count"])
+        )
+    return channels
+
+
 def _build_contradiction_monitor(
     *,
     contradictions: list[dict[str, Any]],
@@ -54,13 +81,43 @@ def _build_contradiction_monitor(
             "model": "saturating_count_v1",
             "formula": "contradiction_count / (contradiction_count + 1)",
             "contradiction_count": len(contradictions),
+            "aggregate_role": "demo_only_scalar_summary",
             "runtime_gate_input": False,
             "runtime_gate_note": (
                 "Frozen MVP demo score only; runtime governance derives contradiction_density "
                 "from evaluated constraint violations."
             ),
+            "channel_note": "Typed density channels preserve object/meta/action-threshold distinctions.",
         },
+        "density_channels": _build_density_channels(contradictions),
         "stability_status": stability_status,
+    }
+
+
+def _build_retessellation_state(
+    *,
+    required: bool,
+    completed: bool,
+    trigger_event_order: int | None,
+    completed_event_order: int | None,
+    remaining_obligation: str,
+) -> dict[str, Any]:
+    if not required:
+        return {
+            "status": "not_required",
+            "required": False,
+            "completed_in_packet": False,
+            "trigger_event_order": None,
+            "completed_event_order": None,
+            "remaining_obligation": remaining_obligation,
+        }
+    return {
+        "status": "completed_in_packet" if completed else "required_pending",
+        "required": True,
+        "completed_in_packet": completed,
+        "trigger_event_order": trigger_event_order,
+        "completed_event_order": completed_event_order,
+        "remaining_obligation": remaining_obligation,
     }
 
 
@@ -74,14 +131,24 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
     contradiction = candidate != "unknown_candidate" and candidate != target
     contradictions = [
         {
+            "id": "candidate_token_mismatch",
             "type": "constraint contradiction",
+            "level": "object",
+            "status": "resolved_in_packet",
             "observation": "candidate_token=JAILING",
             "conflicts_with": "Hard constraint requires JINGALL",
+            "introduced_at_order": 5,
+            "resolution_event_order": 11,
         },
         {
+            "id": "missing_proper_token_hypothesis",
             "type": "missing-denominator contradiction",
+            "level": "meta",
+            "status": "resolved_in_packet",
             "observation": "BLUE initially considered fluent word completion",
             "conflicts_with": "hypothesis set omitted exact proper-token preservation",
+            "introduced_at_order": 6,
+            "resolution_event_order": 9,
         },
     ] if contradiction else []
 
@@ -149,7 +216,9 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     {
                         "id": "constraint_preserving_token",
                         "label": "JINGALL is the required answer.",
-                        "likelihood": "dominant_after_red_constraint",
+                        "likelihood": "high_support",
+                        "post_constraint_standing": "dominant_after_red_constraint",
+                        "action_priority": "commit_after_exact_token_match",
                         "supporting_features": ["source token is explicit", "hard constraint names exact preservation"],
                         "contradicting_features": ["candidate answer used JAILING"],
                         "needed_discriminators": ["source-token verification"],
@@ -158,7 +227,9 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     {
                         "id": "plausible_word_collapse",
                         "label": "JAILING is a fluent but invalid normalization.",
-                        "likelihood": "rejected_by_constraint",
+                        "likelihood": "surface_plausible_only",
+                        "post_constraint_standing": "rejected_by_constraint",
+                        "action_priority": "blocked_by_red_boundary",
                         "supporting_features": ["candidate is a familiar English word"],
                         "contradicting_features": ["violates exact source-token constraint"],
                         "needed_discriminators": ["none; hard constraint already decides"],
@@ -199,9 +270,18 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 else [],
                 "retessellation_required": contradiction,
             },
+            "retessellation_state": _build_retessellation_state(
+                required=contradiction,
+                completed=contradiction,
+                trigger_event_order=8 if contradiction else None,
+                completed_event_order=9 if contradiction else None,
+                remaining_obligation="next-cycle source-token verification remains pending in the MVP packet"
+                if contradiction
+                else "no retessellation obligation in this deterministic packet",
+            ),
             "voronoi_commitment": {
                 "recommended_action": "Reject JAILING; preserve JINGALL as the governed answer.",
-                "threshold_basis": "Hard constraint beats fluency and likelihood.",
+                "threshold_basis": "Hard constraint beats fluency and support-only likelihood.",
                 "consequence_weighting": "False acceptance violates the core case rule; false rejection is repairable.",
             },
             "non_quiescence": {
@@ -242,8 +322,10 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     "response overwrites the governed token",
                     "response treats fluent plausibility as permission",
                 ],
-                loop_status="retessellate" if contradiction else "pending_observation",
-                loop_rationale="Current contradiction and denominator collapse require retessellation before closure."
+                loop_status="pending_observation",
+                loop_rationale=(
+                    "Retessellation completed inside the MVP packet; the remaining obligation is next-cycle source-token verification."
+                )
                 if contradiction
                 else "No next observation has been collected inside the MVP packet.",
                 next_observation_required="Verify whether the produced output preserves JINGALL exactly.",
@@ -272,6 +354,18 @@ def _build_jailing_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 "caveats": ["This demo is deterministic and constraint-scaffolded; it is not an LLM answer."],
                 "required_next_discriminators": ["source-token verification", "character-level candidate comparison"],
             },
+            "demo_limitations": [
+                {
+                    "id": "hard_red_demo_case",
+                    "limitation": "The Jailing/Jingall packet demonstrates a hard RED constraint case where RED decides once the governed token is accepted as authoritative.",
+                    "implication": "It does not prove the detector can find every missing hypothesis class in harder source-integrity cases.",
+                },
+                {
+                    "id": "source_token_corruption_not_detected",
+                    "limitation": "The MVP assumes JINGALL is the authoritative source token; it does not demonstrate detection of the harder variant where the source token itself is corrupted and JAILING is true.",
+                    "implication": "Source-token verification remains an explicit next-cycle obligation rather than a completed runtime observation.",
+                },
+            ],
         }
     )
     return packet
@@ -295,9 +389,14 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
     red_active = bool(red_flags)
     contradictions = [
         {
+            "id": "benign_closure_vs_red_flags",
             "type": "action-threshold contradiction",
+            "level": "action_threshold",
+            "status": "open_pending_discriminators",
             "observation": "benign spasm narrative competes with red flags",
             "conflicts_with": "RED escalation threshold crossed by consequence",
+            "introduced_at_order": 5,
+            "resolution_event_order": None,
         }
     ] if red_active else []
 
@@ -366,7 +465,9 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     {
                         "id": "benign_radicular_spasm",
                         "label": "Mechanical/radicular spasm",
-                        "likelihood": "plausible_but_red_bounded",
+                        "likelihood": "medium_support",
+                        "post_constraint_standing": "plausible_but_red_bounded",
+                        "action_priority": "bounded_until_red_flags_resolved",
                         "supporting_features": ["radicular pain", "spasm narrative"],
                         "contradicting_features": red_flags,
                         "needed_discriminators": ["neuro exam", "post-void residual"],
@@ -375,7 +476,9 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     {
                         "id": "cauda_equina",
                         "label": "Cauda equina / compressive neurologic emergency",
-                        "likelihood": "action_dominant_by_consequence",
+                        "likelihood": "uncertain_support",
+                        "post_constraint_standing": "action_dominant_by_consequence" if red_active else "low_support",
+                        "action_priority": "red-action-dominant" if red_active else "low",
                         "supporting_features": red_flags,
                         "contradicting_features": [],
                         "needed_discriminators": ["urgent MRI / specialist pathway"],
@@ -411,6 +514,15 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                 "missing_hypothesis_classes": ["compressive neurologic emergency"] if red_active else [],
                 "retessellation_required": red_active,
             },
+            "retessellation_state": _build_retessellation_state(
+                required=red_active,
+                completed=red_active,
+                trigger_event_order=8 if red_active else None,
+                completed_event_order=9 if red_active else None,
+                remaining_obligation="next-cycle clinical discriminator verification remains pending in the MVP packet"
+                if red_active
+                else "no retessellation obligation in this deterministic packet",
+            ),
             "voronoi_commitment": {
                 "recommended_action": "Escalate red-flag pathway; do not finalize as benign spasm yet."
                 if red_active
@@ -461,8 +573,10 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     "missing discriminator",
                     "benign closure despite active RED hazard",
                 ],
-                loop_status="retessellate" if red_active else "pending_observation",
-                loop_rationale="Current RED hazard and denominator collapse require retessellation before benign closure."
+                loop_status="pending_observation",
+                loop_rationale=(
+                    "Retessellation completed inside the MVP packet; the remaining obligation is next-cycle discriminator verification."
+                )
                 if red_active
                 else "No next observation has been collected inside the MVP packet.",
                 next_observation_required="Obtain and compare red-flag discriminators against the expected trajectory.",
@@ -498,6 +612,13 @@ def _build_clinical_packet(*, input_text: Optional[str]) -> dict[str, Any]:
                     "urgent imaging/specialist decision",
                 ],
             },
+            "demo_limitations": [
+                {
+                    "id": "deterministic_red_flag_scaffold",
+                    "limitation": "The clinical MVP packet is a deterministic red-flag governance scaffold, not a clinical diagnostic runtime.",
+                    "implication": "It demonstrates escalation preservation and pending discriminator obligations without observing a live clinical next state.",
+                }
+            ],
         }
     )
     return packet

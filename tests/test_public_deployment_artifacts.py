@@ -98,6 +98,19 @@ def test_status_api_exposes_public_and_operator_readiness_paths() -> None:
     assert "OPENAI_API_KEY or NEPSIS_OPENAI_API_KEY" in text
 
 
+def test_public_mvp_fallback_discloses_reason() -> None:
+    helper = (ROOT / "nepsis-web" / "src" / "lib" / "mvpFallback.ts").read_text(encoding="utf-8")
+    route = (ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "mvp" / "route.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert "fallback_source" in helper
+    assert "fallback_reason" in helper
+    assert "backend_unconfigured" in route
+    assert "upstream_non_ok" in route
+    assert "public_fallback_after_proxy_error" in route
+
+
 def test_render_blueprint_deploys_existing_asgi_entrypoint() -> None:
     text = (ROOT / "render.yaml").read_text(encoding="utf-8")
 

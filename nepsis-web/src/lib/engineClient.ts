@@ -406,6 +406,8 @@ export type NepsisMvpPacket = {
       id: string;
       label: string;
       likelihood: string;
+      post_constraint_standing: string;
+      action_priority: string;
       supporting_features: string[];
       contradicting_features: string[];
       needed_discriminators: string[];
@@ -423,21 +425,50 @@ export type NepsisMvpPacket = {
     needed_discriminators: string[];
   };
   contradiction_monitor: {
-    contradictions: Record<string, unknown>[];
+    contradictions: Array<{
+      id: string;
+      type: string;
+      level: "object" | "meta" | "action_threshold" | string;
+      status: string;
+      observation: string;
+      conflicts_with: string;
+      introduced_at_order: number;
+      resolution_event_order?: number | null;
+    }>;
     contradiction_density: number;
     density_basis: {
       model: string;
       formula: string;
       contradiction_count: number;
+      aggregate_role?: string;
       runtime_gate_input: boolean;
       runtime_gate_note?: string;
+      channel_note?: string;
     };
+    density_channels: Record<
+      string,
+      {
+        contradiction_count: number;
+        open_count: number;
+        resolved_count: number;
+        contradiction_density: number;
+        runtime_gate_input: boolean;
+      }
+    >;
     stability_status: string;
   };
   denominator_collapse: {
     detected: boolean;
     missing_hypothesis_classes: string[];
     retessellation_required: boolean;
+  };
+  retessellation_state: {
+    status: "not_required" | "required_pending" | "completed_in_packet" | string;
+    required: boolean;
+    completed_in_packet: boolean;
+    trigger_event_order: number | null;
+    completed_event_order: number | null;
+    remaining_obligation: string;
   };
   voronoi_commitment: {
     recommended_action: string;
@@ -462,6 +493,13 @@ export type NepsisMvpPacket = {
     caveats: string[];
     required_next_discriminators: string[];
   };
+  demo_limitations: Array<{
+    id: string;
+    limitation: string;
+    implication: string;
+  }>;
+  fallback_source?: string;
+  fallback_reason?: string;
 };
 
 export type NepsisMvpPayload = {

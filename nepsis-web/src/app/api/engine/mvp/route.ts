@@ -13,12 +13,15 @@ export async function POST(req: Request) {
       body,
     });
     if (publicSiteMode() && !upstream.ok) {
-      return buildBundledMvpFallbackResponse(body);
+      return buildBundledMvpFallbackResponse(body, "upstream_non_ok");
     }
     return proxyJsonResponse(upstream);
   } catch (error) {
-    if (isEngineConfigurationError(error) || publicSiteMode()) {
-      return buildBundledMvpFallbackResponse(body);
+    if (isEngineConfigurationError(error)) {
+      return buildBundledMvpFallbackResponse(body, "backend_unconfigured");
+    }
+    if (publicSiteMode()) {
+      return buildBundledMvpFallbackResponse(body, "public_fallback_after_proxy_error");
     }
     return engineErrorResponse(error);
   }
