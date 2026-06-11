@@ -83,6 +83,7 @@ def test_scan_blocks_bad_operator_auth_env_combinations(tmp_path: Path) -> None:
             NEPSIS_AUTH_SECRET=from-secret-manager
             RESEND_API_KEY=from-secret-manager
             NEPSIS_AUTH_FROM_EMAIL=login@operator.example
+            NEPSIS_API_ALLOWED_ORIGINS=*
             """
         ).strip()
         + "\n",
@@ -94,6 +95,8 @@ def test_scan_blocks_bad_operator_auth_env_combinations(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=true cannot be used when NEPSIS_DEPLOYMENT_MODE=operator" in result.stdout
     assert "NEPSIS_AUTH_ALLOWED_EMAILS must be set when NEPSIS_DEPLOYMENT_MODE=operator" in result.stdout
+    assert "NEPSIS_API_ALLOWED_ORIGINS=* cannot be used when NEPSIS_DEPLOYMENT_MODE=operator" in result.stdout
+    assert "NEPSIS_OPERATOR_PACKET_SEAL_SECRET must be set when NEPSIS_DEPLOYMENT_MODE=operator" in result.stdout
 
 
 def test_current_web_env_examples_pass_secret_hygiene_scan() -> None:

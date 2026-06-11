@@ -1,11 +1,10 @@
-"""
-Lightweight scoring utilities for estimating red/blue channel values.
+"""Lightweight scoring utilities for estimating red/blue channel values."""
 
-These are intentionally simple heuristics that can be swapped out later
-with learned models or domain-specific evaluators.
-"""
-
+import re
 from typing import Dict
+
+
+RISK_WORDS = ("delete", "drop", "format", "shutdown")
 
 
 def heuristic_red_score(raw_query: str) -> float:
@@ -13,9 +12,8 @@ def heuristic_red_score(raw_query: str) -> float:
     Estimate ruin risk. Penalize destructive verbs; clamp to [0, 1].
     """
     tokens = raw_query.lower()
-    risk_words = ("delete", "drop", "format", "shutdown")
     base = 0.05
-    risk = base + 0.15 * sum(word in tokens for word in risk_words)
+    risk = base + 0.15 * sum(bool(re.search(rf"\b{re.escape(word)}\b", tokens)) for word in RISK_WORDS)
     return max(0.0, min(1.0, risk))
 
 

@@ -7,6 +7,7 @@ from nepsis_cgn.core.governance import (
     GovernanceContext,
     GovernanceCosts,
     GovernanceMetrics,
+    GovernanceThresholds,
     IterationStateMachine,
     compute_theta,
     evaluate_governance_policy,
@@ -124,6 +125,21 @@ def test_policy_anti_stall_after_dwell_limit() -> None:
     assert "ANTI_STALL" in decision.trigger_codes
 
 
+def test_policy_anti_stall_on_dwell_limit_boundary() -> None:
+    metrics = GovernanceMetrics(
+        p_bad=0.05,
+        ruin_mass=0.01,
+        contradiction_density=0.25,
+        posterior_entropy_norm=0.75,
+        top_margin=0.02,
+        top_p=0.58,
+    )
+    costs = GovernanceCosts(c_fp=1.0, c_fn=9.0)
+    context = GovernanceContext(mixture_dwell_iters=3)
+    decision = evaluate_governance_policy(metrics, costs, context=context)
+    assert decision.posture == "anti_stall"
+
+
 def test_policy_zeroback_on_recurrence_pattern() -> None:
     metrics = GovernanceMetrics(
         p_bad=0.05,
@@ -139,6 +155,34 @@ def test_policy_zeroback_on_recurrence_pattern() -> None:
     assert decision.posture == "zeroback"
     assert decision.recommended_action == "reset_priors"
     assert "RECURRENCE_PATTERN" in decision.trigger_codes
+
+
+def test_governance_thresholds_validate_margin_and_collapse_epsilons() -> None:
+    with pytest.raises(ValueError, match="eps_margin"):
+        evaluate_governance_policy(
+            GovernanceMetrics(
+                p_bad=0.01,
+                ruin_mass=0.01,
+                contradiction_density=0.0,
+                posterior_entropy_norm=0.2,
+                top_margin=0.9,
+            ),
+            GovernanceCosts(c_fp=1.0, c_fn=9.0),
+            thresholds=GovernanceThresholds(eps_margin=-0.1),
+        )
+
+    with pytest.raises(ValueError, match="eps_collapse"):
+        evaluate_governance_policy(
+            GovernanceMetrics(
+                p_bad=0.01,
+                ruin_mass=0.01,
+                contradiction_density=0.0,
+                posterior_entropy_norm=0.2,
+                top_margin=0.9,
+            ),
+            GovernanceCosts(c_fp=1.0, c_fn=9.0),
+            thresholds=GovernanceThresholds(eps_collapse=1.1),
+        )
 
 
 def test_policy_collapse_mode_when_stable() -> None:

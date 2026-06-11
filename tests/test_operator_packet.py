@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from nepsis_cgn.api.operator_packet import (
     abandon_packet,
     commit_iteration,
@@ -70,7 +72,9 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
     )
 
     assert committed["schema_id"] == "nepsis.operator_packet"
-    assert committed["schema_version"] == "2.0.0"
+    assert committed["schema_version"] == "2.1.0"
+    assert committed["integrity"]["seal_version"] == "hmac-sha256:v1"
+    assert committed["integrity"]["seal"]
     assert committed["phase"] == "frame_draft"
     assert committed["legal_next_tools"] == ["start_operator_packet", "lock_frame", "abandon_packet"]
     assert committed["audit_trace"] == []
@@ -158,6 +162,78 @@ def test_serialized_operator_packet_continues_without_server_memory() -> None:
     assert reported["schema_id"] == "nepsis.operator_packet"
     assert reported["phase"] == "report_evaluated"
     assert [entry["event"] for entry in reported["audit_trace"]] == ["LOCK_FRAME", "RUN_REPORT"]
+
+
+def test_stateless_operator_packet_seals_output_and_accepts_valid_sealed_flow(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    packet = start_operator_packet()
+
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    reported = run_report(
+        packet=locked,
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={"critical_signal": True, "policy_violation": False},
+        interpretation=_report_interpretation(),
+    )
+
+    assert packet["integrity"]["seal_version"] == "hmac-sha256:v1"
+    assert locked["integrity"]["counter"] == 1
+    assert reported["integrity"]["counter"] == 2
+    assert reported["schema_id"] == "nepsis.operator_packet"
+    assert reported["phase"] == "report_evaluated"
+
+
+def test_stateless_operator_packet_rejects_tampered_seal(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    packet = start_operator_packet()
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    locked["phase"] = "threshold_set"
+
+    with pytest.raises(ValueError, match="integrity"):
+        run_report(
+            packet=locked,
+            report_text="obs: critical signal present",
+            sign={"critical_signal": True, "policy_violation": False},
+        )
+
+
+def test_stateless_operator_packet_rejects_trace_over_configured_cap(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS", "1")
+    packet = start_operator_packet()
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    reported = run_report(
+        packet=locked,
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={"critical_signal": True, "policy_violation": False},
+        interpretation=_report_interpretation(),
+    )
+
+    with pytest.raises(ValueError, match="audit_trace"):
+        lock_report(packet=reported)
+
+
+def test_operator_packet_requires_configured_seal_secret_in_operator_mode(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", raising=False)
+    monkeypatch.setenv("NEPSIS_DEPLOYMENT_MODE", "operator")
+
+    with pytest.raises(ValueError, match="NEPSIS_OPERATOR_PACKET_SEAL_SECRET"):
+        start_operator_packet()
 
 
 def test_stateless_operator_packet_abandon_returns_noncommitted_fragment() -> None:

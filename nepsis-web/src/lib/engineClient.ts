@@ -346,6 +346,9 @@ export type NepsisMvpStill = {
   commitment_readiness: {
     status: "ready" | "hold" | "retessellate" | "zeroback";
     rationale: string;
+    zeroback_triggered: boolean;
+    effective_action: "ready" | "hold" | "retessellate" | "zeroback";
+    co_trigger_statuses: string[];
   };
   learning_notes: string[];
   audit_events: NepsisMvpAuditEvent[];

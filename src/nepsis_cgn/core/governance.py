@@ -204,10 +204,12 @@ class GovernanceThresholds:
 
     def validate(self) -> None:
         _clip_unit(self.tau_red, label="tau_red")
+        _clip_unit(self.eps_margin, label="eps_margin")
         _clip_unit(self.h_high, label="h_high")
         _clip_unit(self.c_high, label="c_high")
         _clip_unit(self.c_ok, label="c_ok")
         _clip_unit(self.tau_collapse, label="tau_collapse")
+        _clip_unit(self.eps_collapse, label="eps_collapse")
         _clip_unit(self.yellow_factor, label="yellow_factor")
         if self.max_dwell_iters < 0:
             raise ValueError("max_dwell_iters must be >= 0.")
@@ -267,7 +269,7 @@ def evaluate_governance_policy(
         )
 
     recurrence_condition = (
-        ctx.mixture_dwell_iters > th.max_dwell_iters
+        ctx.mixture_dwell_iters >= th.max_dwell_iters
         and ctx.contradiction_streak >= th.contradiction_streak_min
         and metrics.contradiction_density > th.c_high
     )
@@ -297,7 +299,7 @@ def evaluate_governance_policy(
     if mixture_by_contradiction:
         trigger_codes.append("CONTRADICTION_PERSISTENCE")
 
-    if mixture_mode and ctx.mixture_dwell_iters > th.max_dwell_iters:
+    if mixture_mode and ctx.mixture_dwell_iters >= th.max_dwell_iters:
         return GovernanceDecision(
             posture="anti_stall",
             warning_level="yellow",

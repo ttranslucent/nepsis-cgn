@@ -25,6 +25,7 @@ from ..provenance import record_packet_observation
 
 LOGGER = logging.getLogger("nepsis_cgn.mcp.handler")
 PROTOCOL_VERSION = "2025-06-18"
+SUPPORTED_PROTOCOL_VERSIONS = (PROTOCOL_VERSION, "2024-11-05")
 
 RouteManifestFn = Callable[[], list[dict[str, str]]]
 
@@ -37,7 +38,7 @@ class CapabilityAuth:
 
 def mcp_tools() -> list[dict[str, Any]]:
     packet_schema = {"type": "object", "description": "Current nepsis.operator_packet v2 object."}
-    return [
+    tools = [
         {
             "name": "run_mvp",
             "description": "Run the public deterministic NepsisCGN MVP packet demo.",
@@ -45,7 +46,9 @@ def mcp_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "case_id": {"type": "string", "enum": ["jailing", "clinical"]},
+                    "case": {"type": "string", "enum": ["jailing", "clinical"]},
                     "input_text": {"type": "string"},
+                    "inputText": {"type": "string"},
                 },
                 "additionalProperties": False,
             },
@@ -169,6 +172,15 @@ def mcp_tools() -> list[dict[str, Any]]:
             },
         },
     ]
+    for tool in tools:
+        tool["description"] = (
+            f"{tool['description']} Hosted tools/call requires a valid Nepsis capability token."
+        )
+        tool["_meta"] = {
+            "nepsis.requiresCapabilityToken": True,
+            "nepsis.authScope": "tools/call",
+        }
+    return tools
 
 
 def handle_mcp_request(
@@ -194,7 +206,7 @@ def handle_mcp_request(
         return _mcp_result(
             jsonrpc_id,
             {
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": _negotiated_protocol_version(params),
                 "serverInfo": {"name": server_name, "version": "0.3.0"},
                 "capabilities": {"tools": {}},
             },
@@ -213,6 +225,13 @@ def handle_mcp_request(
             request_id=request_id,
         )
     return _mcp_error(jsonrpc_id, -32601, f"Unsupported MCP method: {method}")
+
+
+def _negotiated_protocol_version(params: dict[str, Any]) -> str:
+    requested = params.get("protocolVersion")
+    if isinstance(requested, str) and requested in SUPPORTED_PROTOCOL_VERSIONS:
+        return requested
+    return PROTOCOL_VERSION
 
 
 def authorize_capability(headers: dict[str, Any]) -> CapabilityAuth:

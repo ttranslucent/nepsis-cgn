@@ -1,7 +1,7 @@
 {
   "clinical": {
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.6",
+    "schema_version": "0.1.7",
     "packet_id": "__RUNTIME_PACKET_ID__",
     "created_at": "__RUNTIME_CREATED_AT__",
     "case_id": "clinical",
@@ -66,6 +66,13 @@
       ],
       "commitment_readiness": {
         "status": "retessellate",
+        "zeroback_triggered": true,
+        "effective_action": "zeroback",
+        "co_trigger_statuses": [
+          "retessellate",
+          "zeroback",
+          "hold"
+        ],
         "rationale": "Hypothesis space is undercomplete; rebuild before commitment."
       },
       "learning_notes": [
@@ -358,7 +365,7 @@
   },
   "jailing": {
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.6",
+    "schema_version": "0.1.7",
     "packet_id": "__RUNTIME_PACKET_ID__",
     "created_at": "__RUNTIME_CREATED_AT__",
     "case_id": "jailing",
@@ -418,6 +425,13 @@
       ],
       "commitment_readiness": {
         "status": "retessellate",
+        "zeroback_triggered": true,
+        "effective_action": "zeroback",
+        "co_trigger_statuses": [
+          "retessellate",
+          "zeroback",
+          "hold"
+        ],
         "rationale": "Hypothesis space is undercomplete; rebuild before commitment."
       },
       "learning_notes": [

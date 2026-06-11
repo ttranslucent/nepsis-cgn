@@ -85,6 +85,41 @@ def test_remote_tool_call_without_capability_token_rejects(monkeypatch) -> None:
     assert "capability" in response["error"]["message"].lower()
 
 
+def test_initialize_echoes_supported_client_protocol_version() -> None:
+    response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05"},
+        },
+        headers={},
+        require_capability_token=True,
+        server_name="nepsis-cgn",
+    )
+
+    assert response is not None
+    assert response["result"]["protocolVersion"] == "2024-11-05"
+
+
+def test_tools_list_advertises_auth_requirement_and_run_mvp_aliases() -> None:
+    response = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 11, "method": "tools/list", "params": {}},
+        headers={},
+        require_capability_token=True,
+        server_name="nepsis-cgn",
+    )
+
+    assert response is not None
+    tools = response["result"]["tools"]
+    for tool in tools:
+        assert "capability token" in tool["description"].lower()
+        assert tool["_meta"]["nepsis.requiresCapabilityToken"] is True
+
+    run_mvp = next(tool for tool in tools if tool["name"] == "run_mvp")
+    assert {"case_id", "case", "input_text", "inputText"} <= set(run_mvp["inputSchema"]["properties"])
+
+
 def test_capability_token_logs_metadata_without_raw_token(monkeypatch, caplog) -> None:
     token = "capability-test-token-for-log-check"
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -156,6 +191,27 @@ def test_get_session_state_rejects_non_object_packet_argument() -> None:
     assert response is not None
     assert response["error"]["code"] == -32602
     assert "packet" in response["error"]["message"]
+
+
+def test_get_session_state_rejects_tampered_operator_packet(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    packet = start_operator_packet()
+    packet["phase"] = "threshold_set"
+
+    response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {"name": "get_session_state", "arguments": {"packet": packet}},
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    assert "integrity" in response["error"]["message"]
 
 
 def test_set_threshold_decision_rejects_non_string_hold_reason() -> None:

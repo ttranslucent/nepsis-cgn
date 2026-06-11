@@ -173,10 +173,12 @@ Use `nepsis-web/.env.operator.example` only for a separate private deployment.
 That path sets `NEPSIS_DEPLOYMENT_MODE=operator`,
 `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
 and `NEPSIS_MODEL_ROUTES_ENABLED=true`. It also requires backend auth,
-`NEPSIS_AUTH_SECRET`, `NEPSIS_AUTH_ALLOWED_EMAILS`, real login email delivery
-through `RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL`, and a server-side
-`OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`. Keep `NEPSIS_ENGINE_ALLOW_ANON=false` and
-`NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false` for shared operator deployments.
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET`, `NEPSIS_AUTH_SECRET`,
+`NEPSIS_AUTH_ALLOWED_EMAILS`, real login email delivery through
+`RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL`, and a server-side `OPENAI_API_KEY`
+or `NEPSIS_OPENAI_API_KEY`. Keep `NEPSIS_ENGINE_ALLOW_ANON=false` and
+`NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false` for shared operator deployments. Do not
+use `NEPSIS_API_ALLOWED_ORIGINS=*` in public or operator runtime environments.
 
 Run the repository safety check before committing env or deployment changes:
 

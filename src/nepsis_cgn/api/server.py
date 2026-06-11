@@ -8,6 +8,7 @@ import re
 import socket
 import sys
 import time
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
@@ -620,10 +621,11 @@ class EngineApiHandler(BaseHTTPRequestHandler):
             payload = op()
             status = 409 if payload.get("schema_id") == "nepsis.phase_rejection" else 200
             self._send_json(status, payload)
-        except KeyError as exc:
-            self._send_json(404, {"error": str(exc)})
-        except PermissionError as exc:
-            self._send_json(403, {"error": str(exc)})
+        except KeyError:
+            self._send_json(404, {"error": "Not found"})
+        except PermissionError:
+            LOGGER.info("permission_denied", extra={"request_id": self._request_id, "path": self.path})
+            self._send_json(404, {"error": "Not found"})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception:  # pragma: no cover
@@ -739,16 +741,19 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if path in {"/health", "/v1/health", "/v1/routes", "/v1/openapi.json", "/mcp"}:
             return True
 
+        if not self._enforce_rate_limit(path):
+            return False
+
         expected_token = _configured_api_token()
         if _auth_required() and expected_token is None:
             self._send_json(503, {"error": "Server auth misconfigured"})
             return False
         if expected_token is None:
-            return self._enforce_rate_limit(path)
+            return True
 
         token = _request_api_token(self.headers)
-        if token == expected_token:
-            return self._enforce_rate_limit(path)
+        if _api_token_matches(token, expected_token):
+            return True
 
         self._send_json(401, {"error": "Unauthorized"})
         return False
@@ -879,6 +884,12 @@ def _request_api_token(headers: Any) -> str | None:
     return None
 
 
+def _api_token_matches(token: str | None, expected: str) -> bool:
+    if token is None:
+        return False
+    return hmac.compare_digest(token, expected)
+
+
 def _request_owner_id(headers: Any) -> str | None:
     owner_id = headers.get("X-Nepsis-Session-Owner")
     if not isinstance(owner_id, str):
@@ -969,7 +980,17 @@ def _is_origin_allowed(origin: str) -> bool:
     allowed = _allowed_origins()
     if not allowed:
         return False
+    if "*" in allowed and _wildcard_cors_forbidden():
+        return False
     return "*" in allowed or origin in allowed
+
+
+def _wildcard_cors_forbidden() -> bool:
+    return (
+        os.getenv("NODE_ENV", "").strip().lower() == "production"
+        or os.getenv("NEPSIS_DEPLOYMENT_MODE", "").strip().lower() == "operator"
+        or os.getenv("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE", "").strip().lower() in {"1", "true", "yes", "y", "on"}
+    )
 
 
 def _validated_manifest_path(manifest_path: Any) -> str | None:
@@ -1028,14 +1049,23 @@ def _rate_limit_max_requests() -> int:
 
 
 def _rate_limit_key(handler: EngineApiHandler) -> str:
-    token = _request_api_token(handler.headers)
-    if token:
-        return f"token:{token[:16]}"
-    forwarded = handler.headers.get("X-Forwarded-For")
-    if isinstance(forwarded, str) and forwarded.strip():
-        return f"ip:{forwarded.split(',')[0].strip()}"
+    forwarded = _trusted_forwarded_ip(handler.headers)
+    if forwarded:
+        return f"ip:{forwarded}"
     client_ip = handler.client_address[0] if handler.client_address else "unknown"
     return f"ip:{client_ip}"
+
+
+def _trusted_forwarded_ip(headers: Any) -> str | None:
+    if os.getenv("NEPSIS_API_TRUST_FORWARDED_FOR", "").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+        return None
+    real_ip = headers.get("X-Real-IP") or headers.get("x-real-ip")
+    if isinstance(real_ip, str) and real_ip.strip():
+        return real_ip.strip()
+    forwarded = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+    if isinstance(forwarded, str) and forwarded.strip():
+        return forwarded.split(",")[0].strip()
+    return None
 
 
 def route_manifest() -> list[dict[str, str]]:

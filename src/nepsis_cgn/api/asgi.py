@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import time
+import hmac
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -69,7 +70,8 @@ def create_app():
 
     @app.exception_handler(PermissionError)
     async def permission_error_handler(request: Request, exc: PermissionError):  # noqa: ARG001
-        return JSONResponse({"error": str(exc)}, status_code=403)
+        LOGGER.info("permission_denied", extra={"request_id": getattr(request.state, "request_id", None)})
+        return JSONResponse({"error": "Not found"}, status_code=404)
 
     @app.middleware("http")
     async def security_middleware(request: Request, call_next):  # type: ignore[override]
@@ -82,15 +84,15 @@ def create_app():
             return JSONResponse({"error": "CORS origin not allowed", "request_id": request_id}, status_code=403)
 
         if request.method != "OPTIONS" and request.url.path not in PUBLIC_PATHS:
+            if not _rate_limit_allow(_rate_limit_key(request)):
+                return JSONResponse({"error": "Rate limit exceeded", "request_id": request_id}, status_code=429)
             expected = _configured_api_token()
             if _auth_required() and expected is None:
                 return JSONResponse({"error": "Server auth misconfigured", "request_id": request_id}, status_code=503)
             if expected is not None:
                 token = _request_api_token(dict(request.headers))
-                if token != expected:
+                if not _api_token_matches(token, expected):
                     return JSONResponse({"error": "Unauthorized", "request_id": request_id}, status_code=401)
-            if not _rate_limit_allow(_rate_limit_key(request)):
-                return JSONResponse({"error": "Rate limit exceeded", "request_id": request_id}, status_code=429)
 
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
@@ -465,18 +467,18 @@ def create_app():
         try:
             return API.get_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
 
     @app.delete("/v1/sessions/{session_id}")
     async def delete_session(session_id: str, request: Request):
         try:
             return API.delete_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
 
     @app.post("/v1/sessions/{session_id}/step")
     async def step_session(session_id: str, request: Request):
@@ -496,9 +498,9 @@ def create_app():
                 request_context=_request_context(request),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -523,9 +525,9 @@ def create_app():
                 owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -542,9 +544,9 @@ def create_app():
                 owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -557,9 +559,9 @@ def create_app():
                 request_context=_request_context(request),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -582,9 +584,9 @@ def create_app():
                 request_context=_request_context(request),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -598,9 +600,9 @@ def create_app():
                 owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
 
     @app.get("/v1/sessions/{session_id}/provenance")
     async def packet_provenance(session_id: str, request: Request):
@@ -610,9 +612,9 @@ def create_app():
                 owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
 
     @app.get("/v1/sessions/{session_id}/audit-export")
     async def audit_export(session_id: str, request: Request):
@@ -624,7 +626,7 @@ def create_app():
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
 
     @app.get("/v1/provenance/requests/{request_id}")
     async def request_provenance(request_id: str, request: Request):
@@ -636,7 +638,7 @@ def create_app():
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=404, detail="Not found") from exc
 
     @app.get("/v1/provenance/packets/{packet_id}/lineage")
     async def packet_lineage(packet_id: str, request: Request):
@@ -690,6 +692,12 @@ def _request_api_token(headers: dict[str, Any]) -> str | None:
     return None
 
 
+def _api_token_matches(token: str | None, expected: str) -> bool:
+    if token is None:
+        return False
+    return hmac.compare_digest(token, expected)
+
+
 def _request_owner_id(headers: dict[str, Any]) -> str | None:
     owner_id = headers.get("x-nepsis-session-owner") or headers.get("X-Nepsis-Session-Owner")
     if not isinstance(owner_id, str):
@@ -711,7 +719,17 @@ def _is_origin_allowed(origin: str) -> bool:
     allowed = _allowed_origins()
     if not allowed:
         return False
+    if "*" in allowed and _wildcard_cors_forbidden():
+        return False
     return "*" in allowed or origin in allowed
+
+
+def _wildcard_cors_forbidden() -> bool:
+    return (
+        os.getenv("NODE_ENV", "").strip().lower() == "production"
+        or os.getenv("NEPSIS_DEPLOYMENT_MODE", "").strip().lower() == "operator"
+        or os.getenv("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE", "").strip().lower() in {"1", "true", "yes", "y", "on"}
+    )
 
 
 def _max_request_body_bytes() -> int:
@@ -837,14 +855,23 @@ def _rate_limit_max_requests() -> int:
 
 
 def _rate_limit_key(request: Any) -> str:
-    token = _request_api_token(dict(request.headers))
-    if token:
-        return f"token:{token[:16]}"
-    forwarded = request.headers.get("x-forwarded-for")
+    forwarded = _trusted_forwarded_ip(request.headers)
     if forwarded:
-        return f"ip:{forwarded.split(',')[0].strip()}"
+        return f"ip:{forwarded}"
     client_ip = request.client.host if getattr(request, "client", None) else "unknown"
     return f"ip:{client_ip}"
+
+
+def _trusted_forwarded_ip(headers: Any) -> str | None:
+    if os.getenv("NEPSIS_API_TRUST_FORWARDED_FOR", "").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+        return None
+    real_ip = headers.get("x-real-ip") or headers.get("X-Real-IP")
+    if isinstance(real_ip, str) and real_ip.strip():
+        return real_ip.strip()
+    forwarded = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
+    if isinstance(forwarded, str) and forwarded.strip():
+        return forwarded.split(",")[0].strip()
+    return None
 
 
 def _rate_limit_allow(key: str) -> bool:

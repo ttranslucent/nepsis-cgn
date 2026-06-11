@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -41,6 +42,37 @@ def test_asgi_mvp_requires_token_in_production_mode(monkeypatch) -> None:
     assert authorized.json()["schema_id"] == "nepsis.mvp_packet"
 
 
+def test_asgi_api_token_compare_uses_constant_time_helper() -> None:
+    assert asgi._api_token_matches("test-token", "test-token") is True
+    assert asgi._api_token_matches("wrong-token", "test-token") is False
+    assert asgi._api_token_matches(None, "test-token") is False
+
+
+def test_asgi_failed_auth_consumes_rate_limit(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.setenv("NEPSIS_API_RATE_LIMIT_MAX_REQUESTS", "1")
+    monkeypatch.setenv("NEPSIS_API_RATE_LIMIT_WINDOW_SECONDS", "60")
+    asgi._RATE_LIMIT_STATE.clear()
+
+    client = TestClient(asgi.create_app())
+    first = client.post("/v1/mvp", json={"case_id": "jailing"}, headers={"Authorization": "Bearer wrong"})
+    second = client.post("/v1/mvp", json={"case_id": "jailing"}, headers={"Authorization": "Bearer wrong"})
+
+    asgi._RATE_LIMIT_STATE.clear()
+    assert first.status_code == 401
+    assert second.status_code == 429
+
+
+def test_asgi_rate_limit_key_ignores_spoofed_x_forwarded_for() -> None:
+    request = SimpleNamespace(
+        headers={"x-forwarded-for": "203.0.113.5"},
+        client=SimpleNamespace(host="198.51.100.7"),
+    )
+
+    assert asgi._rate_limit_key(request) == "ip:198.51.100.7"
+
+
 def test_asgi_mvp_cors_allows_configured_origin(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
     monkeypatch.setenv("NEPSIS_API_ALLOWED_ORIGINS", "https://nepsis-cgn.vercel.app")
@@ -57,6 +89,16 @@ def test_asgi_mvp_cors_allows_configured_origin(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://nepsis-cgn.vercel.app"
+
+
+def test_asgi_wildcard_cors_rejected_in_operator_mode(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("NEPSIS_DEPLOYMENT_MODE", "operator")
+
+    try:
+        assert asgi._is_origin_allowed("https://example.com") is False
+    finally:
+        monkeypatch.delenv("NEPSIS_DEPLOYMENT_MODE", raising=False)
 
 
 def test_asgi_mvp_accepts_input_text_for_direct_packet_builder_callers(monkeypatch) -> None:
@@ -172,6 +214,27 @@ def test_asgi_operator_routes_require_token(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert packet_response.status_code == 401
+
+
+def test_asgi_owner_header_returns_generic_404_for_cross_owner_session(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+    monkeypatch.setattr(asgi, "API", EngineApiService())
+
+    client = TestClient(asgi.create_app())
+    created = client.post(
+        "/v1/sessions",
+        json={"family": "safety"},
+        headers={"X-Nepsis-Session-Owner": "alice@example.com"},
+    )
+    blocked = client.get(
+        f"/v1/sessions/{created.json()['session_id']}",
+        headers={"X-Nepsis-Session-Owner": "bob@example.com"},
+    )
+
+    assert created.status_code == 200
+    assert blocked.status_code == 404
+    assert blocked.json()["detail"] == "Not found"
 
 
 def test_asgi_operator_packet_phase_rejection_maps_to_409(monkeypatch) -> None:

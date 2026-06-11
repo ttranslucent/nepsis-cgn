@@ -168,8 +168,9 @@ Do not enable live model routes on the public demo deployment.
 
 Start private operator Vercel env from `nepsis-web/.env.operator.example`, not
 the public template. That path requires a reachable backend, `NEPSIS_API_TOKEN`,
-`NEPSIS_AUTH_SECRET`, `NEPSIS_AUTH_ALLOWED_EMAILS`, real email delivery with
-`RESEND_API_KEY` and `NEPSIS_AUTH_FROM_EMAIL`, `NEPSIS_DEPLOYMENT_MODE=operator`,
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET`, `NEPSIS_AUTH_SECRET`,
+`NEPSIS_AUTH_ALLOWED_EMAILS`, real email delivery with `RESEND_API_KEY` and
+`NEPSIS_AUTH_FROM_EMAIL`, `NEPSIS_DEPLOYMENT_MODE=operator`,
 `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
 `NEPSIS_MODEL_ROUTES_ENABLED=true`, and a server-side
 `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`.
@@ -193,7 +194,7 @@ Before committing deployment env files or public-site config changes, run:
 The repo also includes a local `pre-commit` hook that runs the same checker on
 staged files and blocks hardcoded OpenAI keys, browser-exposed key env names,
 and public-site env combinations that would enable model routes, anonymous
-engine controls, login preview codes, or server OpenAI keys.
+engine controls, login preview codes, wildcard CORS, or server OpenAI keys.
 
 ## Public API and MCP
 

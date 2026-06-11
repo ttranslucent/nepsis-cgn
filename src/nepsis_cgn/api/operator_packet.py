@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -9,7 +12,8 @@ from uuid import uuid4
 from .service import EngineApiService, Family
 
 SCHEMA_ID = "nepsis.operator_packet"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
+INTEGRITY_SEAL_VERSION = "hmac-sha256:v1"
 POLICY = {
     "name": "nepsis_cgn.stateless_operator_packet",
     "version": "2026-05-22",
@@ -17,6 +21,7 @@ POLICY = {
     "server_retention": "none",
 }
 _COMMIT_REQUIRED_TRACE_EVENTS = ["LOCK_FRAME", "RUN_REPORT", "LOCK_REPORT", "SET_THRESHOLD_DECISION"]
+_DEVELOPMENT_SEAL_SECRET = secrets.token_bytes(32)
 
 _DEFAULT_FRAME = {
     "text": "Operator session draft.",
@@ -218,7 +223,11 @@ def abandon_packet(*, packet: dict[str, Any], reason: str = "") -> dict[str, Any
 
 
 def inspect_operator_packet(packet: dict[str, Any] | None = None) -> dict[str, Any]:
-    resolved = packet if isinstance(packet, dict) else start_operator_packet()
+    if packet is None:
+        resolved = start_operator_packet()
+    else:
+        _validate_packet(packet)
+        resolved = packet
     return {
         "schema_id": "nepsis.operator_packet_state",
         "loop_id": _packet_loop_id(resolved),
@@ -253,7 +262,7 @@ def _packet(
     last_abandoned_packet: dict[str, Any] | None,
     previous_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    packet = {
         "schema_id": SCHEMA_ID,
         "schema_version": SCHEMA_VERSION,
         "packet_id": str(uuid4()),
@@ -274,6 +283,7 @@ def _packet(
         "previous_trace": _json_copy(previous_trace) or [],
         "policy": dict(POLICY),
     }
+    return _seal_packet(packet)
 
 
 def _packet_from_transition(
@@ -352,7 +362,14 @@ def _validate_packet(packet: dict[str, Any]) -> None:
     if packet.get("schema_id") != SCHEMA_ID:
         raise ValueError("operator packet schema_id must be nepsis.operator_packet")
     if packet.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("operator packet schema_version must be 2.0.0")
+        raise ValueError(f"operator packet schema_version must be {SCHEMA_VERSION}")
+    trace = packet.get("audit_trace")
+    if not isinstance(trace, list):
+        raise ValueError("operator packet audit_trace must be a list")
+    max_trace = _operator_packet_max_trace_events()
+    if len(trace) > max_trace:
+        raise ValueError(f"operator packet audit_trace exceeds configured maximum of {max_trace} events")
+    _verify_packet_integrity(packet)
 
 
 def _transition_session(result: dict[str, Any]) -> dict[str, Any]:
@@ -457,6 +474,94 @@ def _json_copy(value: Any) -> Any:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _seal_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    sealed = _json_copy(packet) or {}
+    counter = _packet_integrity_counter(sealed)
+    sealed["integrity"] = {
+        "seal_version": INTEGRITY_SEAL_VERSION,
+        "counter": counter,
+        "sealed_fields": sorted(sealed.keys()),
+        "seal": _packet_integrity_seal(sealed, counter),
+    }
+    return sealed
+
+
+def _verify_packet_integrity(packet: dict[str, Any]) -> None:
+    integrity = packet.get("integrity")
+    if not isinstance(integrity, dict):
+        raise ValueError("operator packet integrity seal is required")
+    seal = integrity.get("seal")
+    counter = integrity.get("counter")
+    if integrity.get("seal_version") != INTEGRITY_SEAL_VERSION:
+        raise ValueError("operator packet integrity seal_version is unsupported")
+    if not isinstance(seal, str) or not seal:
+        raise ValueError("operator packet integrity seal is required")
+    if not isinstance(counter, int) or counter < 0:
+        raise ValueError("operator packet integrity counter must be a non-negative integer")
+    expected_counter = _packet_integrity_counter(packet)
+    if counter != expected_counter:
+        raise ValueError("operator packet integrity counter does not match packet trace state")
+    expected = _packet_integrity_seal(packet, counter)
+    if not hmac.compare_digest(seal, expected):
+        raise ValueError("operator packet integrity seal verification failed")
+
+
+def _packet_integrity_payload(packet: dict[str, Any], counter: int) -> bytes:
+    body = {key: value for key, value in packet.items() if key != "integrity"}
+    payload = {"counter": counter, "packet": body}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _packet_integrity_seal(packet: dict[str, Any], counter: int) -> str:
+    return hmac.new(
+        _operator_packet_seal_secret(),
+        _packet_integrity_payload(packet, counter),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _packet_integrity_counter(packet: dict[str, Any]) -> int:
+    trace = packet.get("audit_trace")
+    if isinstance(trace, list) and trace:
+        return len(trace)
+    previous_trace = packet.get("previous_trace")
+    if isinstance(previous_trace, list) and previous_trace:
+        return len(previous_trace)
+    return 0
+
+
+def _operator_packet_max_trace_events() -> int:
+    raw = os.getenv("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS", "64")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS must be an integer") from exc
+    if value <= 0:
+        raise ValueError("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS must be > 0")
+    return value
+
+
+def _operator_packet_seal_secret() -> bytes:
+    raw = os.getenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET")
+    if raw and raw.strip():
+        return raw.strip().encode("utf-8")
+    if _operator_packet_requires_configured_secret():
+        raise ValueError("NEPSIS_OPERATOR_PACKET_SEAL_SECRET is required in production or operator mode")
+    return _DEVELOPMENT_SEAL_SECRET
+
+
+def _operator_packet_requires_configured_secret() -> bool:
+    return (
+        os.getenv("NODE_ENV", "").strip().lower() == "production"
+        or os.getenv("NEPSIS_DEPLOYMENT_MODE", "").strip().lower() == "operator"
+        or _env_true(os.getenv("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE"))
+    )
+
+
+def _env_true(value: str | None) -> bool:
+    return bool(value and value.strip().lower() in {"1", "true", "yes", "y", "on"})
 
 
 __all__ = [
