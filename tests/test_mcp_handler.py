@@ -193,6 +193,27 @@ def test_get_session_state_rejects_non_object_packet_argument() -> None:
     assert "packet" in response["error"]["message"]
 
 
+def test_get_session_state_rejects_tampered_operator_packet(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    packet = start_operator_packet()
+    packet["phase"] = "threshold_set"
+
+    response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {"name": "get_session_state", "arguments": {"packet": packet}},
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    assert "integrity" in response["error"]["message"]
+
+
 def test_set_threshold_decision_rejects_non_string_hold_reason() -> None:
     packet = _report_locked_packet()
 

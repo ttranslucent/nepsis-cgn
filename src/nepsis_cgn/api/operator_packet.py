@@ -223,7 +223,11 @@ def abandon_packet(*, packet: dict[str, Any], reason: str = "") -> dict[str, Any
 
 
 def inspect_operator_packet(packet: dict[str, Any] | None = None) -> dict[str, Any]:
-    resolved = packet if isinstance(packet, dict) else start_operator_packet()
+    if packet is None:
+        resolved = start_operator_packet()
+    else:
+        _validate_packet(packet)
+        resolved = packet
     return {
         "schema_id": "nepsis.operator_packet_state",
         "loop_id": _packet_loop_id(resolved),
