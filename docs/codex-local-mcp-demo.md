@@ -26,7 +26,7 @@ The script checks `/api/status`, generates a temporary Codex-style stdio MCP
 config for this checkout, then delegates the handshake and tool proof to:
 
 ```bash
-scripts/mcp-local-verify.py --client codex
+scripts/mcp-local-verify.py --client codex --config "$CODEX_CONFIG" --server "$SERVER"
 ```
 
 Expected proof:

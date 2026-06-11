@@ -71,7 +71,7 @@ def test_codex_mcp_demo_runbook_is_copy_pasteable() -> None:
     assert "scripts/mvp-local.sh" in text
     assert "NEPSIS_SITE_BASE_URL=http://127.0.0.1:3000 scripts/codex-mcp-demo.sh" in text
     assert "/api/status" in text
-    assert "scripts/mcp-local-verify.py --client codex" in text
+    assert 'scripts/mcp-local-verify.py --client codex --config "$CODEX_CONFIG" --server "$SERVER"' in text
     assert "run_mvp" in text
     assert "start_operator_packet" in text
     assert "codex mcp add nepsiscgn -- /Users/trentthorn/Code/nepsiscgn/.venv/bin/nepsiscgn-mcp" in text
@@ -79,6 +79,8 @@ def test_codex_mcp_demo_runbook_is_copy_pasteable() -> None:
     assert "/mvp remains deterministic and model-free" in text
 
     assert "scripts/mcp-local-verify.py" in script
+    assert '--config "$CODEX_CONFIG"' in script
+    assert '--server "$SERVER"' in script
     assert "NEPSIS_SITE_BASE_URL" in script
     assert "/api/status" in script
     assert 'args = ["-m", "nepsis_cgn.mcp.stdio"]' in script
