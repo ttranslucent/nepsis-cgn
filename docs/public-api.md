@@ -43,10 +43,15 @@ the FastAPI service remains to be deployed.
 
 ## MVP Packet Semantics
 
-The v0.1.6 MVP packet keeps legacy hypothesis `likelihood` fields for
+The v0.1.7 MVP packet keeps legacy hypothesis `likelihood` fields for
 compatibility, but those values are support-only. RED/threshold standing lives
 in `post_constraint_standing` and `action_priority`, while `evaluation_axes`
 keeps support separate from action priority.
+
+STILL commitment readiness keeps the compatibility `status` field and adds
+explicit `zeroback_triggered`, `effective_action`, and `co_trigger_statuses`
+fields so ZeroBack is visible even when legacy readiness remains
+`retessellate`.
 
 `contradiction_monitor.contradiction_density` is a demo-only scalar summary.
 Use `density_channels` and each contradiction's `level` and `status` when

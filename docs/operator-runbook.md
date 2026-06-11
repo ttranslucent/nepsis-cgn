@@ -41,10 +41,12 @@ npm run dev
   public-demo safety net and `/status` still reports the backend gap. Fallback
   packets include `fallback_source` and `fallback_reason`; `backend_unconfigured`
   means the public demo is intentionally using the bundled deterministic packet.
-- The v0.1.6 raw packet keeps hypothesis `likelihood` support-only and puts
+- The v0.1.7 raw packet keeps hypothesis `likelihood` support-only and puts
   RED/threshold standing in `post_constraint_standing` and `action_priority`.
-  Use contradiction `level`/`status` plus `density_channels` instead of treating
-  the scalar density as a runtime gate.
+  STILL commitment readiness preserves the compatibility `status` field and
+  makes ZeroBack/effective action explicit. Use contradiction `level`/`status`
+  plus `density_channels` instead of treating the scalar density as a runtime
+  gate.
 - The Jailing/Jingall packet assumes `JINGALL` is the authoritative source
   token. It does not prove detection of the harder corrupted-source-token
   variant where `JAILING` is true; source-token verification remains a declared
@@ -107,6 +109,7 @@ NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true
 NEPSIS_LIVE_OPERATOR_ENABLED=true
 NEPSIS_API_BASE_URL=https://<private-render-service>
 NEPSIS_API_TOKEN=<private-backend-token>
+NEPSIS_OPERATOR_PACKET_SEAL_SECRET=<long-random-operator-packet-seal-secret>
 NEPSIS_AUTH_SECRET=<long-random-secret>
 NEPSIS_AUTH_ALLOWED_EMAILS=<operator-email-list>
 NEPSIS_AUTH_SESSION_REVOKE_BEFORE=
@@ -120,7 +123,8 @@ OPENAI_API_KEY=<server-side-openai-key>
 
 For the frozen public `/mvp` deployment, use
 `nepsis-web/.env.public.example` instead and keep model routes and live operator
-mode disabled.
+mode disabled. Do not use `NEPSIS_API_ALLOWED_ORIGINS=*` in public or operator
+runtime environments.
 
 ## Public Site Smoke
 
@@ -148,6 +152,8 @@ Backend `/mcp` exposes NepsisCGN as a tool endpoint with public deterministic
 discovery (`initialize`, `tools/list`) and capability-token-protected tool
 calls. The operator flow is stateless packet-in/packet-out: each tool receives a
 `nepsis.operator_packet` v2 object and returns the next packet, with
-RED-before-BLUE gates enforced by phase transitions. MCP clients should use
-their own ChatGPT/Codex, Claude Code, or Gemini authentication; NepsisCGN should
-not collect or subsidize visitor model accounts.
+RED-before-BLUE gates enforced by phase transitions. Operator runtimes require
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so inbound packets can be rejected if they
+were tampered with before replay. MCP clients should use their own
+ChatGPT/Codex, Claude Code, or Gemini authentication; NepsisCGN should not
+collect or subsidize visitor model accounts.
