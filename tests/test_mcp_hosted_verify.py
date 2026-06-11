@@ -117,13 +117,19 @@ def test_mcp_hosted_verifier_accepts_codex_streamable_http_config(tmp_path: Path
                                     "text": json.dumps(
                                         {
                                             "schema_id": "nepsis.operator_packet",
-                                            "schema_version": "2.0.0",
+                                            "schema_version": "2.1.0",
                                             "phase": "frame_draft",
                                             "legal_next_tools": [
                                                 "start_operator_packet",
                                                 "lock_frame",
                                                 "abandon_packet",
                                             ],
+                                            "integrity": {
+                                                "seal_version": "hmac-sha256:v1",
+                                                "counter": 0,
+                                                "sealed_fields": ["audit_trace"],
+                                                "seal": "mocked-seal",
+                                            },
                                         }
                                     ),
                                 }

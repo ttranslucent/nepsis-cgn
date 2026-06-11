@@ -215,6 +215,16 @@ def _scan_text(path: Path, text: str) -> list[Issue]:
                     )
                 )
 
+        cors = assignments.get("NEPSIS_API_ALLOWED_ORIGINS")
+        if cors and _normalize_env_value(cors.value) == "*":
+            issues.append(
+                Issue(
+                    path=path,
+                    line=cors.line,
+                    message=f"NEPSIS_API_ALLOWED_ORIGINS=* cannot be used when {public_context}.",
+                )
+            )
+
     deployment_mode = assignments.get(OPERATOR_MODE_FLAG)
     operator_site = assignments.get(OPERATOR_SITE_FLAG)
     operator_mode = (
@@ -243,6 +253,26 @@ def _scan_text(path: Path, text: str) -> list[Issue]:
                     path=path,
                     line=deployment_mode.line if deployment_mode else operator_site.line if operator_site else 1,
                     message=f"NEPSIS_AUTH_ALLOWED_EMAILS must be set when {operator_context}.",
+                )
+            )
+
+        cors = assignments.get("NEPSIS_API_ALLOWED_ORIGINS")
+        if cors and _normalize_env_value(cors.value) == "*":
+            issues.append(
+                Issue(
+                    path=path,
+                    line=cors.line,
+                    message=f"NEPSIS_API_ALLOWED_ORIGINS=* cannot be used when {operator_context}.",
+                )
+            )
+
+        seal_secret = assignments.get("NEPSIS_OPERATOR_PACKET_SEAL_SECRET")
+        if not seal_secret or not seal_secret.value.strip():
+            issues.append(
+                Issue(
+                    path=path,
+                    line=deployment_mode.line if deployment_mode else operator_site.line if operator_site else 1,
+                    message=f"NEPSIS_OPERATOR_PACKET_SEAL_SECRET must be set when {operator_context}.",
                 )
             )
 

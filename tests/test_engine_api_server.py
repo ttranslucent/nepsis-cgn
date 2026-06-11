@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from nepsis_cgn.api.server import (
     _request_timeout_seconds,
     _request_api_token,
     _request_owner_id,
+    _rate_limit_key,
     _validated_manifest_path,
     route_manifest,
 )
@@ -80,6 +82,21 @@ def test_request_api_token_supports_x_api_key() -> None:
     assert token == "secret-token"
 
 
+def test_api_token_compare_uses_constant_time_helper() -> None:
+    assert api_server._api_token_matches("secret-token", "secret-token") is True
+    assert api_server._api_token_matches("wrong-token", "secret-token") is False
+    assert api_server._api_token_matches(None, "secret-token") is False
+
+
+def test_rate_limit_key_ignores_spoofed_x_forwarded_for() -> None:
+    handler = SimpleNamespace(
+        headers={"X-Forwarded-For": "203.0.113.5", "Authorization": "Bearer attacker-controlled"},
+        client_address=("198.51.100.7", 12345),
+    )
+
+    assert _rate_limit_key(handler) == "ip:198.51.100.7"
+
+
 def test_request_owner_id_normalizes_header() -> None:
     assert _request_owner_id({"X-Nepsis-Session-Owner": " Alice@Example.com "}) == "alice@example.com"
 
@@ -115,6 +132,13 @@ def test_origin_not_allowed_without_allowlist(monkeypatch) -> None:
 def test_origin_allowed_with_allowlist(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOWED_ORIGINS", "https://example.com")
     assert _is_origin_allowed("https://example.com") is True
+
+
+def test_wildcard_cors_rejected_in_operator_mode(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("NEPSIS_DEPLOYMENT_MODE", "operator")
+
+    assert _is_origin_allowed("https://example.com") is False
 
 
 def test_validated_manifest_path_rejects_unapproved_path(tmp_path, monkeypatch) -> None:
@@ -321,6 +345,36 @@ def test_http_rejects_missing_api_token(monkeypatch) -> None:
     assert json.loads(body.decode("utf-8"))["error"] == "Unauthorized"
 
 
+def test_http_failed_auth_consumes_rate_limit(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "secret-token")
+    monkeypatch.setenv("NEPSIS_API_RATE_LIMIT_MAX_REQUESTS", "1")
+    monkeypatch.setenv("NEPSIS_API_RATE_LIMIT_WINDOW_SECONDS", "60")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+    api_server._RATE_LIMIT_STATE.clear()
+
+    httpd, thread, port = _start_test_server()
+    try:
+        statuses: list[int] = []
+        for _ in range(2):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/mvp",
+                body=json.dumps({"case_id": "jailing"}),
+                headers={"Content-Type": "application/json", "Authorization": "Bearer wrong"},
+            )
+            response = conn.getresponse()
+            response.read()
+            statuses.append(response.status)
+            conn.close()
+    finally:
+        _stop_test_server(httpd, thread)
+        api_server._RATE_LIMIT_STATE.clear()
+
+    assert statuses == [401, 429]
+
+
 def test_http_owner_header_blocks_cross_owner_session_access(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
     monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
@@ -359,8 +413,8 @@ def test_http_owner_header_blocks_cross_owner_session_access(monkeypatch) -> Non
 
     assert created_response.status == 200
     assert created["owner_id"] == "alice@example.com"
-    assert blocked_response.status == 403
-    assert "not owned" in json.loads(blocked_body.decode("utf-8"))["error"]
+    assert blocked_response.status == 404
+    assert json.loads(blocked_body.decode("utf-8"))["error"] == "Not found"
 
 
 def test_http_rate_limit_returns_429(monkeypatch) -> None:
