@@ -40,7 +40,7 @@ def test_jailing_mvp_packet_preserves_constraint_and_retessellates() -> None:
     packet = build_nepsis_mvp_packet(case_id="jailing")
 
     assert packet["schema_id"] == MVP_PACKET_SCHEMA_ID
-    assert packet["schema_version"] == MVP_PACKET_SCHEMA_VERSION == "0.1.6"
+    assert packet["schema_version"] == MVP_PACKET_SCHEMA_VERSION == "0.1.7"
     assert MINIMUM_PACKET_FIELDS.issubset(packet)
     assert packet["case_id"] == "jailing"
     assert packet["red_channel"]["escalation_required"] is True
@@ -51,6 +51,9 @@ def test_jailing_mvp_packet_preserves_constraint_and_retessellates() -> None:
     assert packet["still"]["checkpoints"][0]["position"] == "after_red_before_blue"
     assert packet["still"]["checkpoints"][0]["trigger_status"] == "hold_or_bounded_blue"
     assert packet["still"]["commitment_readiness"]["status"] == "retessellate"
+    assert packet["still"]["commitment_readiness"]["zeroback_triggered"] is True
+    assert packet["still"]["commitment_readiness"]["effective_action"] == "zeroback"
+    assert "retessellate" in packet["still"]["commitment_readiness"]["co_trigger_statuses"]
     assert packet["still"]["audit_events"]
     assert packet["zeroback"]["triggered"] is True
     assert packet["retessellation_state"]["status"] == "completed_in_packet"

@@ -9,7 +9,7 @@ from .still import build_still_pathway
 
 MvpCaseId = Literal["jailing", "clinical"]
 MVP_PACKET_SCHEMA_ID = "nepsis.mvp_packet"
-MVP_PACKET_SCHEMA_VERSION = "0.1.6"
+MVP_PACKET_SCHEMA_VERSION = "0.1.7"
 
 
 def build_nepsis_mvp_packet(

@@ -485,7 +485,12 @@ function StillCheckpointPanel({
           {readiness ? (
             <>
               <KeyValue label="Commitment readiness" value={readiness.status} />
+              <KeyValue label="Effective action" value={readiness.effective_action ?? readiness.status} />
+              <KeyValue label="ZeroBack active" value={readiness.zeroback_triggered ? "yes" : "no"} />
               <KeyValue label="Readiness rationale" value={readiness.rationale} />
+              {(readiness.co_trigger_statuses ?? []).length > 0 && (
+                <ListBlock title="Co-trigger statuses" items={readiness.co_trigger_statuses} compact />
+              )}
             </>
           ) : (
             <KeyValue label="Commitment readiness" value="n/a" />

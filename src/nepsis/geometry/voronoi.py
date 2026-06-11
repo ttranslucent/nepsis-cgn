@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Callable, Dict, List, Optional
 
 # Metric function: consumes a candidate dict/state and returns a distance (lower is better).
@@ -21,6 +22,13 @@ class VoronoiSeed:
     metric: MetricFn
     weight: float = 0.0
     is_ruin: bool = False
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(float(self.scale)) or float(self.scale) <= 0.0:
+            raise ValueError(f"Voronoi seed '{self.name}' scale must be finite and > 0.")
+        if not math.isfinite(float(self.weight)):
+            raise ValueError(f"Voronoi seed '{self.name}' weight must be finite.")
 
 
 @dataclass
@@ -55,7 +63,7 @@ class NepsisVoronoi:
         Evaluate a candidate state.
 
         - metric(candidate) -> distance d_i
-        - v_i = d_i - weight_i (additive weighted Voronoi)
+        - v_i = (d_i / scale_i) - weight_i (normalized additive weighted Voronoi)
         - dominant seed = argmin v_i
         """
         per_seed_values: Dict[str, float] = {}
@@ -67,18 +75,28 @@ class NepsisVoronoi:
         dominant_is_ruin: bool = False
 
         for seed in self.seeds:
+            metric_failed_closed = False
             try:
-                d = seed.metric(candidate)
-            except Exception:
-                d = float("inf")
+                d = float(seed.metric(candidate))
+            except Exception as exc:
+                if not seed.is_ruin:
+                    raise ValueError(f"Voronoi metric for seed '{seed.name}' failed.") from exc
+                d = 0.0
+                metric_failed_closed = True
 
-            v = d - seed.weight
+            if not math.isfinite(d) or d < 0.0:
+                if not seed.is_ruin:
+                    raise ValueError(f"Voronoi metric for seed '{seed.name}' must be finite and non-negative.")
+                d = 0.0
+                metric_failed_closed = True
+
+            v = float("-inf") if metric_failed_closed else (d / seed.scale) - seed.weight
 
             raw_metrics[seed.name] = d
             weights[seed.name] = seed.weight
             per_seed_values[seed.name] = v
 
-            if v < dominant_value:
+            if v < dominant_value or (v == dominant_value and seed.is_ruin and not dominant_is_ruin):
                 dominant_value = v
                 dominant_name = seed.name
                 dominant_is_ruin = seed.is_ruin

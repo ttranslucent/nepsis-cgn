@@ -46,6 +46,18 @@ def build_still_pathway(
         ],
         "commitment_readiness": {
             "status": readiness,
+            "zeroback_triggered": zeroback_triggered,
+            "effective_action": _effective_action(
+                readiness,
+                zeroback_triggered=zeroback_triggered,
+            ),
+            "co_trigger_statuses": _co_trigger_statuses(
+                readiness=readiness,
+                contradiction_present=contradiction_present,
+                denominator_collapse_detected=denominator_collapse_detected,
+                non_quiescence_possible=non_quiescence_possible,
+                zeroback_triggered=zeroback_triggered,
+            ),
             "rationale": _readiness_rationale(
                 readiness,
                 red_escalation_required=red_escalation_required,
@@ -105,6 +117,38 @@ def _readiness_rationale(
     if red_escalation_required:
         return "Ready only after RED escalation remains preserved."
     return "No live STILL blockers remain."
+
+
+def _effective_action(
+    readiness: StillReadiness,
+    *,
+    zeroback_triggered: bool,
+) -> StillReadiness:
+    if zeroback_triggered:
+        return "zeroback"
+    return readiness
+
+
+def _co_trigger_statuses(
+    *,
+    readiness: StillReadiness,
+    contradiction_present: bool,
+    denominator_collapse_detected: bool,
+    non_quiescence_possible: bool,
+    zeroback_triggered: bool,
+) -> list[StillReadiness]:
+    statuses: list[StillReadiness] = []
+    if contradiction_present or denominator_collapse_detected:
+        statuses.append("retessellate")
+    if zeroback_triggered:
+        statuses.append("zeroback")
+    if non_quiescence_possible:
+        statuses.append("hold")
+    if not statuses:
+        statuses.append("ready")
+    if readiness not in statuses:
+        statuses.insert(0, readiness)
+    return statuses
 
 
 __all__ = [
