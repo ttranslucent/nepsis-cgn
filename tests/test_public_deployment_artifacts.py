@@ -129,6 +129,19 @@ def test_operator_frontend_uses_packet_proxy_routes() -> None:
     assert "operatorPacketToResponse" in hook
 
 
+def test_operator_model_route_is_field_level_and_excludes_threshold_decision() -> None:
+    text = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "operator" / "model" / "route.ts"
+    ).read_text(encoding="utf-8")
+    assert "requireEngineControlAuth" in text
+    assert "requireCsrfToken" in text
+    assert "suggest_field" in text
+    assert "threshold.hold_reason" in text
+    assert "threshold.decision" not in text
+    assert "target: requestedTarget" in text
+    assert "frameDraft" not in text
+
+
 def test_public_mvp_fallback_discloses_reason() -> None:
     helper = (ROOT / "nepsis-web" / "src" / "lib" / "mvpFallback.ts").read_text(encoding="utf-8")
     route = (ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "mvp" / "route.ts").read_text(
