@@ -215,10 +215,45 @@ export type EngineOperatorResponse = {
   session: EngineSessionSummary;
   audit?: EngineStageAuditResponse;
   step?: EngineStepResponse;
-  packet?: Record<string, unknown>;
+  packet?: EngineOperatorPacket | Record<string, unknown>;
 };
 
 export type EngineOperatorResult = EngineOperatorResponse | EnginePhaseRejection;
+
+export type EngineAssistDisposition = {
+  target: string;
+  source: "model_suggestion";
+  model: string;
+  disposition: "accepted" | "edited" | "rejected";
+  proposed_value_hash: string;
+  final_value_hash?: string;
+  summary: string;
+};
+
+export type EngineOperatorPacket = {
+  schema_id: "nepsis.operator_packet";
+  schema_version: string;
+  packet_id: string;
+  loop_id: string;
+  created_at: string;
+  phase: string;
+  family: EngineFamily;
+  frame: Record<string, unknown> | null;
+  governance_costs: Record<string, unknown> | null;
+  governance_calibration: Record<string, unknown> | null;
+  manifest_path?: string | null;
+  audit_trace: Array<Record<string, unknown>>;
+  legal_next_tools: string[];
+  latest_audit: EngineStageAuditResponse | Record<string, unknown>;
+  latest_step: EngineStepResponse | Record<string, unknown> | null;
+  last_commit_packet: Record<string, unknown> | null;
+  last_abandoned_packet: Record<string, unknown> | null;
+  previous_trace: Array<Record<string, unknown>>;
+  policy?: Record<string, unknown>;
+  integrity?: Record<string, unknown>;
+};
+
+export type EngineOperatorPacketResult = EngineOperatorPacket | EnginePhaseRejection;
 
 export type EngineOperatorFramePayload = {
   family?: EngineFamily;
@@ -704,51 +739,68 @@ export const engineClient = {
     return requestEngine<NepsisMvpPacket>("/mvp", jsonRequest("POST", payload));
   },
 
-  getOperatorSessionState(): Promise<EngineOperatorResponse> {
-    return requestEngine<EngineOperatorResponse>("/operator/session", { method: "GET" });
+  startOperatorPacket(payload: {
+    family?: EngineFamily;
+    frame?: EngineCreateSessionPayload["frame"];
+    governance?: { c_fp: number; c_fn: number };
+  } = {}): Promise<EngineOperatorPacket> {
+    return requestEngine<EngineOperatorPacket>("/operator-packet/start", jsonRequest("POST", payload));
   },
 
-  lockOperatorFrame(payload: EngineOperatorFramePayload): Promise<EngineOperatorResult> {
-    return requestEngineAllowingPhaseRejection<EngineOperatorResponse>(
-      "/operator/frame",
+  getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacket> {
+    return requestEngine<EngineOperatorPacket>("/operator-packet/state", jsonRequest("POST", payload));
+  },
+
+  lockOperatorFrame(payload: EngineOperatorFramePayload & {
+    packet: EngineOperatorPacket;
+    assist_acceptances?: EngineAssistDisposition[];
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/frame",
       jsonRequest("POST", payload),
     );
   },
 
-  runOperatorReport(payload: EngineOperatorReportPayload): Promise<EngineOperatorResult> {
-    return requestEngineAllowingPhaseRejection<EngineOperatorResponse>(
-      "/operator/report",
+  runOperatorReport(payload: EngineOperatorReportPayload & {
+    packet: EngineOperatorPacket;
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/report",
       jsonRequest("POST", payload),
     );
   },
 
-  lockOperatorReport(): Promise<EngineOperatorResult> {
-    return requestEngineAllowingPhaseRejection<EngineOperatorResponse>(
-      "/operator/report/lock",
-      jsonRequest("POST", {}),
+  lockOperatorReport(payload: { packet: EngineOperatorPacket }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/report/lock",
+      jsonRequest("POST", payload),
     );
   },
 
   setOperatorThresholdDecision(payload: {
+    packet: EngineOperatorPacket;
     decision: "recommend" | "hold";
     hold_reason?: string;
-  }): Promise<EngineOperatorResult> {
-    return requestEngineAllowingPhaseRejection<EngineOperatorResponse>(
-      "/operator/threshold",
+    assist_acceptances?: EngineAssistDisposition[];
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/threshold",
       jsonRequest("POST", payload),
     );
   },
 
   commitOperatorIteration(payload: {
+    packet: EngineOperatorPacket;
     carry_forward_frame?: Record<string, unknown>;
-  }): Promise<EngineOperatorResult> {
-    return requestEngineAllowingPhaseRejection<EngineOperatorResponse>(
-      "/operator/commit",
+    assist_acceptances?: EngineAssistDisposition[];
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/commit",
       jsonRequest("POST", payload),
     );
   },
 
-  abandonOperatorSession(payload: { reason?: string } = {}): Promise<EngineOperatorResponse> {
-    return requestEngine<EngineOperatorResponse>("/operator/abandon", jsonRequest("POST", payload));
+  abandonOperatorSession(payload: { packet: EngineOperatorPacket; reason?: string }): Promise<EngineOperatorPacket> {
+    return requestEngine<EngineOperatorPacket>("/operator-packet/abandon", jsonRequest("POST", payload));
   },
 };

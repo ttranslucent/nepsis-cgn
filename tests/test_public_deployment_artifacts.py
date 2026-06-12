@@ -9,8 +9,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+OPERATOR_PACKET_PROXY_ROUTES = [
+    "start",
+    "state",
+    "frame",
+    "report",
+    "report/lock",
+    "threshold",
+    "commit",
+    "abandon",
+]
 
 
 def _env_assignments(path: Path) -> dict[str, str]:
@@ -96,6 +108,25 @@ def test_status_api_exposes_public_and_operator_readiness_paths() -> None:
     assert "NEPSIS_DEPLOYMENT_MODE=operator" in text
     assert "RESEND_API_KEY" in text
     assert "OPENAI_API_KEY or NEPSIS_OPENAI_API_KEY" in text
+
+
+@pytest.mark.parametrize("route", OPERATOR_PACKET_PROXY_ROUTES)
+def test_operator_packet_proxy_routes_require_auth_and_csrf(route: str) -> None:
+    path = ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "operator-packet" / route / "route.ts"
+    text = path.read_text(encoding="utf-8")
+    assert "requireEngineControlAuth" in text
+    assert "requireCsrfToken" in text
+
+
+def test_operator_frontend_uses_packet_proxy_routes() -> None:
+    root = ROOT / "nepsis-web" / "src"
+    client = (root / "lib" / "engineClient.ts").read_text(encoding="utf-8")
+    hook = (root / "lib" / "useEngineSession.ts").read_text(encoding="utf-8")
+    assert "/operator-packet/start" in client
+    assert "/operator-packet/frame" in client
+    assert "/operator/frame" not in client
+    assert "operatorPacket" in hook
+    assert "operatorPacketToResponse" in hook
 
 
 def test_public_mvp_fallback_discloses_reason() -> None:
