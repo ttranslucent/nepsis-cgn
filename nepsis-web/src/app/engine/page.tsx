@@ -36,8 +36,17 @@ import { publicSiteMode } from "@/lib/publicMode";
 import { useEngineSession } from "@/lib/useEngineSession";
 import {
   requestOperatorModel,
-  type OperatorModelResponse,
+  type OperatorAssistTarget,
 } from "@/lib/operatorModelClient";
+import {
+  FRAME_ASSIST_TARGETS,
+  assistTargetTextFromFramePayload,
+  buildAssistDispositions,
+  canonicalFieldText,
+  readRationaleSegment,
+  targetLabel,
+  type AssistReview,
+} from "@/app/engine/operatorAssist";
 import { withCsrfHeader } from "@/lib/csrfClient";
 
 type ChatRole = "human" | "nepsis";
@@ -679,15 +688,6 @@ function buildFramePayloadFromDraft(draft: FrameDraft): EngineReframePayload["fr
   return payload;
 }
 
-function readRationaleSegment(rationale: string | null | undefined, label: string): string {
-  if (!rationale) {
-    return "";
-  }
-  const regex = new RegExp(`${label}:\\s*([^|]+)`, "i");
-  const match = rationale.match(regex);
-  return match ? match[1].trim() : "";
-}
-
 function buildNextFramePayload(draft: NextFrameDraft): EngineReframePayload["frame"] {
   const payload: EngineReframePayload["frame"] = {};
   const text = optionalText(draft.text);
@@ -1013,6 +1013,38 @@ function pulseJumpTarget(target: HTMLElement): void {
   }, 1400);
 }
 
+function highlightAndScroll(targetId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.requestAnimationFrame(() => {
+    const target = document.getElementById(targetId);
+    if (!target) {
+      return;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLSelectElement ||
+      target instanceof HTMLButtonElement
+    ) {
+      target.focus();
+    }
+    pulseJumpTarget(target as HTMLElement);
+  });
+}
+
+function nextIncompleteFrameTarget(draft: FrameDraft): string {
+  if (!optionalText(draft.text)) return "frame-problem-statement";
+  if (!optionalText(draft.key_uncertainty)) return "frame-key-uncertainty";
+  if (parseLineList(draft.constraints_hard_text).length === 0) return "frame-constraints-hard";
+  if (parseLineList(draft.constraints_soft_text).length === 0) return "frame-constraints-soft";
+  if (!optionalText(draft.red_definition)) return "frame-catastrophic-outcome";
+  if (!optionalText(draft.blue_goals)) return "frame-optimization-goal";
+  return "stage-frame";
+}
+
 export default function EnginePage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -1095,9 +1127,10 @@ export default function EnginePage() {
   const [detachedChat, setDetachedChat] = useState<DetachedMessage[]>([DETACHED_STARTER]);
   const [detachedBusy, setDetachedBusy] = useState(false);
   const [modelAssistOpen, setModelAssistOpen] = useState(false);
-  const [modelAssistInput, setModelAssistInput] = useState("");
   const [modelAssistBusy, setModelAssistBusy] = useState(false);
-  const [modelAssistLast, setModelAssistLast] = useState<OperatorModelResponse | null>(null);
+  const [activeAssistTarget, setActiveAssistTarget] = useState<OperatorAssistTarget | null>(null);
+  const [assistReviews, setAssistReviews] = useState<AssistReview[]>([]);
+  const [editingAssistId, setEditingAssistId] = useState<string | null>(null);
 
   const snapshotStorageKey = useMemo(
     () => `${MODEL_SNAPSHOT_STORAGE_PREFIX}:${activeSession?.session_id ?? "workspace"}`,
@@ -1633,6 +1666,139 @@ export default function EnginePage() {
     setLocalError(null);
   }
 
+  function assistInputForTarget(target: OperatorAssistTarget): string {
+    switch (target) {
+      case "frame.text":
+        return frameDraft.text;
+      case "frame.key_uncertainty":
+        return frameDraft.key_uncertainty;
+      case "frame.constraints_hard":
+        return frameDraft.constraints_hard_text;
+      case "frame.constraints_soft":
+        return frameDraft.constraints_soft_text;
+      case "frame.red_definition":
+        return frameDraft.red_definition;
+      case "frame.blue_goals":
+        return frameDraft.blue_goals;
+      case "threshold.hold_reason":
+        return thresholdHoldReason;
+      case "next_frame.text":
+        return nextFrameDraft.text;
+    }
+  }
+
+  async function requestFieldAssist(target: OperatorAssistTarget, input: string = assistInputForTarget(target)) {
+    clearAllErrors();
+    const prompt = optionalText(input) ?? `Suggest ${targetLabel(target)} for the current Nepsis operator loop.`;
+    setModelAssistOpen(true);
+    setActiveAssistTarget(target);
+    setModelAssistBusy(true);
+    try {
+      const result = await requestOperatorModel({
+        mode: "suggest_field",
+        target,
+        input: prompt,
+        context: {
+          family,
+          current_frame: frameDraft,
+          threshold_decision: thresholdDecision,
+          threshold_hold_reason: thresholdHoldReason,
+          next_frame: nextFrameDraft,
+          gate_status: {
+            frame: displayFrameGateStatus,
+            interpretation: displayInterpretationGateStatus,
+            threshold: displayThresholdGateStatus,
+          },
+        },
+      });
+      if (result.suggestions.length === 0) {
+        setLocalError(`Model assist returned no suggestion for ${targetLabel(target)}.`);
+        return;
+      }
+      setAssistReviews((prev) => [
+        ...prev,
+        ...result.suggestions.map((suggestion) => ({
+          ...suggestion,
+          uiStatus: "draft" as const,
+          createdAt: new Date().toISOString(),
+          model: result.model,
+        })),
+      ]);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Model assist failed.");
+    } finally {
+      setModelAssistBusy(false);
+      setActiveAssistTarget(null);
+    }
+  }
+
+  function editAssist(id: string, value: string) {
+    setAssistReviews((prev) =>
+      prev.map((review) => (review.id === id ? { ...review, editedValue: value } : review)),
+    );
+  }
+
+  function rejectAssist(id: string) {
+    setEditingAssistId(null);
+    setAssistReviews((prev) =>
+      prev.map((review) => (review.id === id ? { ...review, uiStatus: "rejected" } : review)),
+    );
+  }
+
+  function applyAssist(review: AssistReview) {
+    const text = review.editedValue ?? canonicalFieldText(review.proposedValue);
+    if (review.target === "frame.text") {
+      setFrameDraft((prev) => ({ ...prev, text }));
+    }
+    if (review.target === "frame.key_uncertainty") {
+      setFrameDraft((prev) => ({ ...prev, key_uncertainty: text }));
+    }
+    if (review.target === "frame.constraints_hard") {
+      setFrameDraft((prev) => ({ ...prev, constraints_hard_text: text }));
+    }
+    if (review.target === "frame.constraints_soft") {
+      setFrameDraft((prev) => ({ ...prev, constraints_soft_text: text }));
+    }
+    if (review.target === "frame.red_definition") {
+      setFrameDraft((prev) => ({ ...prev, red_definition: text }));
+    }
+    if (review.target === "frame.blue_goals") {
+      setFrameDraft((prev) => ({ ...prev, blue_goals: text }));
+    }
+    if (review.target === "threshold.hold_reason") {
+      setThresholdHoldReason(text);
+    }
+    if (review.target === "next_frame.text") {
+      setNextFrameDraft((prev) => ({ ...prev, text }));
+    }
+    setEditingAssistId(null);
+    setAssistReviews((prev) =>
+      prev.map((item) =>
+        item.id === review.id
+          ? { ...item, uiStatus: review.editedValue !== undefined ? "edited" : "accepted" }
+          : item,
+      ),
+    );
+  }
+
+  async function transitionAssistDispositions(
+    currentFieldText: (target: OperatorAssistTarget) => string | null,
+    reviews: AssistReview[] = assistReviews,
+  ) {
+    try {
+      return await buildAssistDispositions(reviews, currentFieldText);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Could not build assist disposition metadata.");
+      return null;
+    }
+  }
+
+  function clearRecordedAssistReviews(recordedTargets: Set<OperatorAssistTarget>) {
+    setAssistReviews((prev) =>
+      prev.filter((review) => review.uiStatus !== "rejected" && !recordedTargets.has(review.target)),
+    );
+  }
+
   function jumpToUnresolvedCheck(item: UnresolvedGateItem) {
     clearAllErrors();
     if (!showOperatorControls) {
@@ -1771,48 +1937,6 @@ export default function EnginePage() {
 
   function clearModelSnapshots() {
     setModelSnapshots([]);
-  }
-
-  async function handleDraftFrameWithModel() {
-    clearAllErrors();
-    const input = optionalText(modelAssistInput);
-    if (!input) {
-      setLocalError("Model prompt is required.");
-      return;
-    }
-    setModelAssistBusy(true);
-    try {
-      const result = await requestOperatorModel({
-        mode: "draft_frame",
-        input,
-        context: {
-          family,
-          current_frame: frameDraft,
-          gate_status: displayFrameGateStatus,
-        },
-      });
-      setModelAssistLast(result);
-      const draft = result.frameDraft;
-      if (draft) {
-        setFrameDraft((prev) => ({
-          ...prev,
-          text: draft.text || prev.text,
-          objective_type: draft.objective_type || prev.objective_type,
-          domain: draft.domain || prev.domain,
-          time_horizon: draft.time_horizon || prev.time_horizon,
-          key_uncertainty: draft.key_uncertainty || prev.key_uncertainty,
-          constraints_hard_text: lineListToText(draft.constraints_hard),
-          constraints_soft_text: lineListToText(draft.constraints_soft),
-          red_definition: draft.red_definition || prev.red_definition,
-          blue_goals: draft.blue_goals || prev.blue_goals,
-        }));
-        pushFrameMessage("nepsis", "Live model draft applied. Review the frame gate before locking.");
-      }
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "Model assist failed.");
-    } finally {
-      setModelAssistBusy(false);
-    }
   }
 
   const requestBackendStageAudit = useCallback(
@@ -2009,6 +2133,9 @@ export default function EnginePage() {
     setContradictionsNote(workspace?.contradictions_note ?? "");
     setThresholdDecision(workspace?.threshold_decision ?? "undecided");
     setThresholdHoldReason(workspace?.threshold_hold_reason ?? "");
+    setAssistReviews([]);
+    setEditingAssistId(null);
+    setActiveAssistTarget(null);
     const initialBranchId = opened.branch_id ?? `${sessionBranchContext(opened.session_id)}-b1`;
     setActiveBranchId(initialBranchId);
     setBranchCounter(parseBranchCounter(initialBranchId));
@@ -2039,6 +2166,9 @@ export default function EnginePage() {
     setBranchCounter(1);
     setPendingBranchParentFrameId(null);
     setModelSnapshots([]);
+    setAssistReviews([]);
+    setEditingAssistId(null);
+    setActiveAssistTarget(null);
     await refreshSessions();
   }
 
@@ -2204,11 +2334,18 @@ export default function EnginePage() {
     const costs = RISK_POSTURES[frameDraft.risk_posture];
     const framePayload = buildFramePayloadFromDraft(frameDraft);
     framePayload.text = text;
+    const assistAcceptances = await transitionAssistDispositions((target) =>
+      assistTargetTextFromFramePayload(target, framePayload as Record<string, unknown>),
+    );
+    if (assistAcceptances === null) {
+      return;
+    }
 
     const locked = await lockOperatorFrame({
       family,
       governance: { c_fp: costs.c_fp, c_fn: costs.c_fn },
       frame: framePayload as EngineFrame & { text: string },
+      assist_acceptances: assistAcceptances,
     });
     if (!locked) {
       return;
@@ -2236,6 +2373,7 @@ export default function EnginePage() {
 
     setFrameLocked(true);
     setFrameCollapsed(true);
+    clearRecordedAssistReviews(FRAME_ASSIST_TARGETS);
     resetDownstreamStages();
     setPendingBranchParentFrameId(null);
     await refreshSessions();
@@ -2533,9 +2671,17 @@ export default function EnginePage() {
       setLocalError("Choose recommend action or hold before committing.");
       return;
     }
+    const thresholdAssistTargets = new Set<OperatorAssistTarget>(["threshold.hold_reason"]);
+    const thresholdAssistAcceptances = await transitionAssistDispositions((target) =>
+      target === "threshold.hold_reason" ? thresholdHoldReason : null,
+    );
+    if (thresholdAssistAcceptances === null) {
+      return;
+    }
     const thresholdSet = await setOperatorThresholdDecision({
       decision: thresholdDecision,
       hold_reason: thresholdHoldReason,
+      assist_acceptances: thresholdAssistAcceptances,
     });
     if (!thresholdSet) {
       return;
@@ -2546,14 +2692,26 @@ export default function EnginePage() {
       pushPosteriorMessage("nepsis", rejection);
       return;
     }
+    const reviewsAfterThreshold = assistReviews.filter(
+      (review) => review.uiStatus !== "rejected" && !thresholdAssistTargets.has(review.target),
+    );
+    clearRecordedAssistReviews(thresholdAssistTargets);
     const payload = buildNextFramePayload(nextFrameDraft);
     if (!payload.text) {
       setLocalError("Next-frame text is required to commit.");
       return;
     }
+    const commitAssistAcceptances = await transitionAssistDispositions(
+      (target) => (target === "next_frame.text" && typeof payload.text === "string" ? payload.text : null),
+      reviewsAfterThreshold,
+    );
+    if (commitAssistAcceptances === null) {
+      return;
+    }
 
     const committed = await commitOperatorIteration({
       carry_forward_frame: payload,
+      assist_acceptances: commitAssistAcceptances,
     });
     if (!committed) {
       return;
@@ -2593,6 +2751,9 @@ export default function EnginePage() {
       blue_goals: readRationaleSegment(updatedFrame.rationale_for_change, "Blue channel") || prev.blue_goals,
     }));
     setNextFrameDraft(hydrateNextFrameDraft(updatedFrame));
+    setAssistReviews([]);
+    setActiveAssistTarget(null);
+    setEditingAssistId(null);
     setFrameLocked(false);
     setFrameCollapsed(false);
     resetDownstreamStages();
@@ -2738,6 +2899,118 @@ export default function EnginePage() {
   const selectedPacketResult = asRecord(selectedPacket?.result);
   const selectedPacketState = asRecord(selectedPacket?.state);
   const selectedPacketCarry = asRecord(selectedPacket?.carry_forward);
+
+  function assistButton(target: OperatorAssistTarget, label: string, disabled = false) {
+    const busy = modelAssistBusy && activeAssistTarget === target;
+    return (
+      <button
+        type="button"
+        aria-label={`Assist ${label}`}
+        onClick={() => void requestFieldAssist(target)}
+        disabled={disabled || modelAssistBusy}
+        className="mt-1 rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted hover:border-nepsis-accent hover:text-nepsis-text disabled:opacity-50"
+      >
+        {busy ? "Working..." : `Assist ${label}`}
+      </button>
+    );
+  }
+
+  function assistReviewPanel() {
+    if (!liveOperatorSurface || (!modelAssistOpen && assistReviews.length === 0)) {
+      return null;
+    }
+    return (
+      <section
+        id="operator-assist-review"
+        className="rounded-2xl border border-nepsis-border bg-nepsis-panel p-4"
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Model Assist Review</h2>
+            <p className="text-xs text-nepsis-muted">
+              Field suggestions stay advisory until accepted, edited, or rejected.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setModelAssistOpen(false)}
+            className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs hover:border-nepsis-accent"
+          >
+            Hide
+          </button>
+        </div>
+        {assistReviews.length === 0 ? (
+          <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs text-nepsis-muted">
+            No model suggestions waiting for review.
+          </div>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {assistReviews.map((review) => {
+              const editing = editingAssistId === review.id;
+              const value = review.editedValue ?? canonicalFieldText(review.proposedValue);
+              return (
+                <div key={review.id} className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-nepsis-text">{review.title}</div>
+                      <div className="mt-1 text-nepsis-muted">
+                        {targetLabel(review.target)} · {review.uiStatus}
+                      </div>
+                    </div>
+                    <span className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted">
+                      {review.model}
+                    </span>
+                  </div>
+                  {editing ? (
+                    <textarea
+                      aria-label="Edit suggestion"
+                      className="mt-2 w-full rounded-lg border border-nepsis-border bg-black/30 p-2 text-nepsis-text"
+                      rows={4}
+                      value={value}
+                      onChange={(event) => editAssist(review.id, event.target.value)}
+                    />
+                  ) : (
+                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-nepsis-border bg-black/30 p-2 text-nepsis-text">
+                      {value}
+                    </pre>
+                  )}
+                  {review.rationale ? <div className="mt-2 text-nepsis-muted">{review.rationale}</div> : null}
+                  {review.riskNote ? <div className="mt-1 text-amber-300">{review.riskNote}</div> : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyAssist(review)}
+                      disabled={review.uiStatus !== "draft"}
+                      className="rounded-full bg-nepsis-accent px-3 py-1 text-xs font-semibold text-black disabled:opacity-50"
+                    >
+                      Accept suggestion
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingAssistId(review.id)}
+                      disabled={review.uiStatus !== "draft"}
+                      className="rounded-full border border-nepsis-border px-3 py-1 text-xs text-nepsis-muted hover:border-nepsis-accent disabled:opacity-50"
+                    >
+                      Edit before accepting
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => rejectAssist(review.id)}
+                      disabled={review.uiStatus !== "draft"}
+                      className="rounded-full border border-nepsis-border px-3 py-1 text-xs text-nepsis-muted hover:border-nepsis-accent disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   const publicMode = publicSiteMode();
 
   if (publicMode && authSession === null) {
@@ -2997,6 +3270,8 @@ export default function EnginePage() {
         </div>
       )}
 
+      {assistReviewPanel()}
+
       {(unresolvedBlocks.length > 0 || unresolvedWarnings.length > 0) && (
         <section
           className={`rounded-xl border px-3 py-3 text-xs ${
@@ -3175,6 +3450,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
                 />
               </label>
+              {liveOperatorSurface ? assistButton("frame.text", "Frame question", frameLocked) : null}
 
               <div className="grid grid-cols-2 gap-2">
                 <label className="block text-xs text-nepsis-muted">
@@ -3232,10 +3508,11 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
               </label>
+              {liveOperatorSurface ? assistButton("frame.key_uncertainty", "Key uncertainty", frameLocked) : null}
 
               <div className="grid grid-cols-2 gap-2">
-                <label className="block text-xs text-nepsis-muted">
-                  Hard constraints (1/line)
+                <div className="block text-xs text-nepsis-muted">
+                  <label htmlFor="frame-constraints-hard">Hard constraints (1/line)</label>
                   <textarea
                     id="frame-constraints-hard"
                     value={frameDraft.constraints_hard_text}
@@ -3248,10 +3525,12 @@ export default function EnginePage() {
                     rows={4}
                     className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                   />
-                </label>
-                <label className="block text-xs text-nepsis-muted">
-                  Soft constraints (1/line)
+                  {liveOperatorSurface ? assistButton("frame.constraints_hard", "Hard constraints", frameLocked) : null}
+                </div>
+                <div className="block text-xs text-nepsis-muted">
+                  <label htmlFor="frame-constraints-soft">Soft constraints (1/line)</label>
                   <textarea
+                    id="frame-constraints-soft"
                     value={frameDraft.constraints_soft_text}
                     onChange={(event) =>
                       setFrameDraft((prev) => ({
@@ -3262,7 +3541,8 @@ export default function EnginePage() {
                     rows={4}
                     className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                   />
-                </label>
+                  {liveOperatorSurface ? assistButton("frame.constraints_soft", "Soft constraints", frameLocked) : null}
+                </div>
               </div>
 
               <label className="block text-xs text-nepsis-muted">
@@ -3275,6 +3555,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
               </label>
+              {liveOperatorSurface ? assistButton("frame.red_definition", "RED channel definition", frameLocked) : null}
               <label className="block text-xs text-nepsis-muted">
                 Blue channel goals
                 <textarea
@@ -3285,6 +3566,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
               </label>
+              {liveOperatorSurface ? assistButton("frame.blue_goals", "BLUE channel goals", frameLocked) : null}
 
               <label className="block text-xs text-nepsis-muted">
                 Risk posture
@@ -3308,6 +3590,13 @@ export default function EnginePage() {
           )}
 
           <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => highlightAndScroll(nextIncompleteFrameTarget(frameDraft))}
+              className="rounded-full border border-nepsis-border px-3 py-1.5 text-xs text-nepsis-muted hover:border-nepsis-accent hover:text-nepsis-text"
+            >
+              Next box
+            </button>
             {!frameLocked ? (
               <button
                 onClick={() => void handleLockFrame()}
@@ -3650,6 +3939,9 @@ export default function EnginePage() {
                       placeholder="Required when decision is hold."
                       className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
                     />
+                    {liveOperatorSurface
+                      ? assistButton("threshold.hold_reason", "Hold rationale", !reportLocked)
+                      : null}
                   </label>
                 </div>
               </div>
@@ -3744,12 +4036,14 @@ export default function EnginePage() {
               <label className="block text-xs text-nepsis-muted">
                 Next frame text
                 <textarea
+                  id="next-frame-text"
                   value={nextFrameDraft.text}
                   onChange={(event) => setNextFrameDraft((prev) => ({ ...prev, text: event.target.value }))}
                   rows={3}
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
                 />
               </label>
+              {liveOperatorSurface ? assistButton("next_frame.text", "Next frame text", !reportLocked) : null}
 
               <label className="block text-xs text-nepsis-muted">
                 Rationale for change
@@ -4042,54 +4336,6 @@ export default function EnginePage() {
             </div>
           )}
         </section>
-      )}
-
-      {modelAssistOpen && (
-        <div className="fixed inset-0 z-50">
-          <button
-            aria-label="Close model assist overlay"
-            onClick={() => setModelAssistOpen(false)}
-            className="absolute inset-0 bg-black/60"
-          />
-          <aside className="absolute right-0 top-0 h-full w-full max-w-md border-l border-nepsis-border bg-nepsis-panel p-4 shadow-2xl shadow-black/60">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold">Live Model Assist</h2>
-                <p className="text-xs text-nepsis-muted">
-                  Authenticated server-side model call. Review gates before commitment.
-                </p>
-              </div>
-              <button
-                onClick={() => setModelAssistOpen(false)}
-                className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs hover:border-nepsis-accent"
-              >
-                Close
-              </button>
-            </div>
-            <label className="block text-xs text-nepsis-muted">
-              Model prompt
-              <textarea
-                value={modelAssistInput}
-                onChange={(event) => setModelAssistInput(event.target.value)}
-                rows={5}
-                disabled={modelAssistBusy}
-                className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs text-nepsis-text"
-              />
-            </label>
-            <button
-              onClick={() => void handleDraftFrameWithModel()}
-              disabled={modelAssistBusy || !modelAssistInput.trim()}
-              className="mt-3 rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
-            >
-              {modelAssistBusy ? "Drafting..." : "Draft Frame"}
-            </button>
-            {modelAssistLast && (
-              <pre className="mt-3 max-h-72 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[11px] text-nepsis-muted">
-                {JSON.stringify(modelAssistLast, null, 2)}
-              </pre>
-            )}
-          </aside>
-        </div>
       )}
 
       {sandboxOpen && (

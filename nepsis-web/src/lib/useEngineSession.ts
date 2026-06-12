@@ -500,7 +500,9 @@ export function useEngineSession() {
   }, [applyOperatorResult, run, state.operatorPacket]);
 
   const lockOperatorFrame = useCallback(
-    async (payload: EngineOperatorFramePayload): Promise<EngineOperatorResult | undefined> => {
+    async (
+      payload: EngineOperatorFramePayload & { assist_acceptances?: EngineAssistDisposition[] },
+    ): Promise<EngineOperatorResult | undefined> => {
       const result = await run(async () => {
         const packet =
           state.operatorPacket ??
