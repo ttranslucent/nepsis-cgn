@@ -122,11 +122,13 @@ def test_operator_frontend_uses_packet_proxy_routes() -> None:
     root = ROOT / "nepsis-web" / "src"
     client = (root / "lib" / "engineClient.ts").read_text(encoding="utf-8")
     hook = (root / "lib" / "useEngineSession.ts").read_text(encoding="utf-8")
+    page = (root / "app" / "engine" / "page.tsx").read_text(encoding="utf-8")
     assert "/operator-packet/start" in client
     assert "/operator-packet/frame" in client
     assert "/operator/frame" not in client
     assert "operatorPacket" in hook
     assert "operatorPacketToResponse" in hook
+    assert "assist_acceptances" in page
 
 
 def test_operator_model_route_is_field_level_and_excludes_threshold_decision() -> None:
@@ -140,6 +142,16 @@ def test_operator_model_route_is_field_level_and_excludes_threshold_decision() -
     assert "threshold.decision" not in text
     assert "target: requestedTarget" in text
     assert "frameDraft" not in text
+
+
+def test_guided_operator_completion_does_not_touch_public_mvp() -> None:
+    mvp_page = (ROOT / "nepsis-web" / "src" / "app" / "mvp" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "requestOperatorModel" not in mvp_page
+    assert "/api/operator/model" not in mvp_page
+    assert "Run Demo" in mvp_page
+    assert "Model-free deterministic run" in mvp_page
 
 
 def test_public_mvp_fallback_discloses_reason() -> None:
