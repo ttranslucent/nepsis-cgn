@@ -126,6 +126,59 @@ For the frozen public `/mvp` deployment, use
 mode disabled. Do not use `NEPSIS_API_ALLOWED_ORIGINS=*` in public or operator
 runtime environments.
 
+## Guided Operator Completion
+
+Guided completion is an authenticated `/operator` workflow. It is not part of
+the public deterministic `/mvp` demo.
+
+The operator moves through explicit boxes:
+
+1. Frame question.
+2. Key uncertainty.
+3. Hard constraints.
+4. Soft constraints.
+5. RED channel definition.
+6. BLUE channel goals.
+7. Report observations, generated and reviewed through the engine report path.
+8. Threshold decision and hold rationale.
+9. Carry-forward next frame.
+
+Each assist button asks the server-side model for one field only. The model can
+suggest text; it cannot lock a frame, run a report, lock a report, set a
+threshold, or commit an iteration. The operator must accept, edit, or reject a
+suggestion before it can influence packet state.
+
+The threshold decision itself has no assist target. The model may draft hold
+rationale; the proceed/hold decision belongs to the operator. This is enforced
+in the TypeScript target union, the model route allowlist, and the UI.
+
+### Assist Provenance
+
+Accepted and edited suggestions are sent as `assist_acceptances` on the next
+packet transition. Each entry carries a SHA-256 hash of the model proposal and,
+for accepted or edited dispositions, a SHA-256 hash of the final field value.
+The backend recomputes the final hash from the field being locked and rejects
+the transition on mismatch.
+
+- `accepted` means the final field is byte-identical to the model proposal.
+- `edited` means the operator changed the proposal before the packet transition.
+- `rejected` records that a suggestion was offered and declined; rejected
+  entries carry the proposal hash only and are recorded on the next successful
+  transition.
+
+Verification proves the committed field matches the hashed final value. It does
+not prove that the proposed value originated from the model route rather than a
+client claim. Closing that remaining gap would require the model route to sign
+or persist proposal hashes for later packet verification.
+
+Rejected suggestions are recorded only if a later packet transition occurs. If
+the operator rejects suggestions and abandons the packet before any transition,
+those rejection records are not preserved in the packet trace.
+
+Completion is defined by packet gates, not model confidence: frame gate before
+frame lock, report lock before threshold review, threshold gate before commit,
+and commit opens the carry-forward frame for the next loop.
+
 ## Public Site Smoke
 
 After Vercel and Render are connected:

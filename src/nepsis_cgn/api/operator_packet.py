@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any
@@ -92,7 +93,12 @@ def lock_frame(
     governance_costs: dict[str, Any] | None = None,
     governance_calibration: dict[str, Any] | None = None,
     manifest_path: str | None = None,
+    assist_acceptances: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    accepted_assists = _normalize_assist_acceptances(
+        assist_acceptances,
+        final_values=_frame_assist_values(frame),
+    )
     svc = _service_from_packet(packet)
     resolved_family = family or _packet_family(packet)
     resolved_governance = governance_costs if governance_costs is not None else _packet_governance(packet)
@@ -118,6 +124,7 @@ def lock_frame(
             "governance_costs": resolved_governance,
             "governance_calibration": resolved_calibration,
             "manifest_path": resolved_manifest,
+            "assist_acceptances": accepted_assists,
         },
     )
     return _packet_from_transition(packet, result, trace)
@@ -156,12 +163,21 @@ def set_threshold_decision(
     packet: dict[str, Any],
     decision: str,
     hold_reason: str = "",
+    assist_acceptances: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    accepted_assists = _normalize_assist_acceptances(
+        assist_acceptances,
+        final_values=_threshold_assist_values(hold_reason),
+    )
     svc = _service_from_packet(packet)
     result = svc.operator_set_threshold_decision(decision=decision, hold_reason=hold_reason)
     if _is_rejection(result):
         return _stateless_rejection(result)
-    trace = _append_trace(packet, "SET_THRESHOLD_DECISION", {"decision": decision, "hold_reason": hold_reason})
+    trace = _append_trace(
+        packet,
+        "SET_THRESHOLD_DECISION",
+        {"decision": decision, "hold_reason": hold_reason, "assist_acceptances": accepted_assists},
+    )
     return _packet_from_transition(packet, result, trace)
 
 
@@ -169,7 +185,12 @@ def commit_iteration(
     *,
     packet: dict[str, Any],
     carry_forward_frame: dict[str, Any] | None = None,
+    assist_acceptances: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    accepted_assists = _normalize_assist_acceptances(
+        assist_acceptances,
+        final_values=_commit_assist_values(carry_forward_frame),
+    )
     if _packet_phase(packet) == "threshold_set":
         missing_events = _missing_commit_trace_events(packet)
         if missing_events:
@@ -184,7 +205,11 @@ def commit_iteration(
     result = svc.operator_commit_iteration(carry_forward_frame=carry_forward_frame)
     if _is_rejection(result):
         return _stateless_rejection(result)
-    trace = _append_trace(packet, "COMMIT_ITERATION", {"carry_forward_frame": carry_forward_frame})
+    trace = _append_trace(
+        packet,
+        "COMMIT_ITERATION",
+        {"carry_forward_frame": carry_forward_frame, "assist_acceptances": accepted_assists},
+    )
     committed_packet = _json_copy(result.get("packet"))
     session = _transition_session(result)
     return _packet(
@@ -244,6 +269,139 @@ def packet_hash(packet: dict[str, Any] | None) -> str | None:
         return None
     raw = json.dumps(packet, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+_ASSIST_ACCEPTANCE_MAX_ITEMS = 16
+_ASSIST_ACCEPTANCE_MAX_TEXT = 1000
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_ASSIST_DISPOSITIONS = {"accepted", "edited", "rejected"}
+_ASSIST_TARGETS = {
+    "frame.text",
+    "frame.key_uncertainty",
+    "frame.constraints_hard",
+    "frame.constraints_soft",
+    "frame.red_definition",
+    "frame.blue_goals",
+    "threshold.hold_reason",
+    "next_frame.text",
+}
+
+
+def _sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _bounded_string(value: Any, *, max_len: int = _ASSIST_ACCEPTANCE_MAX_TEXT, field: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    resolved = value.strip()
+    if len(resolved) > max_len:
+        raise ValueError(f"{field} exceeds maximum length of {max_len}")
+    return resolved
+
+
+def _required_hash(value: Any, *, field: str) -> str:
+    resolved = _bounded_string(value, max_len=64, field=field)
+    if not _SHA256_HEX_RE.match(resolved):
+        raise ValueError(f"{field} must be a 64-character lowercase sha256 hex digest")
+    return resolved
+
+
+def _read_rationale_segment(rationale: Any, label: str) -> str:
+    if not isinstance(rationale, str):
+        return ""
+    match = re.search(rf"(?:^|\|\s*){re.escape(label)}:\s*([^|]*)", rationale)
+    return match.group(1).strip() if match else ""
+
+
+def _canonical_assist_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value)
+    return None
+
+
+def _frame_assist_values(frame: dict[str, Any] | None, *, prefix: str = "frame") -> dict[str, str]:
+    if not isinstance(frame, dict):
+        return {}
+    values: dict[str, str] = {}
+    for target, key in {
+        f"{prefix}.text": "text",
+        f"{prefix}.constraints_hard": "constraints_hard",
+        f"{prefix}.constraints_soft": "constraints_soft",
+    }.items():
+        resolved = _canonical_assist_text(frame.get(key))
+        if resolved is not None:
+            values[target] = resolved
+    rationale = frame.get("rationale_for_change")
+    values[f"{prefix}.key_uncertainty"] = _read_rationale_segment(rationale, "Uncertainty")
+    values[f"{prefix}.red_definition"] = _read_rationale_segment(rationale, "Red channel")
+    values[f"{prefix}.blue_goals"] = _read_rationale_segment(rationale, "Blue channel")
+    return values
+
+
+def _threshold_assist_values(hold_reason: str) -> dict[str, str]:
+    return {"threshold.hold_reason": hold_reason}
+
+
+def _commit_assist_values(carry_forward_frame: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(carry_forward_frame, dict):
+        return {}
+    text = _canonical_assist_text(carry_forward_frame.get("text"))
+    return {"next_frame.text": text} if text is not None else {}
+
+
+def _normalize_assist_acceptances(
+    value: Any,
+    *,
+    final_values: dict[str, str],
+) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("assist_acceptances must be a list when provided")
+    if len(value) > _ASSIST_ACCEPTANCE_MAX_ITEMS:
+        raise ValueError(f"assist_acceptances exceeds {_ASSIST_ACCEPTANCE_MAX_ITEMS} entries")
+
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("assist_acceptances entries must be objects")
+        target = _bounded_string(item.get("target"), max_len=120, field="assist target")
+        disposition = _bounded_string(item.get("disposition"), max_len=40, field="assist disposition")
+        if target not in _ASSIST_TARGETS:
+            raise ValueError(f"unsupported assist target: {target}")
+        if disposition not in _ASSIST_DISPOSITIONS:
+            raise ValueError("assist disposition must be accepted, edited, or rejected")
+
+        proposed_hash = _required_hash(item.get("proposed_value_hash"), field="proposed_value_hash")
+        final_hash = ""
+        if disposition in {"accepted", "edited"}:
+            if target not in final_values:
+                raise ValueError(f"assist target {target!r} is not part of this transition")
+            final_hash = _required_hash(item.get("final_value_hash"), field="final_value_hash")
+            actual_hash = _sha256_hex(final_values[target])
+            if actual_hash != final_hash:
+                raise ValueError(f"assist final_value_hash mismatch for {target}")
+            if disposition == "accepted" and proposed_hash != final_hash:
+                raise ValueError("accepted assist hashes diverge; use disposition=edited")
+            if disposition == "edited" and proposed_hash == final_hash:
+                raise ValueError("edited assist hashes match; use disposition=accepted")
+
+        normalized.append(
+            {
+                "target": target,
+                "source": _bounded_string(item.get("source"), max_len=80, field="assist source")
+                or "model_suggestion",
+                "model": _bounded_string(item.get("model"), max_len=120, field="assist model"),
+                "disposition": disposition,
+                "proposed_value_hash": proposed_hash,
+                "final_value_hash": final_hash,
+                "summary": _bounded_string(item.get("summary"), field="assist summary"),
+            }
+        )
+    return normalized
 
 
 def _packet(

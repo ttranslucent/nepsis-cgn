@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import threading
@@ -46,6 +47,24 @@ def _stop_test_server(httpd: api_server.ThreadingHTTPServer, thread: threading.T
     httpd.shutdown()
     httpd.server_close()
     thread.join(timeout=2)
+
+
+def _h(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _post_json(port: int, path: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request(
+        "POST",
+        path,
+        body=json.dumps(payload),
+        headers={"Content-Type": "application/json"},
+    )
+    response = conn.getresponse()
+    body = response.read()
+    conn.close()
+    return response.status, json.loads(body.decode("utf-8"))
 
 
 def test_bind_error_message_contains_actionable_steps() -> None:
@@ -503,28 +522,16 @@ def test_http_operator_phase_rejection_returns_409(monkeypatch) -> None:
 def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
     monkeypatch.setattr(api_server, "API", EngineApiService())
-
-    def post_json(port: int, path: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        conn.request(
-            "POST",
-            path,
-            body=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
-        )
-        response = conn.getresponse()
-        body = response.read()
-        conn.close()
-        return response.status, json.loads(body.decode("utf-8"))
+    hard_text = "Maintain RED before BLUE sequencing."
 
     httpd, thread, port = _start_test_server()
     try:
-        status, packet = post_json(port, "/v1/operator-packet/start", {})
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
         assert status == 200
         assert packet["schema_id"] == "nepsis.operator_packet"
         assert packet["phase"] == "frame_draft"
 
-        status, packet = post_json(
+        status, packet = _post_json(
             port,
             "/v1/operator-packet/frame",
             {
@@ -541,17 +548,29 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
                         "Blue channel: minimize unnecessary disruption | "
                         "Uncertainty: first report quality"
                     ),
-                    "constraints_hard": ["Maintain RED before BLUE sequencing."],
+                    "constraints_hard": [hard_text],
                     "constraints_soft": ["Keep the audit trace concise."],
                 },
+                "assist_acceptances": [
+                    {
+                        "target": "frame.constraints_hard",
+                        "source": "model_suggestion",
+                        "model": "gpt-4.1-mini",
+                        "disposition": "accepted",
+                        "proposed_value_hash": _h(hard_text),
+                        "final_value_hash": _h(hard_text),
+                        "summary": "Preserve sequencing.",
+                    }
+                ],
             },
         )
         assert status == 200
         assert packet["phase"] == "frame_locked"
         assert [entry["event"] for entry in packet["audit_trace"]] == ["LOCK_FRAME"]
+        assert packet["audit_trace"][-1]["arguments"]["assist_acceptances"][0]["target"] == "frame.constraints_hard"
 
         restored = json.loads(json.dumps(packet))
-        status, packet = post_json(
+        status, packet = _post_json(
             port,
             "/v1/operator-packet/report",
             {
@@ -571,11 +590,11 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
         assert packet["phase"] == "report_evaluated"
         assert packet["latest_step"]["governance"]["warning_level"] == "red"
 
-        status, packet = post_json(port, "/v1/operator-packet/report/lock", {"packet": packet})
+        status, packet = _post_json(port, "/v1/operator-packet/report/lock", {"packet": packet})
         assert status == 200
         assert packet["phase"] == "report_locked"
 
-        status, packet = post_json(
+        status, packet = _post_json(
             port,
             "/v1/operator-packet/threshold",
             {
@@ -587,7 +606,7 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
         assert status == 200
         assert packet["phase"] == "threshold_set"
 
-        status, committed = post_json(
+        status, committed = _post_json(
             port,
             "/v1/operator-packet/commit",
             {
@@ -607,6 +626,116 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
     assert committed["audit_trace"] == []
     assert committed["previous_trace"][-1]["event"] == "COMMIT_ITERATION"
     assert committed["last_commit_packet"]["schema_id"] == "nepsis.operator_audit_packet"
+
+
+def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, result = _post_json(
+            port,
+            "/v1/operator-packet/frame",
+            {
+                "packet": packet,
+                "family": "safety",
+                "frame": {
+                    "text": "Decide whether to escalate response.",
+                    "objective_type": "decide",
+                    "domain": "safety",
+                    "time_horizon": "short",
+                    "rationale_for_change": (
+                        "Red channel: avoid missing harm | "
+                        "Blue channel: minimize disruption | "
+                        "Uncertainty: signal quality"
+                    ),
+                    "constraints_hard": ["Maintain RED before BLUE sequencing."],
+                    "constraints_soft": ["Keep the audit trace concise."],
+                },
+                "assist_acceptances": [
+                    {
+                        "target": "frame.constraints_hard",
+                        "disposition": "accepted",
+                        "proposed_value_hash": _h("wrong"),
+                        "final_value_hash": _h("wrong"),
+                        "summary": "False claim.",
+                    }
+                ],
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert 400 <= status < 500
+    assert "final_value_hash mismatch" in json.dumps(result)
+
+
+def test_http_operator_packet_threshold_rejects_wrong_assist_scope(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, packet = _post_json(
+            port,
+            "/v1/operator-packet/frame",
+            {
+                "packet": packet,
+                "family": "safety",
+                "frame": {
+                    "text": "Decide whether to escalate response.",
+                    "objective_type": "decide",
+                    "domain": "safety",
+                    "time_horizon": "short",
+                    "rationale_for_change": (
+                        "Red channel: avoid missing harm | "
+                        "Blue channel: minimize disruption | "
+                        "Uncertainty: signal quality"
+                    ),
+                    "constraints_hard": ["Maintain RED before BLUE sequencing."],
+                    "constraints_soft": ["Keep the audit trace concise."],
+                },
+            },
+        )
+        assert status == 200
+        status, packet = _post_json(
+            port,
+            "/v1/operator-packet/report",
+            {
+                "packet": packet,
+                "report_text": "obs: critical signal present\nobs: no policy violation",
+                "sign": {"critical_signal": True, "policy_violation": False},
+            },
+        )
+        assert status == 200
+        status, packet = _post_json(port, "/v1/operator-packet/report/lock", {"packet": packet})
+        assert status == 200
+        status, result = _post_json(
+            port,
+            "/v1/operator-packet/threshold",
+            {
+                "packet": packet,
+                "decision": "hold",
+                "hold_reason": "Collect one additional discriminator.",
+                "assist_acceptances": [
+                    {
+                        "target": "frame.text",
+                        "disposition": "accepted",
+                        "proposed_value_hash": _h("Decide whether to escalate response."),
+                        "final_value_hash": _h("Decide whether to escalate response."),
+                        "summary": "Wrong transition.",
+                    }
+                ],
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert 400 <= status < 500
+    assert "not part of this transition" in json.dumps(result)
 
 
 def test_stage_audit_http_post_route_accepts_context_payload(monkeypatch) -> None:

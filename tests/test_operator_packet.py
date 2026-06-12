@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 
 from nepsis_cgn.api.operator_packet import (
+    _read_rationale_segment,
     abandon_packet,
     commit_iteration,
     lock_frame,
@@ -40,6 +42,14 @@ def _report_interpretation() -> dict[str, object]:
         "contradictions_note": "",
         "contradiction_density": 0.0,
     }
+
+
+def _h(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _hard_text(frame: dict[str, object]) -> str:
+    return "\n".join(str(item) for item in frame["constraints_hard"])
 
 
 def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
@@ -234,6 +244,173 @@ def test_operator_packet_requires_configured_seal_secret_in_operator_mode(monkey
 
     with pytest.raises(ValueError, match="NEPSIS_OPERATOR_PACKET_SEAL_SECRET"):
         start_operator_packet()
+
+
+def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    hard_text = _hard_text(frame)
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=frame,
+        assist_acceptances=[
+            {
+                "target": "frame.constraints_hard",
+                "source": "model_suggestion",
+                "model": "gpt-4.1-mini",
+                "disposition": "accepted",
+                "proposed_value_hash": _h(hard_text),
+                "final_value_hash": _h(hard_text),
+                "summary": "Preserved RED-before-BLUE sequencing.",
+            }
+        ],
+    )
+
+    traced = locked["audit_trace"][-1]["arguments"]["assist_acceptances"]
+    assert locked["phase"] == "frame_locked"
+    assert traced[0]["target"] == "frame.constraints_hard"
+    assert traced[0]["disposition"] == "accepted"
+    assert traced[0]["final_value_hash"] == _h(hard_text)
+    assert locked["integrity"]["seal"]
+
+
+def test_assist_disposition_rejects_final_hash_mismatch() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+
+    with pytest.raises(ValueError, match="final_value_hash mismatch"):
+        lock_frame(
+            packet=packet,
+            family="safety",
+            frame=frame,
+            assist_acceptances=[
+                {
+                    "target": "frame.constraints_hard",
+                    "disposition": "accepted",
+                    "proposed_value_hash": _h("not the field"),
+                    "final_value_hash": _h("not the field"),
+                    "summary": "False claim.",
+                }
+            ],
+        )
+
+
+def test_assist_disposition_rejects_accepted_when_hashes_diverge() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+
+    with pytest.raises(ValueError, match="use disposition=edited"):
+        lock_frame(
+            packet=packet,
+            family="safety",
+            frame=frame,
+            assist_acceptances=[
+                {
+                    "target": "frame.constraints_hard",
+                    "disposition": "accepted",
+                    "proposed_value_hash": _h("original suggestion"),
+                    "final_value_hash": _h(_hard_text(frame)),
+                    "summary": "Edited but labeled accepted.",
+                }
+            ],
+        )
+
+
+def test_assist_disposition_rejects_overflow_instead_of_truncating() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    too_many = [
+        {
+            "target": "frame.text",
+            "disposition": "rejected",
+            "proposed_value_hash": _h(str(i)),
+            "summary": str(i),
+        }
+        for i in range(17)
+    ]
+
+    with pytest.raises(ValueError, match="exceeds"):
+        lock_frame(packet=packet, family="safety", frame=frame, assist_acceptances=too_many)
+
+
+def test_assist_disposition_resolves_rationale_segments() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    red = _read_rationale_segment(frame["rationale_for_change"], "Red channel")
+
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=frame,
+        assist_acceptances=[
+            {
+                "target": "frame.red_definition",
+                "disposition": "edited",
+                "proposed_value_hash": _h("avoid missing harm"),
+                "final_value_hash": _h(red),
+                "summary": "Tightened RED definition.",
+            }
+        ],
+    )
+
+    assert locked["audit_trace"][-1]["arguments"]["assist_acceptances"][0]["final_value_hash"] == _h(red)
+
+
+def test_assist_disposition_rejects_target_outside_transition_scope() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+
+    with pytest.raises(ValueError, match="not part of this transition"):
+        lock_frame(
+            packet=packet,
+            family="safety",
+            frame=frame,
+            assist_acceptances=[
+                {
+                    "target": "threshold.hold_reason",
+                    "disposition": "accepted",
+                    "proposed_value_hash": _h("collect one more discriminator"),
+                    "final_value_hash": _h("collect one more discriminator"),
+                    "summary": "Wrong transition.",
+                }
+            ],
+        )
+
+
+def test_assist_disposition_records_rejected_without_final_hash() -> None:
+    packet = start_operator_packet()
+    frame = _operator_frame()
+
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=frame,
+        assist_acceptances=[
+            {
+                "target": "next_frame.text",
+                "disposition": "rejected",
+                "proposed_value_hash": _h("carry this forward later"),
+                "summary": "Declined carry-forward suggestion.",
+            }
+        ],
+    )
+
+    traced = locked["audit_trace"][-1]["arguments"]["assist_acceptances"][0]
+    assert traced["target"] == "next_frame.text"
+    assert traced["disposition"] == "rejected"
+    assert traced["final_value_hash"] == ""
+
+
+def test_assist_rationale_segment_vectors_are_exact_case_and_pipe_delimited() -> None:
+    rationale = "Red channel: avoid harm | Blue channel: move carefully | Uncertainty: report quality"
+
+    assert _read_rationale_segment(rationale, "Red channel") == "avoid harm"
+    assert _read_rationale_segment(rationale, "Blue channel") == "move carefully"
+    assert _read_rationale_segment(rationale, "Uncertainty") == "report quality"
+    assert _read_rationale_segment("red channel: avoid harm | Blue channel: x", "Red channel") == ""
+    assert _read_rationale_segment("Red channel: avoid | embedded pipe | Blue channel: x", "Red channel") == "avoid"
+    assert _read_rationale_segment("Red channel: avoid harm", "Uncertainty") == ""
 
 
 def test_stateless_operator_packet_abandon_returns_noncommitted_fragment() -> None:

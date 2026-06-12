@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
@@ -12,19 +13,23 @@ import { requireCsrfToken } from "@/lib/requestSecurity";
 
 export const runtime = "nodejs";
 
-const MODES = new Set(["draft_frame", "interpret_report", "threshold_review"]);
+const MODES = new Set(["suggest_field", "review_completion"]);
+const TARGETS = new Set([
+  "frame.text",
+  "frame.key_uncertainty",
+  "frame.constraints_hard",
+  "frame.constraints_soft",
+  "frame.red_definition",
+  "frame.blue_goals",
+  "threshold.hold_reason",
+  "next_frame.text",
+]);
 
-function systemPrompt(mode: string): string {
+function systemPrompt(mode: string, target: string): string {
   const base =
     "You are assisting a NepsisCGN operator. Preserve RED before BLUE. " +
-    "Do not make final commitments. Return compact JSON only.";
-  if (mode === "draft_frame") {
-    return `${base} JSON shape: {"frameDraft":{"text":"","objective_type":"decide","domain":"","time_horizon":"short","key_uncertainty":"","constraints_hard":[],"constraints_soft":[],"red_definition":"","blue_goals":""},"outputText":""}`;
-  }
-  if (mode === "interpret_report") {
-    return `${base} JSON shape: {"reportNotes":"","outputText":""}`;
-  }
-  return `${base} JSON shape: {"thresholdNote":"","outputText":""}`;
+    "Do not make final commitments. Suggest only the requested field. Return compact JSON only.";
+  return `${base} Mode: ${mode}. Requested field: ${target}. JSON shape: {"suggestions":[{"title":"","proposedValue":"","rationale":"","riskNote":""}],"outputText":""}`;
 }
 
 function parseObject(text: string): Record<string, unknown> {
@@ -36,26 +41,29 @@ function parseObject(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+function canonicalNonEmpty(value: string | string[]): boolean {
+  return Array.isArray(value) ? value.some((item) => item.trim()) : Boolean(value.trim());
 }
 
-function frameDraft(value: unknown) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  return {
-    text: typeof record.text === "string" ? record.text : "",
-    objective_type: typeof record.objective_type === "string" ? record.objective_type : "decide",
-    domain: typeof record.domain === "string" ? record.domain : "general",
-    time_horizon: typeof record.time_horizon === "string" ? record.time_horizon : "short",
-    key_uncertainty: typeof record.key_uncertainty === "string" ? record.key_uncertainty : "",
-    constraints_hard: stringArray(record.constraints_hard),
-    constraints_soft: stringArray(record.constraints_soft),
-    red_definition: typeof record.red_definition === "string" ? record.red_definition : "",
-    blue_goals: typeof record.blue_goals === "string" ? record.blue_goals : "",
-  };
+function normalizeSuggestions(value: unknown, requestedTarget: string) {
+  const rows = Array.isArray(value) ? value : [];
+  return rows
+    .filter((row): row is Record<string, unknown> =>
+      typeof row === "object" && row !== null && !Array.isArray(row),
+    )
+    .map((row) => ({
+      id: randomUUID(),
+      target: requestedTarget,
+      title: typeof row.title === "string" ? row.title : "Suggestion",
+      proposedValue: Array.isArray(row.proposedValue)
+        ? row.proposedValue.filter((item): item is string => typeof item === "string")
+        : typeof row.proposedValue === "string"
+          ? row.proposedValue
+          : "",
+      rationale: typeof row.rationale === "string" ? row.rationale : "",
+      riskNote: typeof row.riskNote === "string" ? row.riskNote : "",
+    }))
+    .filter((row) => canonicalNonEmpty(row.proposedValue));
 }
 
 export async function POST(req: Request) {
@@ -90,6 +98,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null);
   const mode = typeof body?.mode === "string" ? body.mode : "";
+  const target = typeof body?.target === "string" ? body.target : "";
   const input = typeof body?.input === "string" ? body.input.trim() : "";
   const model =
     typeof body?.model === "string" && body.model.trim().length > 0
@@ -100,13 +109,17 @@ export async function POST(req: Request) {
   if (!MODES.has(mode)) {
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
   }
+  if (mode === "suggest_field" && !TARGETS.has(target)) {
+    return NextResponse.json({ error: "Invalid assist target" }, { status: 400 });
+  }
   if (!input) {
     return NextResponse.json({ error: "Input is required" }, { status: 400 });
   }
 
   try {
+    const requestedTarget = TARGETS.has(target) ? target : "frame.text";
     const prompt = [
-      `System:\n${systemPrompt(mode)}`,
+      `System:\n${systemPrompt(mode, requestedTarget)}`,
       `Operator input:\n${input}`,
       `Context JSON:\n${JSON.stringify(context)}`,
     ].join("\n\n");
@@ -122,9 +135,7 @@ export async function POST(req: Request) {
       mode,
       model,
       outputText,
-      frameDraft: mode === "draft_frame" ? frameDraft(parsed.frameDraft) : undefined,
-      reportNotes: typeof parsed.reportNotes === "string" ? parsed.reportNotes : undefined,
-      thresholdNote: typeof parsed.thresholdNote === "string" ? parsed.thresholdNote : undefined,
+      suggestions: normalizeSuggestions(parsed.suggestions, requestedTarget),
     });
   } catch (error) {
     return NextResponse.json(

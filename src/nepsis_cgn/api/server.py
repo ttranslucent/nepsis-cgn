@@ -546,6 +546,7 @@ class EngineApiHandler(BaseHTTPRequestHandler):
                 governance_costs=governance,
                 governance_calibration=calibration,
                 manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                assist_acceptances=body.get("assist_acceptances"),
             )
         )
 
@@ -578,7 +579,12 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if not isinstance(hold_reason, str):
             raise ValueError("hold_reason must be a string when provided")
         return self._record_stateless_packet_result(
-            set_operator_packet_threshold_decision(packet=packet, decision=decision, hold_reason=hold_reason)
+            set_operator_packet_threshold_decision(
+                packet=packet,
+                decision=decision,
+                hold_reason=hold_reason,
+                assist_acceptances=body.get("assist_acceptances"),
+            )
         )
 
     def _operator_packet_commit_iteration(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -587,7 +593,11 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
             raise ValueError("carry_forward_frame must be an object when provided")
         return self._record_stateless_packet_result(
-            commit_iteration(packet=packet, carry_forward_frame=carry_forward_frame)
+            commit_iteration(
+                packet=packet,
+                carry_forward_frame=carry_forward_frame,
+                assist_acceptances=body.get("assist_acceptances"),
+            )
         )
 
     def _operator_packet_abandon(self, body: dict[str, Any]) -> dict[str, Any]:

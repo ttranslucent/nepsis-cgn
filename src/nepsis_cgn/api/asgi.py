@@ -233,6 +233,7 @@ def create_app():
                         governance_costs=governance,
                         governance_calibration=calibration,
                         manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                        assist_acceptances=body.get("assist_acceptances"),
                     ),
                     request,
                 )
@@ -297,6 +298,7 @@ def create_app():
                         packet=_required_operator_packet(body),
                         decision=decision,
                         hold_reason=hold_reason,
+                        assist_acceptances=body.get("assist_acceptances"),
                     ),
                     request,
                 )
@@ -316,6 +318,7 @@ def create_app():
                     commit_iteration(
                         packet=_required_operator_packet(body),
                         carry_forward_frame=carry_forward_frame,
+                        assist_acceptances=body.get("assist_acceptances"),
                     ),
                     request,
                 )
