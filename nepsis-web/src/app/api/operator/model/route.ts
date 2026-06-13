@@ -8,6 +8,11 @@ import {
   hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
 import { requireEngineControlAuth } from "@/lib/engineApi";
+import {
+  hasConfiguredProposalReceiptSecret,
+  sha256Hex,
+  signOperatorProposalReceipt,
+} from "@/lib/operatorProposalReceipt";
 import { modelRoutesEnabled } from "@/lib/publicMode";
 import { requireCsrfToken } from "@/lib/requestSecurity";
 
@@ -45,24 +50,40 @@ function canonicalNonEmpty(value: string | string[]): boolean {
   return Array.isArray(value) ? value.some((item) => item.trim()) : Boolean(value.trim());
 }
 
-function normalizeSuggestions(value: unknown, requestedTarget: string) {
+function canonicalProposalText(value: string | string[]): string {
+  return Array.isArray(value) ? value.join("\n") : value;
+}
+
+function normalizeSuggestions(value: unknown, requestedTarget: string, args: { mode: string; model: string; loopId: string }) {
   const rows = Array.isArray(value) ? value : [];
   return rows
     .filter((row): row is Record<string, unknown> =>
       typeof row === "object" && row !== null && !Array.isArray(row),
     )
-    .map((row) => ({
-      id: randomUUID(),
-      target: requestedTarget,
-      title: typeof row.title === "string" ? row.title : "Suggestion",
-      proposedValue: Array.isArray(row.proposedValue)
+    .map((row) => {
+      const proposedValue = Array.isArray(row.proposedValue)
         ? row.proposedValue.filter((item): item is string => typeof item === "string")
         : typeof row.proposedValue === "string"
           ? row.proposedValue
-          : "",
-      rationale: typeof row.rationale === "string" ? row.rationale : "",
-      riskNote: typeof row.riskNote === "string" ? row.riskNote : "",
-    }))
+          : "";
+      const proposedValueHash = sha256Hex(canonicalProposalText(proposedValue));
+      return {
+        id: randomUUID(),
+        target: requestedTarget,
+        title: typeof row.title === "string" ? row.title : "Suggestion",
+        proposedValue,
+        proposedValueHash,
+        proposalReceipt: signOperatorProposalReceipt({
+          mode: args.mode === "review_completion" ? "review_completion" : "suggest_field",
+          target: requestedTarget,
+          model: args.model,
+          loopId: args.loopId,
+          proposedValueHash,
+        }),
+        rationale: typeof row.rationale === "string" ? row.rationale : "",
+        riskNote: typeof row.riskNote === "string" ? row.riskNote : "",
+      };
+    })
     .filter((row) => canonicalNonEmpty(row.proposedValue));
 }
 
@@ -95,6 +116,15 @@ export async function POST(req: Request) {
       { status: 428 },
     );
   }
+  if (!hasConfiguredProposalReceiptSecret()) {
+    return NextResponse.json(
+      {
+        error: "Server proposal receipt secret required",
+        detail: "Configure NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET server-side.",
+      },
+      { status: 428 },
+    );
+  }
 
   const body = await req.json().catch(() => null);
   const mode = typeof body?.mode === "string" ? body.mode : "";
@@ -105,6 +135,7 @@ export async function POST(req: Request) {
       ? body.model.trim()
       : DEFAULT_OPENAI_MODEL;
   const context = typeof body?.context === "object" && body.context !== null ? body.context : {};
+  const operatorLoopId = typeof body?.operator_loop_id === "string" ? body.operator_loop_id.trim() : "";
 
   if (!MODES.has(mode)) {
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
@@ -114,6 +145,9 @@ export async function POST(req: Request) {
   }
   if (!input) {
     return NextResponse.json({ error: "Input is required" }, { status: 400 });
+  }
+  if (!operatorLoopId) {
+    return NextResponse.json({ error: "operator_loop_id is required" }, { status: 400 });
   }
 
   try {
@@ -135,7 +169,7 @@ export async function POST(req: Request) {
       mode,
       model,
       outputText,
-      suggestions: normalizeSuggestions(parsed.suggestions, requestedTarget),
+      suggestions: normalizeSuggestions(parsed.suggestions, requestedTarget, { mode, model, loopId: operatorLoopId }),
     });
   } catch (error) {
     return NextResponse.json(

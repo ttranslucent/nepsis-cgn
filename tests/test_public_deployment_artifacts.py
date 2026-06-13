@@ -60,6 +60,7 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
     assert public.get("NEPSIS_LIVE_OPERATOR_ENABLED", "") != "true"
     assert public.get("OPENAI_API_KEY", "") == ""
     assert public.get("NEPSIS_OPENAI_API_KEY", "") == ""
+    assert public.get("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", "") == ""
 
     assert operator["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE"] == "false"
     assert operator["NEPSIS_DEPLOYMENT_MODE"] == "operator"
@@ -74,6 +75,7 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
     assert operator["RESEND_API_KEY"]
     assert operator["NEPSIS_AUTH_FROM_EMAIL"]
     assert operator["OPENAI_API_KEY"]
+    assert operator["NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET"]
 
 
 def test_web_env_examples_are_linked_from_docs() -> None:
@@ -123,12 +125,16 @@ def test_operator_frontend_uses_packet_proxy_routes() -> None:
     client = (root / "lib" / "engineClient.ts").read_text(encoding="utf-8")
     hook = (root / "lib" / "useEngineSession.ts").read_text(encoding="utf-8")
     page = (root / "app" / "engine" / "page.tsx").read_text(encoding="utf-8")
+    operator_assist = (root / "app" / "engine" / "operatorAssist.ts").read_text(encoding="utf-8")
     assert "/operator-packet/start" in client
     assert "/operator-packet/frame" in client
     assert "/operator/frame" not in client
     assert "operatorPacket" in hook
     assert "operatorPacketToResponse" in hook
     assert "assist_acceptances" in page
+    assert "operatorPacket" in page
+    assert "operator_loop_id" in page
+    assert "proposal_receipt" in operator_assist
 
 
 def test_operator_model_route_is_field_level_and_excludes_threshold_decision() -> None:
@@ -142,6 +148,26 @@ def test_operator_model_route_is_field_level_and_excludes_threshold_decision() -
     assert "threshold.decision" not in text
     assert "target: requestedTarget" in text
     assert "frameDraft" not in text
+
+
+def test_operator_model_route_signs_packet_bound_proposal_receipts() -> None:
+    route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "operator" / "model" / "route.ts"
+    ).read_text(encoding="utf-8")
+    helper = (ROOT / "nepsis-web" / "src" / "lib" / "operatorProposalReceipt.ts").read_text(encoding="utf-8")
+    client = (ROOT / "nepsis-web" / "src" / "lib" / "operatorModelClient.ts").read_text(encoding="utf-8")
+
+    assert "operator_loop_id" in route
+    assert "operator_loop_id is required" in route
+    assert "Server proposal receipt secret required" in route
+    assert "hasConfiguredProposalReceiptSecret" in route
+    assert "signOperatorProposalReceipt" in route
+    assert "proposedValueHash" in route
+    assert "proposalReceipt" in route
+    assert "createHmac" in helper
+    assert "NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET" in helper
+    assert "loop_id" in helper
+    assert "proposalReceipt" in client
 
 
 def test_guided_operator_completion_does_not_touch_public_mvp() -> None:

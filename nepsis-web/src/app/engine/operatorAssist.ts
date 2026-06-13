@@ -82,6 +82,9 @@ export async function buildAssistDispositions(
     const proposedHash = await sha256Hex(canonicalFieldText(review.proposedValue));
     const model = boundedAssistText(review.model, 120);
     const summary = boundedAssistText(review.rationale || review.title, 1000);
+    if (review.proposedValueHash !== proposedHash) {
+      throw new Error("Model suggestion proposal hash no longer matches its signed receipt.");
+    }
     if (review.uiStatus === "rejected") {
       out.push({
         target: review.target,
@@ -89,6 +92,7 @@ export async function buildAssistDispositions(
         model,
         disposition: "rejected",
         proposed_value_hash: proposedHash,
+        proposal_receipt: review.proposalReceipt,
         summary,
       });
       continue;
@@ -103,6 +107,7 @@ export async function buildAssistDispositions(
       disposition: finalHash === proposedHash ? "accepted" : "edited",
       proposed_value_hash: proposedHash,
       final_value_hash: finalHash,
+      proposal_receipt: review.proposalReceipt,
       summary,
     });
   }

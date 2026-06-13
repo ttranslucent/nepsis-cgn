@@ -496,7 +496,8 @@ export function useEngineSession() {
     if (!result) {
       return undefined;
     }
-    return applyOperatorResult(result);
+    const applied = applyOperatorResult(result);
+    return isPhaseRejection(applied) ? undefined : applied;
   }, [applyOperatorResult, run, state.operatorPacket]);
 
   const lockOperatorFrame = useCallback(
@@ -520,22 +521,24 @@ export function useEngineSession() {
 
   const runOperatorReport = useCallback(
     async (payload: EngineOperatorReportPayload): Promise<EngineOperatorResult | undefined> => {
-      if (!state.operatorPacket) {
+      const packet = state.operatorPacket;
+      if (!packet) {
         setState((prev) => ({ ...prev, error: "No operator packet is active." }));
         return undefined;
       }
-      const result = await run(() => engineClient.runOperatorReport({ ...payload, packet: state.operatorPacket }));
+      const result = await run(() => engineClient.runOperatorReport({ ...payload, packet }));
       return applyOperatorResult(result);
     },
     [applyOperatorResult, run, state.operatorPacket],
   );
 
   const lockOperatorReport = useCallback(async (): Promise<EngineOperatorResult | undefined> => {
-    if (!state.operatorPacket) {
+    const packet = state.operatorPacket;
+    if (!packet) {
       setState((prev) => ({ ...prev, error: "No operator packet is active." }));
       return undefined;
     }
-    const result = await run(() => engineClient.lockOperatorReport({ packet: state.operatorPacket }));
+    const result = await run(() => engineClient.lockOperatorReport({ packet }));
     return applyOperatorResult(result);
   }, [applyOperatorResult, run, state.operatorPacket]);
 
@@ -545,11 +548,12 @@ export function useEngineSession() {
       hold_reason?: string;
       assist_acceptances?: EngineAssistDisposition[];
     }): Promise<EngineOperatorResult | undefined> => {
-      if (!state.operatorPacket) {
+      const packet = state.operatorPacket;
+      if (!packet) {
         setState((prev) => ({ ...prev, error: "No operator packet is active." }));
         return undefined;
       }
-      const result = await run(() => engineClient.setOperatorThresholdDecision({ ...payload, packet: state.operatorPacket }));
+      const result = await run(() => engineClient.setOperatorThresholdDecision({ ...payload, packet }));
       return applyOperatorResult(result);
     },
     [applyOperatorResult, run, state.operatorPacket],
@@ -560,11 +564,12 @@ export function useEngineSession() {
       carry_forward_frame?: Record<string, unknown>;
       assist_acceptances?: EngineAssistDisposition[];
     }): Promise<EngineOperatorResult | undefined> => {
-      if (!state.operatorPacket) {
+      const packet = state.operatorPacket;
+      if (!packet) {
         setState((prev) => ({ ...prev, error: "No operator packet is active." }));
         return undefined;
       }
-      const result = await run(() => engineClient.commitOperatorIteration({ ...payload, packet: state.operatorPacket }));
+      const result = await run(() => engineClient.commitOperatorIteration({ ...payload, packet }));
       return applyOperatorResult(result);
     },
     [applyOperatorResult, run, state.operatorPacket],
@@ -572,15 +577,17 @@ export function useEngineSession() {
 
   const abandonOperatorSession = useCallback(
     async (payload: { reason?: string } = {}): Promise<EngineOperatorResponse | undefined> => {
-      if (!state.operatorPacket) {
+      const packet = state.operatorPacket;
+      if (!packet) {
         setState((prev) => ({ ...prev, error: "No operator packet is active." }));
         return undefined;
       }
-      const result = await run(() => engineClient.abandonOperatorSession({ ...payload, packet: state.operatorPacket }));
+      const result = await run(() => engineClient.abandonOperatorSession({ ...payload, packet }));
       if (!result) {
         return undefined;
       }
-      return applyOperatorResult(result);
+      const applied = applyOperatorResult(result);
+      return isPhaseRejection(applied) ? undefined : applied;
     },
     [applyOperatorResult, run, state.operatorPacket],
   );

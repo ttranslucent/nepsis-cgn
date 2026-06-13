@@ -21,6 +21,10 @@ POLICY = {
     "model_cost_owner": "user_model_host",
     "server_retention": "none",
 }
+PROPOSAL_RECEIPT_SCHEMA_ID = "nepsis.operator_model_proposal_receipt"
+PROPOSAL_RECEIPT_SCHEMA_VERSION = "1.0.0"
+PROPOSAL_RECEIPT_ROUTE = "/api/operator/model"
+PROPOSAL_RECEIPT_SIGNATURE_ALGORITHM = "hmac-sha256"
 _COMMIT_REQUIRED_TRACE_EVENTS = ["LOCK_FRAME", "RUN_REPORT", "LOCK_REPORT", "SET_THRESHOLD_DECISION"]
 _DEVELOPMENT_SEAL_SECRET = secrets.token_bytes(32)
 
@@ -98,6 +102,7 @@ def lock_frame(
     accepted_assists = _normalize_assist_acceptances(
         assist_acceptances,
         final_values=_frame_assist_values(frame),
+        loop_id=_packet_loop_id(packet),
     )
     svc = _service_from_packet(packet)
     resolved_family = family or _packet_family(packet)
@@ -168,6 +173,7 @@ def set_threshold_decision(
     accepted_assists = _normalize_assist_acceptances(
         assist_acceptances,
         final_values=_threshold_assist_values(hold_reason),
+        loop_id=_packet_loop_id(packet),
     )
     svc = _service_from_packet(packet)
     result = svc.operator_set_threshold_decision(decision=decision, hold_reason=hold_reason)
@@ -190,6 +196,7 @@ def commit_iteration(
     accepted_assists = _normalize_assist_acceptances(
         assist_acceptances,
         final_values=_commit_assist_values(carry_forward_frame),
+        loop_id=_packet_loop_id(packet),
     )
     if _packet_phase(packet) == "threshold_set":
         missing_events = _missing_commit_trace_events(packet)
@@ -307,6 +314,67 @@ def _required_hash(value: Any, *, field: str) -> str:
     return resolved
 
 
+def _verify_assist_proposal_receipt(
+    value: Any,
+    *,
+    target: str,
+    model: str,
+    loop_id: str,
+    proposed_hash: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("proposal_receipt is required for model_suggestion assist provenance")
+    if value.get("schema_id") != PROPOSAL_RECEIPT_SCHEMA_ID:
+        raise ValueError("proposal_receipt schema_id mismatch")
+    if value.get("schema_version") != PROPOSAL_RECEIPT_SCHEMA_VERSION:
+        raise ValueError(f"proposal_receipt schema_version must be {PROPOSAL_RECEIPT_SCHEMA_VERSION}")
+    if value.get("route") != PROPOSAL_RECEIPT_ROUTE:
+        raise ValueError("proposal_receipt route mismatch")
+    if value.get("target") != target:
+        raise ValueError("proposal_receipt target mismatch")
+    if value.get("model") != model:
+        raise ValueError("proposal_receipt model mismatch")
+    if value.get("loop_id") != loop_id:
+        raise ValueError("proposal_receipt loop_id mismatch")
+    if value.get("proposed_value_hash") != proposed_hash:
+        raise ValueError("proposal_receipt proposed_value_hash mismatch")
+    if value.get("mode") not in {"suggest_field", "review_completion"}:
+        raise ValueError("proposal_receipt mode mismatch")
+
+    signature = value.get("signature")
+    if not isinstance(signature, dict):
+        raise ValueError("proposal_receipt signature is required")
+    if signature.get("algorithm") != PROPOSAL_RECEIPT_SIGNATURE_ALGORITHM:
+        raise ValueError("proposal_receipt signature algorithm mismatch")
+    key_id = os.getenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_KEY_ID", "default").strip() or "default"
+    if signature.get("key_id") != key_id:
+        raise ValueError("proposal_receipt key_id mismatch")
+    signature_value = signature.get("signature")
+    if not isinstance(signature_value, str) or not _SHA256_HEX_RE.match(signature_value):
+        raise ValueError("proposal_receipt signature must be a sha256 hex digest")
+
+    expected = hmac.new(
+        _operator_proposal_receipt_secret(),
+        _proposal_receipt_signing_bytes(value),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature_value, expected):
+        raise ValueError("proposal_receipt signature verification failed")
+    return _json_copy(value) or {}
+
+
+def _proposal_receipt_signing_bytes(receipt: dict[str, Any]) -> bytes:
+    unsigned = {key: _json_copy(value) for key, value in receipt.items() if key != "signature"}
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _operator_proposal_receipt_secret() -> bytes:
+    raw = os.getenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", "").strip()
+    if not raw:
+        raise ValueError("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET is required for model proposal receipts")
+    return raw.encode("utf-8")
+
+
 def _read_rationale_segment(rationale: Any, label: str) -> str:
     if not isinstance(rationale, str):
         return ""
@@ -356,6 +424,7 @@ def _normalize_assist_acceptances(
     value: Any,
     *,
     final_values: dict[str, str],
+    loop_id: str,
 ) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -376,6 +445,14 @@ def _normalize_assist_acceptances(
             raise ValueError("assist disposition must be accepted, edited, or rejected")
 
         proposed_hash = _required_hash(item.get("proposed_value_hash"), field="proposed_value_hash")
+        model = _bounded_string(item.get("model"), max_len=120, field="assist model")
+        receipt = _verify_assist_proposal_receipt(
+            item.get("proposal_receipt"),
+            target=target,
+            model=model,
+            loop_id=loop_id,
+            proposed_hash=proposed_hash,
+        )
         final_hash = ""
         if disposition in {"accepted", "edited"}:
             if target not in final_values:
@@ -394,10 +471,11 @@ def _normalize_assist_acceptances(
                 "target": target,
                 "source": _bounded_string(item.get("source"), max_len=80, field="assist source")
                 or "model_suggestion",
-                "model": _bounded_string(item.get("model"), max_len=120, field="assist model"),
+                "model": model,
                 "disposition": disposition,
                 "proposed_value_hash": proposed_hash,
                 "final_value_hash": final_hash,
+                "proposal_receipt": receipt,
                 "summary": _bounded_string(item.get("summary"), field="assist summary"),
             }
         )

@@ -1,4 +1,5 @@
 import { withCsrfHeader } from "@/lib/csrfClient";
+import type { OperatorProposalReceipt } from "@/lib/operatorProposalReceipt";
 
 export type OperatorAssistTarget =
   | "frame.text"
@@ -17,6 +18,8 @@ export type OperatorModelSuggestion = {
   target: OperatorAssistTarget;
   title: string;
   proposedValue: string | string[];
+  proposedValueHash: string;
+  proposalReceipt: OperatorProposalReceipt;
   rationale: string;
   riskNote: string;
 };
@@ -32,6 +35,7 @@ export async function requestOperatorModel(payload: {
   mode: OperatorModelMode;
   target?: OperatorAssistTarget;
   input: string;
+  operator_loop_id: string;
   context?: Record<string, unknown>;
   model?: string;
 }): Promise<OperatorModelResponse> {

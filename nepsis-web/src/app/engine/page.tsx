@@ -1068,6 +1068,8 @@ export default function EnginePage() {
     exportSessionAudit,
     stageAudit,
     updateWorkspaceState,
+    getOperatorSessionState,
+    operatorPacket,
     lockOperatorFrame,
     runOperatorReport,
     lockOperatorReport,
@@ -1694,10 +1696,25 @@ export default function EnginePage() {
     setActiveAssistTarget(target);
     setModelAssistBusy(true);
     try {
+      let loopId = operatorPacket?.loop_id;
+      if (!loopId) {
+        const started = await getOperatorSessionState();
+        const startedPacket = started?.packet;
+        const maybeLoopId =
+          startedPacket && typeof startedPacket === "object" && "loop_id" in startedPacket
+            ? startedPacket.loop_id
+            : undefined;
+        loopId = typeof maybeLoopId === "string" ? maybeLoopId : undefined;
+      }
+      if (!loopId) {
+        setLocalError("Could not start an operator packet for model assist.");
+        return;
+      }
       const result = await requestOperatorModel({
         mode: "suggest_field",
         target,
         input: prompt,
+        operator_loop_id: loopId,
         context: {
           family,
           current_frame: frameDraft,
