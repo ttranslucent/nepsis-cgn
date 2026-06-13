@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import http.client
 import json
 import threading
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -51,6 +53,40 @@ def _stop_test_server(httpd: api_server.ThreadingHTTPServer, thread: threading.T
 
 def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_PROPOSAL_SECRET = "unit-test-proposal-receipt-secret"
+
+
+def _receipt(
+    packet: dict[str, object],
+    *,
+    target: str,
+    model: str = "gpt-4.1-mini",
+    proposed_text: str,
+    receipt_id: str | None = None,
+    loop_id: str | None = None,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema_id": "nepsis.operator_model_proposal_receipt",
+        "schema_version": "1.0.0",
+        "receipt_id": receipt_id or str(uuid4()),
+        "issued_at": "2026-06-12T00:00:00.000Z",
+        "route": "/api/operator/model",
+        "mode": "suggest_field",
+        "target": target,
+        "model": model,
+        "loop_id": loop_id or str(packet["loop_id"]),
+        "proposed_value_hash": _h(proposed_text),
+    }
+    signed = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body["signature"] = {
+        "algorithm": "hmac-sha256",
+        "key_id": "default",
+        "signature": hmac.new(_PROPOSAL_SECRET.encode("utf-8"), signed, hashlib.sha256).hexdigest(),
+        "signed_at": "2026-06-12T00:00:00.000Z",
+    }
+    return body
 
 
 def _post_json(port: int, path: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
@@ -521,6 +557,7 @@ def test_http_operator_phase_rejection_returns_409(monkeypatch) -> None:
 
 def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     monkeypatch.setattr(api_server, "API", EngineApiService())
     hard_text = "Maintain RED before BLUE sequencing."
 
@@ -559,6 +596,11 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
                         "disposition": "accepted",
                         "proposed_value_hash": _h(hard_text),
                         "final_value_hash": _h(hard_text),
+                        "proposal_receipt": _receipt(
+                            packet,
+                            target="frame.constraints_hard",
+                            proposed_text=hard_text,
+                        ),
                         "summary": "Preserve sequencing.",
                     }
                 ],
@@ -630,7 +672,9 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
 
 def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     monkeypatch.setattr(api_server, "API", EngineApiService())
+    proposed_text = "wrong"
     httpd, thread, port = _start_test_server()
     try:
         status, packet = _post_json(port, "/v1/operator-packet/start", {})
@@ -657,9 +701,15 @@ def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) ->
                 "assist_acceptances": [
                     {
                         "target": "frame.constraints_hard",
+                        "model": "gpt-4.1-mini",
                         "disposition": "accepted",
-                        "proposed_value_hash": _h("wrong"),
-                        "final_value_hash": _h("wrong"),
+                        "proposed_value_hash": _h(proposed_text),
+                        "final_value_hash": _h(proposed_text),
+                        "proposal_receipt": _receipt(
+                            packet,
+                            target="frame.constraints_hard",
+                            proposed_text=proposed_text,
+                        ),
                         "summary": "False claim.",
                     }
                 ],
@@ -672,9 +722,62 @@ def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) ->
     assert "final_value_hash mismatch" in json.dumps(result)
 
 
+def test_http_operator_packet_frame_rejects_tampered_proposal_receipt(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        hard_text = "Maintain RED before BLUE sequencing."
+        receipt = _receipt(packet, target="frame.constraints_hard", proposed_text=hard_text)
+        receipt["target"] = "frame.text"
+        status, result = _post_json(
+            port,
+            "/v1/operator-packet/frame",
+            {
+                "packet": packet,
+                "family": "safety",
+                "frame": {
+                    "text": "Decide whether to escalate response.",
+                    "objective_type": "decide",
+                    "domain": "safety",
+                    "time_horizon": "short",
+                    "rationale_for_change": (
+                        "Red channel: avoid missing harm | "
+                        "Blue channel: minimize disruption | "
+                        "Uncertainty: signal quality"
+                    ),
+                    "constraints_hard": [hard_text],
+                    "constraints_soft": ["Keep the audit trace concise."],
+                },
+                "assist_acceptances": [
+                    {
+                        "target": "frame.constraints_hard",
+                        "source": "model_suggestion",
+                        "model": "gpt-4.1-mini",
+                        "disposition": "accepted",
+                        "proposed_value_hash": _h(hard_text),
+                        "final_value_hash": _h(hard_text),
+                        "proposal_receipt": receipt,
+                        "summary": "Tampered receipt target.",
+                    }
+                ],
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert 400 <= status < 500
+    assert "proposal_receipt target mismatch" in json.dumps(result)
+
+
 def test_http_operator_packet_threshold_rejects_wrong_assist_scope(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     monkeypatch.setattr(api_server, "API", EngineApiService())
+    proposed_text = "Decide whether to escalate response."
     httpd, thread, port = _start_test_server()
     try:
         status, packet = _post_json(port, "/v1/operator-packet/start", {})
@@ -723,9 +826,11 @@ def test_http_operator_packet_threshold_rejects_wrong_assist_scope(monkeypatch) 
                 "assist_acceptances": [
                     {
                         "target": "frame.text",
+                        "model": "gpt-4.1-mini",
                         "disposition": "accepted",
-                        "proposed_value_hash": _h("Decide whether to escalate response."),
-                        "final_value_hash": _h("Decide whether to escalate response."),
+                        "proposed_value_hash": _h(proposed_text),
+                        "final_value_hash": _h(proposed_text),
+                        "proposal_receipt": _receipt(packet, target="frame.text", proposed_text=proposed_text),
                         "summary": "Wrong transition.",
                     }
                 ],

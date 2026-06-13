@@ -276,6 +276,21 @@ def _scan_text(path: Path, text: str) -> list[Issue]:
                 )
             )
 
+        model_routes_enabled = assignments.get("NEPSIS_MODEL_ROUTES_ENABLED")
+        receipt_secret = assignments.get("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET")
+        if model_routes_enabled and _env_true(model_routes_enabled.value):
+            if not receipt_secret or not receipt_secret.value.strip():
+                issues.append(
+                    Issue(
+                        path=path,
+                        line=model_routes_enabled.line,
+                        message=(
+                            "NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET must be set when "
+                            "NEPSIS_MODEL_ROUTES_ENABLED=true in operator mode."
+                        ),
+                    )
+                )
+
     return issues
 
 

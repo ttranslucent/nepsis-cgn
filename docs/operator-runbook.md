@@ -160,16 +160,17 @@ for accepted or edited dispositions, a SHA-256 hash of the final field value.
 The backend recomputes the final hash from the field being locked and rejects
 the transition on mismatch.
 
+Each model suggestion also carries a server-signed proposal receipt. The receipt
+binds the proposal hash to the protected model route, target field, model name,
+and current stateless operator packet `loop_id`. Packet transitions reject
+accepted, edited, or rejected model-suggestion records when the receipt is
+missing, tampered, signed by the wrong key, or bound to a different loop.
+
 - `accepted` means the final field is byte-identical to the model proposal.
 - `edited` means the operator changed the proposal before the packet transition.
 - `rejected` records that a suggestion was offered and declined; rejected
   entries carry the proposal hash only and are recorded on the next successful
   transition.
-
-Verification proves the committed field matches the hashed final value. It does
-not prove that the proposed value originated from the model route rather than a
-client claim. Closing that remaining gap would require the model route to sign
-or persist proposal hashes for later packet verification.
 
 Rejected suggestions are recorded only if a later packet transition occurs. If
 the operator rejects suggestions and abandons the packet before any transition,

@@ -1,4 +1,5 @@
 import { withCsrfHeader } from "@/lib/csrfClient";
+import type { OperatorProposalReceipt } from "@/lib/operatorProposalReceipt";
 
 export type EngineFamily = "puzzle" | "clinical" | "safety";
 export type NepsisMvpCaseId = "jailing" | "clinical";
@@ -227,6 +228,7 @@ export type EngineAssistDisposition = {
   disposition: "accepted" | "edited" | "rejected";
   proposed_value_hash: string;
   final_value_hash?: string;
+  proposal_receipt: OperatorProposalReceipt;
   summary: string;
 };
 

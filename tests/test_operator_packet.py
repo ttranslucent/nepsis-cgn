@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import shutil
+import subprocess
+from uuid import uuid4
 
 import pytest
 
@@ -46,6 +50,118 @@ def _report_interpretation() -> dict[str, object]:
 
 def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_PROPOSAL_SECRET = "unit-test-proposal-receipt-secret"
+
+
+def _receipt(
+    packet: dict[str, object],
+    *,
+    target: str,
+    model: str = "gpt-4.1-mini",
+    proposed_text: str,
+    receipt_id: str | None = None,
+    loop_id: str | None = None,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema_id": "nepsis.operator_model_proposal_receipt",
+        "schema_version": "1.0.0",
+        "receipt_id": receipt_id or str(uuid4()),
+        "issued_at": "2026-06-12T00:00:00.000Z",
+        "route": "/api/operator/model",
+        "mode": "suggest_field",
+        "target": target,
+        "model": model,
+        "loop_id": loop_id or str(packet["loop_id"]),
+        "proposed_value_hash": _h(proposed_text),
+    }
+    signed = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body["signature"] = {
+        "algorithm": "hmac-sha256",
+        "key_id": "default",
+        "signature": hmac.new(_PROPOSAL_SECRET.encode("utf-8"), signed, hashlib.sha256).hexdigest(),
+        "signed_at": "2026-06-12T00:00:00.000Z",
+    }
+    return body
+
+
+def _node_receipt(
+    packet: dict[str, object],
+    *,
+    target: str,
+    model: str = "gpt-4.1-mini",
+    proposed_text: str,
+) -> dict[str, object]:
+    if shutil.which("node") is None:
+        pytest.skip("node is required for the cross-language proposal receipt test")
+    script = r"""
+const crypto = require("node:crypto");
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalize(item)]),
+    );
+  }
+  return value;
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
+const input = JSON.parse(process.argv[1]);
+const proposedValueHash = crypto.createHash("sha256").update(input.proposedText, "utf8").digest("hex");
+const issuedAt = "2026-06-12T00:00:00.000Z";
+const body = {
+  schema_id: "nepsis.operator_model_proposal_receipt",
+  schema_version: "1.0.0",
+  receipt_id: "node-cross-language-receipt",
+  issued_at: issuedAt,
+  route: "/api/operator/model",
+  mode: "suggest_field",
+  target: input.target,
+  model: input.model,
+  loop_id: input.loopId,
+  proposed_value_hash: proposedValueHash,
+};
+const signature = crypto.createHmac("sha256", input.secret).update(canonicalJson(body), "utf8").digest("hex");
+console.log(JSON.stringify({
+  ...body,
+  signature: {
+    algorithm: "hmac-sha256",
+    key_id: "default",
+    signature,
+    signed_at: issuedAt,
+  },
+}));
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            json.dumps(
+                {
+                    "loopId": packet["loop_id"],
+                    "target": target,
+                    "model": model,
+                    "proposedText": proposed_text,
+                    "secret": _PROPOSAL_SECRET,
+                }
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    parsed = json.loads(result.stdout)
+    assert isinstance(parsed, dict)
+    return parsed
 
 
 def _hard_text(frame: dict[str, object]) -> str:
@@ -246,7 +362,8 @@ def test_operator_packet_requires_configured_seal_secret_in_operator_mode(monkey
         start_operator_packet()
 
 
-def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions() -> None:
+def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
     hard_text = _hard_text(frame)
@@ -262,6 +379,7 @@ def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions() 
                 "disposition": "accepted",
                 "proposed_value_hash": _h(hard_text),
                 "final_value_hash": _h(hard_text),
+                "proposal_receipt": _receipt(packet, target="frame.constraints_hard", proposed_text=hard_text),
                 "summary": "Preserved RED-before-BLUE sequencing.",
             }
         ],
@@ -275,9 +393,120 @@ def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions() 
     assert locked["integrity"]["seal"]
 
 
-def test_assist_disposition_rejects_final_hash_mismatch() -> None:
+def test_assist_disposition_requires_model_proposal_receipt(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
+    hard_text = _hard_text(frame)
+
+    with pytest.raises(ValueError, match="proposal_receipt is required"):
+        lock_frame(
+            packet=packet,
+            family="safety",
+            frame=frame,
+            assist_acceptances=[
+                {
+                    "target": "frame.constraints_hard",
+                    "source": "model_suggestion",
+                    "model": "gpt-4.1-mini",
+                    "disposition": "accepted",
+                    "proposed_value_hash": _h(hard_text),
+                    "final_value_hash": _h(hard_text),
+                    "summary": "Preserved RED-before-BLUE sequencing.",
+                }
+            ],
+        )
+
+
+def test_assist_disposition_rejects_proposal_receipt_hash_mismatch(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    hard_text = _hard_text(frame)
+    receipt = _receipt(packet, target="frame.constraints_hard", proposed_text="different model text")
+
+    with pytest.raises(ValueError, match="proposal_receipt proposed_value_hash mismatch"):
+        lock_frame(
+            packet=packet,
+            family="safety",
+            frame=frame,
+            assist_acceptances=[
+                {
+                    "target": "frame.constraints_hard",
+                    "source": "model_suggestion",
+                    "model": "gpt-4.1-mini",
+                    "disposition": "accepted",
+                    "proposed_value_hash": _h(hard_text),
+                    "final_value_hash": _h(hard_text),
+                    "proposal_receipt": receipt,
+                    "summary": "Tampered proposal hash.",
+                }
+            ],
+        )
+
+
+def test_assist_disposition_rejects_proposal_receipt_from_other_loop(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    hard_text = _hard_text(frame)
+    receipt = _receipt(packet, target="frame.constraints_hard", proposed_text=hard_text, loop_id="other-loop")
+
+    with pytest.raises(ValueError, match="proposal_receipt loop_id mismatch"):
+        lock_frame(
+            packet=packet,
+            family="safety",
+            frame=frame,
+            assist_acceptances=[
+                {
+                    "target": "frame.constraints_hard",
+                    "source": "model_suggestion",
+                    "model": "gpt-4.1-mini",
+                    "disposition": "accepted",
+                    "proposed_value_hash": _h(hard_text),
+                    "final_value_hash": _h(hard_text),
+                    "proposal_receipt": receipt,
+                    "summary": "Wrong loop.",
+                }
+            ],
+        )
+
+
+def test_node_signed_proposal_receipt_verifies_in_python(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    hard_text = _hard_text(frame)
+    receipt = _node_receipt(packet, target="frame.constraints_hard", proposed_text=hard_text)
+
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=frame,
+        assist_acceptances=[
+            {
+                "target": "frame.constraints_hard",
+                "source": "model_suggestion",
+                "model": "gpt-4.1-mini",
+                "disposition": "accepted",
+                "proposed_value_hash": _h(hard_text),
+                "final_value_hash": _h(hard_text),
+                "proposal_receipt": receipt,
+                "summary": "Node route receipt verified by Python.",
+            }
+        ],
+    )
+
+    traced = locked["audit_trace"][-1]["arguments"]["assist_acceptances"][0]
+    assert traced["proposal_receipt"]["receipt_id"] == "node-cross-language-receipt"
+    assert traced["proposal_receipt"]["issued_at"].endswith("Z")
+
+
+def test_assist_disposition_rejects_final_hash_mismatch(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
+    packet = start_operator_packet()
+    frame = _operator_frame()
+    proposed_text = "not the field"
 
     with pytest.raises(ValueError, match="final_value_hash mismatch"):
         lock_frame(
@@ -287,18 +516,26 @@ def test_assist_disposition_rejects_final_hash_mismatch() -> None:
             assist_acceptances=[
                 {
                     "target": "frame.constraints_hard",
+                    "model": "gpt-4.1-mini",
                     "disposition": "accepted",
-                    "proposed_value_hash": _h("not the field"),
-                    "final_value_hash": _h("not the field"),
+                    "proposed_value_hash": _h(proposed_text),
+                    "final_value_hash": _h(proposed_text),
+                    "proposal_receipt": _receipt(
+                        packet,
+                        target="frame.constraints_hard",
+                        proposed_text=proposed_text,
+                    ),
                     "summary": "False claim.",
                 }
             ],
         )
 
 
-def test_assist_disposition_rejects_accepted_when_hashes_diverge() -> None:
+def test_assist_disposition_rejects_accepted_when_hashes_diverge(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
+    proposed_text = "original suggestion"
 
     with pytest.raises(ValueError, match="use disposition=edited"):
         lock_frame(
@@ -308,9 +545,15 @@ def test_assist_disposition_rejects_accepted_when_hashes_diverge() -> None:
             assist_acceptances=[
                 {
                     "target": "frame.constraints_hard",
+                    "model": "gpt-4.1-mini",
                     "disposition": "accepted",
-                    "proposed_value_hash": _h("original suggestion"),
+                    "proposed_value_hash": _h(proposed_text),
                     "final_value_hash": _h(_hard_text(frame)),
+                    "proposal_receipt": _receipt(
+                        packet,
+                        target="frame.constraints_hard",
+                        proposed_text=proposed_text,
+                    ),
                     "summary": "Edited but labeled accepted.",
                 }
             ],
@@ -334,32 +577,42 @@ def test_assist_disposition_rejects_overflow_instead_of_truncating() -> None:
         lock_frame(packet=packet, family="safety", frame=frame, assist_acceptances=too_many)
 
 
-def test_assist_disposition_resolves_rationale_segments() -> None:
+def test_assist_disposition_resolves_rationale_segments(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
     red = _read_rationale_segment(frame["rationale_for_change"], "Red channel")
+    proposed_text = "avoid missing harm"
 
     locked = lock_frame(
         packet=packet,
         family="safety",
         frame=frame,
         assist_acceptances=[
-            {
-                "target": "frame.red_definition",
-                "disposition": "edited",
-                "proposed_value_hash": _h("avoid missing harm"),
-                "final_value_hash": _h(red),
-                "summary": "Tightened RED definition.",
-            }
-        ],
+                {
+                    "target": "frame.red_definition",
+                    "model": "gpt-4.1-mini",
+                    "disposition": "edited",
+                    "proposed_value_hash": _h(proposed_text),
+                    "final_value_hash": _h(red),
+                    "proposal_receipt": _receipt(
+                        packet,
+                        target="frame.red_definition",
+                        proposed_text=proposed_text,
+                    ),
+                    "summary": "Tightened RED definition.",
+                }
+            ],
     )
 
     assert locked["audit_trace"][-1]["arguments"]["assist_acceptances"][0]["final_value_hash"] == _h(red)
 
 
-def test_assist_disposition_rejects_target_outside_transition_scope() -> None:
+def test_assist_disposition_rejects_target_outside_transition_scope(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
+    proposed_text = "collect one more discriminator"
 
     with pytest.raises(ValueError, match="not part of this transition"):
         lock_frame(
@@ -369,18 +622,26 @@ def test_assist_disposition_rejects_target_outside_transition_scope() -> None:
             assist_acceptances=[
                 {
                     "target": "threshold.hold_reason",
+                    "model": "gpt-4.1-mini",
                     "disposition": "accepted",
-                    "proposed_value_hash": _h("collect one more discriminator"),
-                    "final_value_hash": _h("collect one more discriminator"),
+                    "proposed_value_hash": _h(proposed_text),
+                    "final_value_hash": _h(proposed_text),
+                    "proposal_receipt": _receipt(
+                        packet,
+                        target="threshold.hold_reason",
+                        proposed_text=proposed_text,
+                    ),
                     "summary": "Wrong transition.",
                 }
             ],
         )
 
 
-def test_assist_disposition_records_rejected_without_final_hash() -> None:
+def test_assist_disposition_records_rejected_without_final_hash(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
+    proposed_text = "carry this forward later"
 
     locked = lock_frame(
         packet=packet,
@@ -389,8 +650,10 @@ def test_assist_disposition_records_rejected_without_final_hash() -> None:
         assist_acceptances=[
             {
                 "target": "next_frame.text",
+                "model": "gpt-4.1-mini",
                 "disposition": "rejected",
-                "proposed_value_hash": _h("carry this forward later"),
+                "proposed_value_hash": _h(proposed_text),
+                "proposal_receipt": _receipt(packet, target="next_frame.text", proposed_text=proposed_text),
                 "summary": "Declined carry-forward suggestion.",
             }
         ],

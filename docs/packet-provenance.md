@@ -76,6 +76,15 @@ The signing input excludes the `signature` and `integrity` fields so signatures
 can be verified after those fields are attached. v1 does not include KMS,
 public-key signatures, or key rotation beyond the recorded key ID.
 
+## Operator Model Proposal Receipts
+
+Operator model assists use hash-only signed receipts. The protected Next model
+route signs `target`, `model`, `loop_id`, and `proposed_value_hash` with
+`NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET`. The backend verifies the receipt
+before it records the assist disposition in the stateless operator packet trace.
+The receipt proves route origin for the proposal hash without retaining the raw
+proposal body server-side.
+
 ## Request Context
 
 Records can capture:
