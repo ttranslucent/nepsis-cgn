@@ -255,6 +255,16 @@ export type EngineOperatorPacket = {
   integrity?: Record<string, unknown>;
 };
 
+export type EngineOperatorPacketState = {
+  schema_id: "nepsis.operator_packet_state";
+  loop_id: string;
+  phase: string;
+  legal_next_tools: string[];
+  audit_trace: Array<Record<string, unknown>>;
+  latest_audit: EngineStageAuditResponse | Record<string, unknown>;
+  packet_hash: string | null;
+};
+
 export type EngineOperatorPacketResult = EngineOperatorPacket | EnginePhaseRejection;
 
 export type EngineOperatorFramePayload = {
@@ -749,8 +759,8 @@ export const engineClient = {
     return requestEngine<EngineOperatorPacket>("/operator-packet/start", jsonRequest("POST", payload));
   },
 
-  getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacket> {
-    return requestEngine<EngineOperatorPacket>("/operator-packet/state", jsonRequest("POST", payload));
+  getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacketState> {
+    return requestEngine<EngineOperatorPacketState>("/operator-packet/state", jsonRequest("POST", payload));
   },
 
   lockOperatorFrame(payload: EngineOperatorFramePayload & {

@@ -10,6 +10,7 @@ import {
   type EngineFrame,
   type EngineOperatorFramePayload,
   type EngineOperatorPacket,
+  type EngineOperatorPacketState,
   type EngineOperatorPacketResult,
   type EngineOperatorReportPayload,
   type EngineOperatorResponse,
@@ -38,6 +39,7 @@ type EngineState = {
   activeSession: EngineSessionSummary | null;
   packets: Record<string, unknown>[];
   operatorPacket: EngineOperatorPacket | null;
+  operatorPacketState: EngineOperatorPacketState | null;
   provenance: PacketProvenanceResponse | null;
   auditExport: SessionAuditExport | null;
   lastStep: EngineStepResponse | null;
@@ -71,6 +73,14 @@ function isOperatorPacket(value: unknown): value is EngineOperatorPacket {
     value &&
       typeof value === "object" &&
       (value as { schema_id?: unknown }).schema_id === "nepsis.operator_packet",
+  );
+}
+
+function isOperatorPacketState(value: unknown): value is EngineOperatorPacketState {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { schema_id?: unknown }).schema_id === "nepsis.operator_packet_state",
   );
 }
 
@@ -130,6 +140,19 @@ function operatorPacketToResponse(packet: EngineOperatorPacket): EngineOperatorR
   };
 }
 
+function operatorPacketStateToResponse(
+  state: EngineOperatorPacketState,
+  packet: EngineOperatorPacket,
+): EngineOperatorResponse {
+  return operatorPacketToResponse({
+    ...packet,
+    phase: state.phase,
+    legal_next_tools: state.legal_next_tools,
+    audit_trace: state.audit_trace,
+    latest_audit: state.latest_audit,
+  });
+}
+
 export function useEngineSession() {
   const [state, setState] = useState<EngineState>({
     loading: false,
@@ -140,6 +163,7 @@ export function useEngineSession() {
     activeSession: null,
     packets: [],
     operatorPacket: null,
+    operatorPacketState: null,
     provenance: null,
     auditExport: null,
     lastStep: null,
@@ -196,7 +220,7 @@ export function useEngineSession() {
         return result;
       }
       if (isOperatorPacket(result)) {
-        setState((prev) => ({ ...prev, operatorPacket: result }));
+        setState((prev) => ({ ...prev, operatorPacket: result, operatorPacketState: null }));
         const response = operatorPacketToResponse(result);
         applyOperatorResponse(response);
         return response;
@@ -204,6 +228,26 @@ export function useEngineSession() {
       return undefined;
     },
     [applyOperatorResponse],
+  );
+
+  const applyOperatorPacketState = useCallback(
+    (
+      result: EngineOperatorPacketState,
+      packet: EngineOperatorPacket | null,
+    ): EngineOperatorResponse | undefined => {
+      const response = packet ? operatorPacketStateToResponse(result, packet) : undefined;
+      setState((prev) => ({
+        ...prev,
+        operatorPacketState: result,
+        activeSession: response?.session ?? prev.activeSession,
+        sessions: response ? upsertSession(prev.sessions, response.session) : prev.sessions,
+        lastAudit: response?.audit ?? prev.lastAudit,
+        provenance: null,
+        auditExport: null,
+      }));
+      return response;
+    },
+    [],
   );
 
   const refreshHealth = useCallback(async () => {
@@ -256,6 +300,7 @@ export function useEngineSession() {
         sessions: upsertSession(prev.sessions, session),
         packets: [],
         operatorPacket: null,
+        operatorPacketState: null,
         provenance: null,
         auditExport: null,
         lastStep: null,
@@ -285,6 +330,7 @@ export function useEngineSession() {
         sessions: upsertSession(prev.sessions, loaded.session),
         packets: loaded.packetResponse.packets,
         operatorPacket: null,
+        operatorPacketState: null,
         provenance: loaded.provenance,
         auditExport: null,
         lastAudit: null,
@@ -453,6 +499,7 @@ export function useEngineSession() {
           activeSession,
           packets: activeSession ? prev.packets : [],
           operatorPacket: activeSession ? prev.operatorPacket : null,
+          operatorPacketState: activeSession ? prev.operatorPacketState : null,
           provenance: activeSession ? prev.provenance : null,
           auditExport: activeSession ? prev.auditExport : null,
           lastStep: activeSession ? prev.lastStep : null,
@@ -496,9 +543,12 @@ export function useEngineSession() {
     if (!result) {
       return undefined;
     }
+    if (isOperatorPacketState(result)) {
+      return applyOperatorPacketState(result, state.operatorPacket);
+    }
     const applied = applyOperatorResult(result);
     return isPhaseRejection(applied) ? undefined : applied;
-  }, [applyOperatorResult, run, state.operatorPacket]);
+  }, [applyOperatorPacketState, applyOperatorResult, run, state.operatorPacket]);
 
   const lockOperatorFrame = useCallback(
     async (

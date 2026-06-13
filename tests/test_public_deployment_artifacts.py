@@ -137,6 +137,20 @@ def test_operator_frontend_uses_packet_proxy_routes() -> None:
     assert "proposal_receipt" in operator_assist
 
 
+def test_operator_packet_state_contract_is_explicit() -> None:
+    root = ROOT / "nepsis-web" / "src"
+    client = (root / "lib" / "engineClient.ts").read_text(encoding="utf-8")
+    hook = (root / "lib" / "useEngineSession.ts").read_text(encoding="utf-8")
+
+    assert "export type EngineOperatorPacketState" in client
+    assert 'schema_id: "nepsis.operator_packet_state"' in client
+    assert "getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacketState>" in client
+    assert "type EngineOperatorPacketState" in hook
+    assert "isOperatorPacketState" in hook
+    assert "operatorPacketStateToResponse" in hook
+    assert "operatorPacketState" in hook
+
+
 def test_operator_model_route_is_field_level_and_excludes_threshold_decision() -> None:
     text = (
         ROOT / "nepsis-web" / "src" / "app" / "api" / "operator" / "model" / "route.ts"
