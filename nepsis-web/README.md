@@ -108,12 +108,12 @@ Operator deployment mode:
   the deployment is not public-site mode.
 - `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY` must be configured server-side
   before `/api/operator/model` returns live model output.
-- Browser-local provider keys are local-demo only and are not accepted by shared
-  operator deployments.
+- Browser-local provider keys are not accepted by NepsisCGN web routes.
 
-Browser-local OpenAI key storage in `/settings` is local-demo only and is hidden
-in public-site mode. Do not use it as a shared deployment secret flow; prefer
-reviewed server-side environment variables for private operator deployments.
+`/settings` reports provider-access posture and clears any legacy browser-stored
+key. It no longer stores OpenAI keys in localStorage. Use reviewed server-side
+environment variables for private operator deployments, and use MCP-capable
+hosts for user-owned model accounts.
 
 Open model harness direction:
 
@@ -122,6 +122,8 @@ Open model harness direction:
 - Future account-based model support should be designed separately around
   supported host or CLI authentication flows for OpenAI/Codex, Claude, and
   Gemini rather than making this UI collect provider API keys.
+- When Supabase approval/invite support is added, use it as the login/approval
+  source. Do not store raw provider API keys in Supabase tables.
 
 Local proto-puzzle overrides:
 
@@ -144,7 +146,7 @@ Production behavior is intentionally strict:
 - If email delivery is not configured, `/login` shows a preview code only in non-public, non-operator local mode; otherwise it tells the operator which auth env vars are missing.
 - Signed browser sessions persist for 30 days by default. Set `NEPSIS_AUTH_SESSION_REVOKE_BEFORE` to an ISO timestamp to invalidate older sessions globally.
 - Engine session controls require signed browser identity unless `NEPSIS_ENGINE_ALLOW_ANON=true` is set outside public-site mode.
-- `/settings` and `/playground` do not display browser API-key fields in public-site mode.
+- `/settings` does not display browser API-key fields in any mode; it only reports model-access posture and clears legacy browser key storage.
 - `GET /api/playground-nepsis` reports model routes as disabled in public-site mode.
 
 ### Public site setup

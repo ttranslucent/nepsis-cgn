@@ -39,10 +39,6 @@ export function liveOperatorEnabled(): boolean {
   return operatorSiteMode() || envFlag("NEPSIS_LIVE_OPERATOR_ENABLED");
 }
 
-export function browserModelKeysAllowed(): boolean {
-  return process.env.NODE_ENV !== "production" && !publicSiteMode() && envFlag("NEPSIS_BROWSER_MODEL_KEYS_ALLOWED");
-}
-
 export function modelRoutesEnabled(): boolean {
   if (publicSiteMode()) {
     return false;

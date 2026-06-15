@@ -1,20 +1,18 @@
-export const OPENAI_KEY_STORAGE_KEY = "nepsis_openai_key";
+const LEGACY_BROWSER_PROVIDER_KEY = "nepsis_openai_key";
 export const LLM_CONNECTED_NOTICE_KEY = "nepsis_llm_connected_notice";
 
-export function getStoredOpenAiKey(): string | null {
+export function clearLegacyOpenAiKey(): boolean {
   if (typeof window === "undefined") {
-    return null;
+    return false;
   }
   try {
-    const value = window.localStorage.getItem(OPENAI_KEY_STORAGE_KEY)?.trim() ?? "";
-    return value.length > 0 ? value : null;
+    const hadKey = window.localStorage.getItem(LEGACY_BROWSER_PROVIDER_KEY) !== null;
+    window.localStorage.removeItem(LEGACY_BROWSER_PROVIDER_KEY);
+    window.localStorage.removeItem(LLM_CONNECTED_NOTICE_KEY);
+    return hadKey;
   } catch {
-    return null;
+    return false;
   }
-}
-
-export function hasStoredOpenAiKey(): boolean {
-  return getStoredOpenAiKey() !== null;
 }
 
 export function consumeConnectedNotice(): boolean {

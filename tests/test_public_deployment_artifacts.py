@@ -112,6 +112,61 @@ def test_status_api_exposes_public_and_operator_readiness_paths() -> None:
     assert "OPENAI_API_KEY or NEPSIS_OPENAI_API_KEY" in text
 
 
+def test_status_api_exposes_provider_access_custody_boundary() -> None:
+    route = ROOT / "nepsis-web" / "src" / "app" / "api" / "status" / "route.ts"
+    page = ROOT / "nepsis-web" / "src" / "app" / "status" / "page.tsx"
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in [route, page])
+
+    assert "providerAccess" in combined
+    assert "userProviderKeysAccepted: false" in route.read_text(encoding="utf-8")
+    assert "server-side-operator-or-mcp-host" in combined
+    assert "approved users sign in" in combined.lower()
+    assert "Supabase invite" in combined
+
+
+def test_browser_provider_key_storage_is_removed_from_web_runtime() -> None:
+    src = ROOT / "nepsis-web" / "src"
+    files = [
+        src / "lib" / "clientStorage.ts",
+        src / "lib" / "publicMode.ts",
+        src / "app" / "page.tsx",
+        src / "app" / "settings" / "page.tsx",
+        src / "app" / "playground" / "page.tsx",
+        src / "app" / "engine" / "page.tsx",
+        src / "app" / "api" / "playground-nepsis" / "route.ts",
+        src / "app" / "api" / "run-with-nepsis" / "route.ts",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+    assert "browserModelKeysAllowed" not in combined
+    assert "getStoredOpenAiKey" not in combined
+    assert "hasStoredOpenAiKey" not in combined
+    assert "localStorage.setItem(OPENAI_KEY_STORAGE_KEY" not in combined
+    assert "OPENAI_KEY_STORAGE_KEY" not in combined
+    assert "nepsis_openai_key" in combined
+    assert "clearLegacyOpenAiKey" in combined
+    assert "apiKey:" not in (src / "app" / "playground" / "page.tsx").read_text(encoding="utf-8")
+    assert "apiKey:" not in (src / "app" / "engine" / "page.tsx").read_text(encoding="utf-8")
+
+
+def test_model_sandbox_routes_require_server_side_provider_key_only() -> None:
+    playground = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "playground-nepsis" / "route.ts"
+    ).read_text(encoding="utf-8")
+    run_with_nepsis = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "run-with-nepsis" / "route.ts"
+    ).read_text(encoding="utf-8")
+
+    for text in (playground, run_with_nepsis):
+        assert "requireEngineControlAuth" in text
+        assert "requireCsrfToken" in text
+        assert "hasConfiguredOpenAiKey" in text
+        assert "createOpenAiClient()" in text
+        assert "apiKey" not in text
+        assert "apiKeyOverride" not in text
+        assert "browserModelKeysAllowed" not in text
+
+
 @pytest.mark.parametrize("route", OPERATOR_PACKET_PROXY_ROUTES)
 def test_operator_packet_proxy_routes_require_auth_and_csrf(route: str) -> None:
     path = ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "operator-packet" / route / "route.ts"

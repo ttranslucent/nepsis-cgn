@@ -47,6 +47,16 @@ def test_scan_blocks_browser_public_openai_env_names(tmp_path: Path) -> None:
     assert "browser-exposed" in result.stdout
 
 
+def test_scan_blocks_deprecated_browser_model_key_flag(tmp_path: Path) -> None:
+    target = tmp_path / ".env.local"
+    target.write_text("NEPSIS_BROWSER_MODEL_KEYS_ALLOWED=true\n", encoding="utf-8")
+
+    result = run_scan(target)
+
+    assert result.returncode == 1
+    assert "NEPSIS_BROWSER_MODEL_KEYS_ALLOWED is deprecated" in result.stdout
+
+
 def test_scan_blocks_bad_public_site_env_combinations(tmp_path: Path) -> None:
     target = tmp_path / ".env.production"
     target.write_text(

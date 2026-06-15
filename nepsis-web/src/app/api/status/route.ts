@@ -229,6 +229,18 @@ export async function GET() {
       enabled: modelsEnabled,
       hasServerOpenAiKey: modelsEnabled && serverModelKeyConfigured,
     },
+    providerAccess: {
+      userProviderKeysAccepted: false,
+      modelAccessMode: "server-side-operator-or-mcp-host",
+      approvalBackend: "operator-email-allowlist",
+      adminTestLogin: previewCodesEnabled
+        ? "Local admin test login uses an allowlisted email and preview OTP code."
+        : "Admin login uses an allowlisted email and delivered OTP code.",
+      invitedUserFlow:
+        "Approved users sign in through OTP/email. When Supabase is added, use Supabase invite approval for login access, not raw provider-key collection.",
+      userOwnedModelAccess:
+        "User-owned model accounts should connect through MCP-capable hosts that authenticate to their own provider accounts.",
+    },
     setup: {
       publicSite: {
         envExample: "nepsis-web/.env.public.example",
