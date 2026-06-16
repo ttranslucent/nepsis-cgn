@@ -13,6 +13,12 @@ def _script_text() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
 
+def _operator_process_block(text: str, marker: str) -> str:
+    start = text.index(marker)
+    end = text.index(") &", start)
+    return text[start:end]
+
+
 def test_local_mvp_launcher_is_valid_bash() -> None:
     result = subprocess.run(
         ["bash", "-n", str(SCRIPT)],
@@ -81,6 +87,16 @@ def test_local_operator_launcher_uses_private_operator_gates() -> None:
     assert "NEPSIS_MODEL_ROUTES_ENABLED=true" in text
     assert 'NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET="$LOCAL_PROPOSAL_RECEIPT_SECRET"' in text
     assert "http://127.0.0.1:3000/operator" in text
+
+
+def test_local_operator_launcher_shares_proposal_receipt_secret_with_backend_and_web() -> None:
+    text = OPERATOR_SCRIPT.read_text(encoding="utf-8")
+    backend_block = _operator_process_block(text, 'cd "$ROOT_DIR"')
+    web_block = _operator_process_block(text, 'cd "$WEB_DIR"')
+
+    expected = 'NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET="$LOCAL_PROPOSAL_RECEIPT_SECRET"'
+    assert expected in backend_block
+    assert expected in web_block
 
 
 def test_local_operator_launcher_does_not_impersonate_shared_operator_deployment() -> None:
