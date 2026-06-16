@@ -59,8 +59,8 @@ npm run dev
   authenticated model client.
 - Clinical demo packets are not medical advice, not diagnosis, and not clinical
   decision support.
-- Browser-stored OpenAI keys are local-demo only. Do not use them as a shared
-  deployment secret flow.
+- Browser-stored OpenAI keys are no longer supported. `/settings` only reports
+  provider-access posture and clears legacy browser key storage.
 - The local launcher is model-free. MCP harness work should use supported host
   or CLI authentication flows for OpenAI/Codex, Claude, or Gemini instead of
   collecting provider keys in NepsisCGN.
@@ -78,6 +78,9 @@ npm run dev
 - Web has a long random `NEPSIS_AUTH_SECRET`.
 - Web sets `NEPSIS_AUTH_ALLOWED_EMAILS` to the exact operator email addresses
   permitted to request OTP login.
+- For invited-user access, the current repo uses exact-email allowlisting. When
+  Supabase is added, use Supabase invite approval as the login source, not as a
+  vault for raw model-provider API keys.
 - Web sets `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and
   `NEPSIS_MODEL_ROUTES_ENABLED=false` for the public production site.
 - Web does not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`,
@@ -198,7 +201,8 @@ Render service health, or CORS origins are misconfigured.
 
 The public site must not invite visitors to paste provider keys. If a real key
 was previously pasted into `/settings` during public testing, rotate that key
-with the provider and clear browser storage for `https://nepsis-cgn.vercel.app`.
+with the provider and use `/settings` to clear legacy browser storage for
+`https://nepsis-cgn.vercel.app`.
 
 ## MCP Surface
 

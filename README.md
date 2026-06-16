@@ -112,7 +112,7 @@ The public site posture is intentionally narrow:
 - `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run the canonical cases or paste a short query into the selected MVP scaffold.
 - `/operator` is a separate live operator surface. Enable it only on an authenticated operator deployment with backend API auth, exact-email OTP allowlisting, and login email delivery; keep hosted model routes disabled unless separately reviewed and capped.
 - `/status` shows backend, auth, model-route, and MCP readiness.
-- `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates API-key/model flows.
+- `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates model flows, and the web app does not collect browser/user provider API keys.
 - Public production must not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`, or `NEPSIS_MODEL_ROUTES_ENABLED=true`.
 - `POST /api/engine/mvp` uses the FastAPI backend when configured and falls back
   to bundled frozen v0.3 packets when production has no backend URL, so the
@@ -193,8 +193,9 @@ Before committing deployment env files or public-site config changes, run:
 
 The repo also includes a local `pre-commit` hook that runs the same checker on
 staged files and blocks hardcoded OpenAI keys, browser-exposed key env names,
-and public-site env combinations that would enable model routes, anonymous
-engine controls, login preview codes, wildcard CORS, or server OpenAI keys.
+deprecated browser-key flags, and public-site env combinations that would enable
+model routes, anonymous engine controls, login preview codes, wildcard CORS, or
+server OpenAI keys.
 
 ## Public API and MCP
 
@@ -300,9 +301,9 @@ Environment notes:
 
 - Python must be >=3.11.
 - Use `.venv/bin/python`; system `python3` may be Python 3.9.
-- `OPENAI_API_KEY` is required only for real model calls.
+- `OPENAI_API_KEY` is required only for reviewed server-side private operator model calls.
 - `NEPSIS_MCP_CAPABILITY_TOKEN_HASHES` stores hosted MCP capability-token hashes, not provider keys.
-- Browser-stored OpenAI keys are local-demo only; do not use them as shared deployment secrets.
+- NepsisCGN does not collect browser/user provider API keys. Hosted model calls require reviewed server-side private operator credentials; bring-your-own-model workflows should use MCP-capable hosts that authenticate to their own provider accounts.
 - The simulated provider exercises red-channel repair without external model access.
 - The OpenAI provider maps the `openai` alias to `gpt-4o` unless a specific `gpt-*` model is supplied.
 - Security policy: [SECURITY.md](SECURITY.md).
@@ -323,13 +324,15 @@ OpenAI, Anthropic, or Gemini provider keys for this path.
   path and pass Nepsis only packet/tool inputs.
 - Hosted model calls through Nepsis remain private and disabled unless a
   separate operator deployment explicitly enables and caps them.
+- Raw provider key collection has been removed from the web app; do not
+  reintroduce it as a browser-storage or raw database-token path.
 
 ## Known Limitations
 
 - Runtime State Feedback is not implemented; current State Feedback is deterministic MVP packet scaffolding.
 - API session packets and MVP packets are separate shapes.
 - LLM integration is not part of the deterministic MVP demo path.
-- Engine sessions, playground/model sandbox calls, and browser-stored OpenAI keys are experimental.
+- Engine sessions and playground/model sandbox calls are experimental operator paths.
 - system `python3` may be Python 3.9; use `.venv/bin/python`.
 - `pytest -q` alone may fail unless the package/environment is installed correctly.
 

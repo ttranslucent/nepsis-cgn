@@ -26,11 +26,7 @@ import {
   evaluateInterpretationGate,
   evaluateThresholdGate,
 } from "@/lib/nepsisGates";
-import {
-  consumeConnectedNotice,
-  getStoredOpenAiKey,
-  hasStoredOpenAiKey,
-} from "@/lib/clientStorage";
+import { consumeConnectedNotice } from "@/lib/clientStorage";
 import { OperatorAccessNotice } from "@/app/components/OperatorAccessNotice";
 import { publicSiteMode } from "@/lib/publicMode";
 import { useEngineSession } from "@/lib/useEngineSession";
@@ -1085,7 +1081,6 @@ export default function EnginePage() {
   const [systemStatusOpen, setSystemStatusOpen] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [authSession, setAuthSession] = useState<AuthSessionState | null>(null);
-  const [hasConnectedKey, setHasConnectedKey] = useState<boolean | null>(null);
   const [showConnectedNotice, setShowConnectedNotice] = useState(false);
   const [connectedFromQuery, setConnectedFromQuery] = useState(false);
 
@@ -1247,9 +1242,8 @@ export default function EnginePage() {
     let connected = connectedFromQuery;
     try {
       connected = connected || consumeConnectedNotice();
-      setHasConnectedKey(hasStoredOpenAiKey());
     } catch {
-      setHasConnectedKey(false);
+      connected = connectedFromQuery;
     }
     setShowConnectedNotice(connected);
   }, [connectedFromQuery]);
@@ -2263,14 +2257,12 @@ export default function EnginePage() {
     setDetachedInput("");
     setDetachedBusy(true);
     try {
-      const apiKey = getStoredOpenAiKey();
       const res = await fetch("/api/run-with-nepsis", {
         method: "POST",
         headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           prompt: text,
           model: detachedModel,
-          apiKey: apiKey ?? undefined,
         }),
       });
       const data = (await res.json().catch(() => null)) as
@@ -2838,8 +2830,6 @@ export default function EnginePage() {
           ? `signed in as ${authSession.user}`
           : "anonymous access enabled"
         : "sign in required";
-  const llmKeyLabel =
-    hasConnectedKey == null ? "checking key" : hasConnectedKey ? "browser key stored" : "no browser key";
   const whyNotConverging = useMemo(
     () => governance?.why_not_converging ?? [],
     [governance?.why_not_converging],
@@ -3180,7 +3170,7 @@ export default function EnginePage() {
 
         {showConnectedNotice && (
           <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-2 text-xs text-green-200">
-            <span>LLM connected. Your workspace is ready for live model calls.</span>
+            <span>Model access is managed by server-side operator configuration or an MCP-capable model host.</span>
             <button
               onClick={() => setShowConnectedNotice(false)}
               className="rounded-full border border-green-500/50 px-2 py-0.5 text-[11px] hover:border-green-400"
@@ -3202,7 +3192,7 @@ export default function EnginePage() {
             </div>
             <div className="rounded-lg border border-nepsis-border bg-black/20 px-3 py-2 text-xs">
               <div className="text-nepsis-muted">Model sandbox</div>
-              <div className="mt-1 text-nepsis-text">{llmKeyLabel}</div>
+              <div className="mt-1 text-nepsis-text">server-side key required</div>
             </div>
           </div>
         )}
@@ -3222,11 +3212,14 @@ export default function EnginePage() {
           </div>
         )}
 
-        {userMode && hasConnectedKey === false && (
+        {userMode && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-            <span>OpenAI browser keys are local-demo only. Use server-side API key configuration for shared deployments.</span>
-            <a href="/settings" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
-              Open Model Settings
+            <span>
+              Model sandbox and assist routes require private server-side provider configuration. NepsisCGN does not
+              collect browser API keys.
+            </span>
+            <a href="/status" className="rounded-full border border-amber-400/50 px-3 py-1 hover:border-amber-300">
+              Open Status
             </a>
           </div>
         )}

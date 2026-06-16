@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-import { getStoredOpenAiKey, hasStoredOpenAiKey } from "@/lib/clientStorage";
 import { withCsrfHeader } from "@/lib/csrfClient";
 import { publicSiteMode } from "@/lib/publicMode";
 
@@ -31,13 +30,11 @@ export default function PlaygroundPage() {
   const [evaluation, setEvaluation] = useState<ProtoEvaluation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasBrowserKey, setHasBrowserKey] = useState<boolean | null>(null);
   const [hasServerKey, setHasServerKey] = useState<boolean | null>(null);
   const publicMode = publicSiteMode();
-  const keyReady = hasBrowserKey === true || hasServerKey === true;
+  const keyReady = hasServerKey === true;
 
   useEffect(() => {
-    setHasBrowserKey(hasStoredOpenAiKey());
     let cancelled = false;
     async function loadKeyState() {
       try {
@@ -78,19 +75,17 @@ export default function PlaygroundPage() {
 
     if (!keyReady) {
       setLoading(false);
-      setError("OpenAI key required. Add a browser-local key in Settings or configure a server-side key.");
+      setError("Server-side OpenAI key required. Configure the private operator deployment before running Playground.");
       return;
     }
 
     try {
-      const apiKey = getStoredOpenAiKey();
       const res = await fetch("/api/playground-nepsis", {
         method: "POST",
         headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           prompt,
           packId,
-          apiKey: apiKey ?? undefined,
         }),
       });
       const data = await res.json();
@@ -152,12 +147,10 @@ export default function PlaygroundPage() {
         </div>
         <div className="mb-2 text-xs text-nepsis-muted">
           OpenAI key:{" "}
-          {hasBrowserKey === null || hasServerKey === null
+          {hasServerKey === null
             ? "checking..."
             : keyReady
-              ? hasBrowserKey
-                ? "browser local key available"
-                : "server key configured"
+              ? "server key configured"
               : "missing"}
         </div>
         <p className="mb-4 text-sm text-nepsis-muted">
@@ -194,9 +187,9 @@ export default function PlaygroundPage() {
         >
           {loading ? "Running..." : "Run with NepsisCGN"}
         </button>
-        {!keyReady && hasBrowserKey !== null && hasServerKey !== null && (
-          <a href="/settings" className="ml-3 text-xs font-semibold text-nepsis-accent hover:underline">
-            Open Settings
+        {!keyReady && hasServerKey !== null && (
+          <a href="/status" className="ml-3 text-xs font-semibold text-nepsis-accent hover:underline">
+            Open Status
           </a>
         )}
 

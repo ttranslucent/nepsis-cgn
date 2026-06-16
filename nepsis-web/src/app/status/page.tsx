@@ -40,6 +40,14 @@ type StatusPayload = {
     enabled: boolean;
     hasServerOpenAiKey: boolean;
   };
+  providerAccess?: {
+    userProviderKeysAccepted: boolean;
+    modelAccessMode: string;
+    approvalBackend: string;
+    adminTestLogin: string;
+    invitedUserFlow: string;
+    userOwnedModelAccess: string;
+  };
   setup?: {
     publicSite: SetupPath;
     operatorMode: SetupPath;
@@ -260,6 +268,21 @@ export default function StatusPage() {
                 : "No server OpenAI key configured."}
             </p>
           </StatusCard>
+
+          {status.providerAccess && (
+            <StatusCard title="Provider Access" ok={!status.providerAccess.userProviderKeysAccepted}>
+              <p>
+                {status.providerAccess.userProviderKeysAccepted
+                  ? "User provider keys are accepted by this deployment."
+                  : "User provider keys are not accepted by this deployment."}
+              </p>
+              <p>Mode: {status.providerAccess.modelAccessMode}</p>
+              <p>Approval backend: {status.providerAccess.approvalBackend}</p>
+              <p>{status.providerAccess.adminTestLogin}</p>
+              <p>{status.providerAccess.invitedUserFlow}</p>
+              <p>{status.providerAccess.userOwnedModelAccess}</p>
+            </StatusCard>
+          )}
 
           <StatusCard title="Local MCP Bridge" ok={status.mcp.local?.available ?? false}>
             <p>Command: {status.mcp.local?.command ?? "nepsiscgn-mcp"}</p>

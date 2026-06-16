@@ -74,10 +74,8 @@ class SimpleOpenAiClient {
   };
 }
 
-export function createOpenAiClient(apiKeyOverride?: string | null): SimpleOpenAiClient {
-  const override = normalizeApiKey(apiKeyOverride);
-  const apiKey = override && !isPlaceholderOpenAiKey(override) ? override : ENV_API_KEY;
-  return new SimpleOpenAiClient(apiKey, API_URL);
+export function createOpenAiClient(): SimpleOpenAiClient {
+  return new SimpleOpenAiClient(ENV_API_KEY, API_URL);
 }
 
 export function hasConfiguredOpenAiKey(): boolean {

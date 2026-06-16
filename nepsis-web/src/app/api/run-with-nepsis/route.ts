@@ -6,7 +6,7 @@ import {
   hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
 import { requireEngineControlAuth } from "@/lib/engineApi";
-import { browserModelKeysAllowed, modelRoutesEnabled } from "@/lib/publicMode";
+import { modelRoutesEnabled } from "@/lib/publicMode";
 import { requireCsrfToken } from "@/lib/requestSecurity";
 
 export async function POST(req: Request) {
@@ -30,15 +30,13 @@ export async function POST(req: Request) {
       return csrfFailure;
     }
 
-    const { prompt, apiKey, model } = await req.json();
-    const browserApiKey = typeof apiKey === "string" ? apiKey : null;
-    const effectiveApiKey = browserModelKeysAllowed() ? browserApiKey : null;
+    const { prompt, model } = await req.json();
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
     }
 
-    if (!effectiveApiKey?.trim() && !hasConfiguredOpenAiKey()) {
+    if (!hasConfiguredOpenAiKey()) {
       return NextResponse.json(
         {
           error: "OpenAI key required",
@@ -49,7 +47,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const completion = await createOpenAiClient(effectiveApiKey).responses.create({
+    const completion = await createOpenAiClient().responses.create({
       model: typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL,
       input: prompt,
     });

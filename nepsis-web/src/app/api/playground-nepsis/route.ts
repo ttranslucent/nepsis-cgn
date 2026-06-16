@@ -5,7 +5,7 @@ import {
   extractOpenAiText,
   hasConfiguredOpenAiKey,
 } from "@/lib/openaiClient";
-import { browserModelKeysAllowed, modelRoutesEnabled } from "@/lib/publicMode";
+import { modelRoutesEnabled } from "@/lib/publicMode";
 import { requireEngineControlAuth } from "@/lib/engineApi";
 import { requireCsrfToken } from "@/lib/requestSecurity";
 import { buildProtoStateFromOutput, extractJingallCandidate, letterDelta } from "@/lib/protoPuzzleFromLlm";
@@ -18,7 +18,6 @@ const PLAYGROUND_PACKS = new Set(["jailing_jingall", "utf8_clean"]);
 type PlaygroundRequest = {
   prompt?: string;
   packId?: string;
-  apiKey?: string;
   model?: string;
 };
 
@@ -56,8 +55,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { prompt, packId, apiKey, model } = body as PlaygroundRequest;
-  const effectiveApiKey = browserModelKeysAllowed() ? apiKey ?? null : null;
+  const { prompt, packId, model } = body as PlaygroundRequest;
 
   if (!prompt || typeof prompt !== "string") {
     return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
@@ -67,7 +65,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Pack is not available in Playground" }, { status: 400 });
   }
 
-  if (!effectiveApiKey?.trim() && !hasConfiguredOpenAiKey()) {
+  if (!hasConfiguredOpenAiKey()) {
     return NextResponse.json(
       {
         error: "OpenAI key required",
@@ -79,7 +77,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const completion = await createOpenAiClient(effectiveApiKey).responses.create({
+    const completion = await createOpenAiClient().responses.create({
       model: typeof model === "string" && model.trim().length > 0 ? model.trim() : DEFAULT_OPENAI_MODEL,
       input: prompt,
     });

@@ -2,11 +2,10 @@
 
 import { startTransition, useEffect, useState } from "react";
 
-import { consumeConnectedNotice, hasStoredOpenAiKey } from "@/lib/clientStorage";
+import { consumeConnectedNotice } from "@/lib/clientStorage";
 import { publicSiteMode } from "@/lib/publicMode";
 
 export default function HomePage() {
-  const [hasKey, setHasKey] = useState(false);
   const [showConnectedMessage, setShowConnectedMessage] = useState(false);
   const publicMode = publicSiteMode();
 
@@ -16,18 +15,17 @@ export default function HomePage() {
     const connectedFromNotice = consumeConnectedNotice();
     startTransition(() => {
       setShowConnectedMessage(connectedFromQuery || connectedFromNotice);
-      setHasKey(hasStoredOpenAiKey());
     });
   }, []);
 
-  const primaryHref = publicMode ? "/status" : hasKey ? "/engine" : "/settings";
-  const primaryLabel = publicMode ? "View System Status" : hasKey ? "Open Engine Workspace" : "Connect Model Key";
+  const primaryHref = publicMode ? "/status" : "/operator";
+  const primaryLabel = publicMode ? "View System Status" : "Open Operator Workspace";
 
   return (
     <div className="mx-auto w-full max-w-[1380px] px-4 py-8 md:px-6 md:py-12">
       {showConnectedMessage && (
         <div className="mb-5 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-          LLM connected successfully. Nepsis Engine is ready.
+          Model access is managed by the signed-in operator deployment or by an MCP-capable model host.
         </div>
       )}
 

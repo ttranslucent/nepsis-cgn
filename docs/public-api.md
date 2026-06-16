@@ -151,7 +151,8 @@ default.
 MCP clients should authenticate to their own model provider separately. NepsisCGN
 does not proxy visitor OpenAI, Claude, or Gemini accounts through the public web
 site, and stateless MCP tools do not create backend session files or packet
-stores.
+stores. Future Supabase invites should approve who can log in to private
+operator surfaces; they should not store raw model-provider API keys.
 
 To prove hosted Codex connectivity end to end, configure Codex with a
 streamable-HTTP MCP server and run `scripts/mcp-hosted-verify.py`. See

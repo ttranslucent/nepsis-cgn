@@ -43,6 +43,7 @@ UNSAFE_PUBLIC_FLAGS = {
     "NEPSIS_AUTH_ALLOW_CODE_PREVIEW",
 }
 OPENAI_SERVER_KEY_NAMES = {"OPENAI_API_KEY", "NEPSIS_OPENAI_API_KEY"}
+DEPRECATED_BROWSER_KEY_FLAGS = {"NEPSIS_BROWSER_MODEL_KEYS_ALLOWED"}
 
 
 @dataclass(frozen=True)
@@ -179,6 +180,20 @@ def _scan_text(path: Path, text: str) -> list[Issue]:
                     path=path,
                     line=assignment.line,
                     message=f"{name} is browser-exposed; keep OpenAI keys and other secrets server-only.",
+                )
+            )
+
+    for name in sorted(DEPRECATED_BROWSER_KEY_FLAGS):
+        assignment = assignments.get(name)
+        if assignment and assignment.value.strip():
+            issues.append(
+                Issue(
+                    path=path,
+                    line=assignment.line,
+                    message=(
+                        f"{name} is deprecated. NepsisCGN must not accept browser-submitted provider API keys; "
+                        "use server-side operator credentials or MCP host auth."
+                    ),
                 )
             )
 
