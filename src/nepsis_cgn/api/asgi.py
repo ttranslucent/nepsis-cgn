@@ -12,6 +12,7 @@ from ..core.mvp import build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from ..mcp.handler import handle_mcp_request
 from ..provenance import record_packet_observation
+from .private_demo import build_private_demo_runtime_packet
 from .operator_packet import (
     abandon_packet,
     commit_iteration,
@@ -167,6 +168,14 @@ def create_app():
             request_context=_request_context(request),
         )
         return packet
+
+    @app.post("/v1/private-demo")
+    async def run_private_demo(request: Request):
+        body = await _read_json_body(request)
+        try:
+            return build_private_demo_runtime_packet(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/operator-packet/start")
     async def start_operator_packet_route(request: Request):
@@ -899,6 +908,7 @@ def route_manifest() -> list[dict[str, str]]:
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
         {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
         {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
+        {"method": "POST", "path": "/v1/private-demo", "description": "Run no-PHI private demo runtime packet"},
         {"method": "POST", "path": "/v1/operator-packet/start", "description": "Start stateless operator packet"},
         {"method": "POST", "path": "/v1/operator-packet/state", "description": "Inspect stateless operator packet state"},
         {"method": "POST", "path": "/v1/operator-packet/frame", "description": "Lock frame into stateless operator packet"},

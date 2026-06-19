@@ -197,6 +197,35 @@ deprecated browser-key flags, and public-site env combinations that would enable
 model routes, anonymous engine controls, login preview codes, wildcard CORS, or
 server OpenAI keys.
 
+### Private demo runtime endpoint
+
+`POST /v1/private-demo` is the backend target for the NepsisAI authenticated
+Full Private Demo page. It is protected by the same backend API token policy as
+the non-public API routes and requires an explicit no-PHI acknowledgement.
+
+Example:
+
+```bash
+curl -sS -X POST https://<private-backend>/v1/private-demo \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <backend-token>" \
+  -d '{
+    "case_id": "jailing",
+    "prompt": "No PHI. Source token is JINGALL and the candidate answer collapses to JAILING; preserve the mismatch and show the packet audit.",
+    "no_phi_acknowledged": true,
+    "thread_id": "private-demo-thread",
+    "user_id": "private-demo-user"
+  }'
+```
+
+The response has `schema_id: "nepsis.private_demo_runtime_packet"`,
+`mode: "external-private-runtime"`, a nested
+`operator_packet.schema_id: "nepsis.operator_packet"`, and audit events such as
+`LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and `SET_THRESHOLD_DECISION`.
+This is a no-PHI packet/audit runtime for invited testing. It is not the public
+deterministic `/v1/mvp` packet and it is not an autonomous clinical or model
+recommendation endpoint.
+
 ## Public API and MCP
 
 Public-safe web access is `POST /api/engine/mvp` from the Vercel app. The direct

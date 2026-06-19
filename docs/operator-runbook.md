@@ -57,6 +57,10 @@ npm run dev
   and backed by configured backend auth. Hosted model routes require separate
   caps and server-side credentials; MCP users should normally bring their own
   authenticated model client.
+- `POST /v1/private-demo` is the authenticated NepsisAI private demo backend
+  target. It requires `no_phi_acknowledged: true` and returns a
+  `nepsis.private_demo_runtime_packet` with a nested operator packet audit. It
+  must not be confused with public `POST /v1/mvp`.
 - Clinical demo packets are not medical advice, not diagnosis, and not clinical
   decision support.
 - Browser-stored OpenAI keys are no longer supported. `/settings` only reports
@@ -75,6 +79,9 @@ npm run dev
 - Backend explicitly sets `NEPSIS_API_ALLOW_ANON=false`.
 - Web has `NEPSIS_API_BASE_URL=https://<render-service>` and matching
   `NEPSIS_API_TOKEN`.
+- The NepsisAI front door must set `NEPSIS_PRIVATE_DEMO_URL` to the external
+  backend `https://<render-service>/v1/private-demo`, not `/v1/mvp`, and must
+  pass its private backend smoke check before outside testers use the page.
 - Web has a long random `NEPSIS_AUTH_SECRET`.
 - Web sets `NEPSIS_AUTH_ALLOWED_EMAILS` to the exact operator email addresses
   permitted to request OTP login.
@@ -96,6 +103,34 @@ npm run dev
 - `.venv/bin/python scripts/check_openai_secrets.py --all` passes before
   deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
+
+## Private Demo Runtime Smoke
+
+Use this smoke when validating the backend before wiring the NepsisAI front door:
+
+```bash
+curl -sS -X POST https://<private-backend>/v1/private-demo \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <backend-token>" \
+  -d '{
+    "case_id": "jailing",
+    "prompt": "No PHI. Source token is JINGALL and the candidate answer collapses to JAILING; preserve the mismatch and show the packet audit.",
+    "no_phi_acknowledged": true,
+    "thread_id": "private-demo-smoke",
+    "user_id": "private-demo-smoke"
+  }'
+```
+
+Expected response evidence:
+
+- `schema_id` is `nepsis.private_demo_runtime_packet`.
+- `mode` is `external-private-runtime`.
+- `operator_packet.schema_id` is `nepsis.operator_packet`.
+- `audit_trace` includes `LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and
+  `SET_THRESHOLD_DECISION`.
+
+The private demo runtime is still no-PHI and operator-reviewed. A threshold hold
+is expected; do not present the packet as autonomous clinical guidance.
 
 ## Private operator deployment
 
