@@ -9,7 +9,11 @@ description = "Nepsis Constraint Geometry Navigation (NepsisCGN) – interpretan
 authors = [{ name = "Trent Thorn" }]
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pyyaml"]
+dependencies = [
+    "cryptography>=42.0.0",
+    "fastapi>=0.110.0",
+    "pyyaml",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -19,10 +23,8 @@ dev = [
     "mypy",
 ]
 api = [
-    "fastapi>=0.110.0",
     "httpx2>=2.3.0",
     "uvicorn[standard]>=0.30.0",
-    "cryptography>=42.0.0",
 ]
 
 [tool.setuptools.packages.find]
