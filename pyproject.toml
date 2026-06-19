@@ -33,3 +33,6 @@ nepsiscgn = "nepsis_cgn.cli.main:entrypoint"
 nepsiscgn-api = "nepsis_cgn.api.server:entrypoint"
 nepsiscgn-api-asgi = "nepsis_cgn.api.asgi:entrypoint"
 nepsiscgn-mcp = "nepsis_cgn.mcp.stdio:entrypoint"
+
+[tool.vercel]
+entrypoint = "app:app"
