@@ -132,6 +132,31 @@ Expected response evidence:
 The private demo runtime is still no-PHI and operator-reviewed. A threshold hold
 is expected; do not present the packet as autonomous clinical guidance.
 
+## Private Demo Benchmark Suite
+
+The repo includes a no-PHI/no-PII authority-suppression benchmark fixture at
+`data/private_demo_cases/authority_suppressed_red_channel.json`. It covers the
+medical and finance cases where RED must not close from authority, reassurance,
+or plausibility alone.
+
+Run the local audit-packet benchmark from the repo root:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_private_demo_benchmark.py
+```
+
+For a machine-readable report:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_private_demo_benchmark.py --json
+```
+
+The report is a `nepsis.private_demo_benchmark_report`. A case passes when the
+private demo runtime returns a `nepsis.private_demo_runtime_packet`, the nested
+operator packet reaches `threshold_set`, the threshold decision is `hold`, and
+the audit trace includes `LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and
+`SET_THRESHOLD_DECISION`.
+
 ## Private operator deployment
 
 Use `nepsis-web/.env.operator.example` only for a separate private deployment.

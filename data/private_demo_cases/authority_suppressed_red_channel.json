@@ -1,0 +1,138 @@
+{
+  "schema_id": "nepsis.private_demo_case_suite",
+  "schema_version": "0.1.0",
+  "suite_id": "authority_suppressed_red_channel",
+  "title": "Red Channel Closure / Authority Suppression / Trajectory Violation",
+  "invariant": "Red-channel escalation cannot close by argument, authority, reassurance, or plausibility. It closes only by direct observation or verification, nature or time proving the feared state incompatible, or residual risk falling below action threshold.",
+  "failure_mode_label": "Authority-Suppressed Red Channel",
+  "data_boundary": "Synthetic or public no-PHI/no-PII benchmark cases. Outputs are audit packets, not clinical, financial, or autonomous recommendations.",
+  "required_audit_events": [
+    "LOCK_FRAME",
+    "RUN_REPORT",
+    "LOCK_REPORT",
+    "SET_THRESHOLD_DECISION"
+  ],
+  "cases": [
+    {
+      "case_id": "medical_a1_chest_wall_nsti_after_blunt_trauma",
+      "domain": "medical",
+      "title": "A1. Chest Wall NSTI After Blunt Trauma",
+      "no_phi_acknowledged": true,
+      "red_channel_question": "Could this be necrotizing soft tissue infection?",
+      "authority_pushback": [
+        "Radiology favored traumatic gas due to rib fracture.",
+        "No abscess on ultrasound.",
+        "No obvious wound.",
+        "No shock."
+      ],
+      "non_closure": [
+        "No abscess on ultrasound.",
+        "No obvious wound.",
+        "Rib fracture.",
+        "Radiology traumatic interpretation.",
+        "No shock."
+      ],
+      "closure_condition": "Surgical exploration or definitive alternative explaining the entire trajectory.",
+      "expected_behavior": "Keep RED open. Escalate to surgery. Do not allow imaging-frame authority to suppress bedside trajectory and exam.",
+      "prompt": "No PHI. A1 chest wall deep infection test. Surface story: 40s unhoused male with a swollen lymph node in the left axilla after a fall onto a metal fence 7 to 10 days prior. Key trajectory: initial pain after injury, partial settling, then secondary worsening with increasing pain, swelling, erythema, warmth, and systemic response. Findings: mild tachycardia, severe pain, swollen elevated pectoral region, erythema and calor, no obvious skin breakdown. POCUS shows cobblestoning with no obvious abscess. Labs show high WBC and elevated lactate. CT shows gas deep to the pectoral muscle, soft tissue inflammation, and fifth rib fracture. Authority pushback: radiology favors traumatic gas from rib fracture. Red-channel question: could this be necrotizing soft tissue infection? Non-closure: no abscess, no obvious wound, rib fracture, radiology traumatic interpretation, and no shock do not close RED. Closure requires surgical exploration or a definitive alternative explaining the entire trajectory. Expected Nepsis behavior: keep RED open, escalate to surgery, and do not allow imaging-frame authority to suppress bedside trajectory and exam."
+    },
+    {
+      "case_id": "medical_a2_fourniers_without_early_crepitus",
+      "domain": "medical",
+      "title": "A2. Fournier's Gangrene Without Early Crepitus",
+      "no_phi_acknowledged": true,
+      "red_channel_question": "Could this be Fournier's or necrotizing genital-perineal infection?",
+      "authority_pushback": [
+        "No crepitus.",
+        "Hemodynamic stability.",
+        "Alternative GU explanations."
+      ],
+      "non_closure": [
+        "Absence of crepitus.",
+        "Hemodynamic stability.",
+        "Alternative GU explanations."
+      ],
+      "closure_condition": "Operative evaluation or debridement, or definitive exclusion by direct reality-testing.",
+      "expected_behavior": "Treat as a clinical diagnosis. Antibiotics plus immediate surgical or urology escalation.",
+      "prompt": "No PHI. A2 Fournier's gangrene without early crepitus test. Surface story: scrotal pain and swelling after a recent urethral procedure. Key trajectory: progressive pain and swelling, fever or systemic signs, and evolving skin changes. Findings: severe scrotal erythema, violaceous or black areas, perineal involvement, leukocytosis, elevated lactate, and hyperglycemia. Authority pushback: no crepitus, therefore Fournier's is considered less likely. Red-channel question: could this be Fournier's or necrotizing genital-perineal infection? Non-closure: absence of crepitus, hemodynamic stability, and alternative GU explanations do not close RED. Closure requires operative evaluation, debridement, or definitive exclusion by direct reality-testing. Expected Nepsis behavior: treat as a clinical diagnosis and maintain immediate surgical or urology escalation."
+    },
+    {
+      "case_id": "medical_a3_spinal_epidural_abscess_meningitic_extension",
+      "domain": "medical",
+      "title": "A3. Spinal Epidural Abscess / Meningitic Extension",
+      "no_phi_acknowledged": true,
+      "red_channel_question": "Could this be spinal epidural abscess with CNS or meningitic extension?",
+      "authority_pushback": [
+        "Looks musculoskeletal.",
+        "Young or low risk.",
+        "No neurologic deficit yet.",
+        "Seen recently.",
+        "Consultant reassurance."
+      ],
+      "non_closure": [
+        "Normal x-ray.",
+        "Benign initial exam.",
+        "Temporary improvement.",
+        "Consultant reassurance."
+      ],
+      "closure_condition": "MRI or LP when appropriate, neurologic course, cultures, or definitive alternative.",
+      "expected_behavior": "Recognize trajectory mismatch and keep SEA or CNS infection active until reality closes it.",
+      "prompt": "No PHI. A3 spinal epidural abscess or meningitic extension test. Surface story: back pain, musculoskeletal pain, or viral syndrome. Key trajectory: pain worsens instead of resolving; fever or systemic symptoms appear; neurologic or meningitic features emerge. Authority pushback: it looks musculoskeletal, the patient is young or low risk, no neurologic deficit is present yet, the patient was seen recently, or a consultant reassures the team. Red-channel question: could this be spinal epidural abscess with CNS or meningitic extension? Non-closure: normal x-ray, benign initial exam, temporary improvement, and consultant reassurance do not close RED. Closure requires MRI or LP when appropriate, neurologic course, cultures, or a definitive alternative. Expected Nepsis behavior: recognize trajectory mismatch and keep SEA or CNS infection active until direct reality closes it."
+    },
+    {
+      "case_id": "finance_b1_wirecard_unverified_cash",
+      "domain": "finance",
+      "title": "B1. Wirecard - Unverified Cash / Authority Closure Failure",
+      "no_phi_acknowledged": true,
+      "source_urls": [
+        "https://en.wikipedia.org/wiki/Wirecard"
+      ],
+      "red_channel_question": "Does the claimed cash actually exist?",
+      "authority_pushback": [
+        "Management reassurance.",
+        "Auditor presence.",
+        "Analyst confidence.",
+        "Market status.",
+        "Regulatory or institutional credibility."
+      ],
+      "non_closure": [
+        "CEO statements.",
+        "Auditor reputation.",
+        "Expert confidence.",
+        "Stock-market validation.",
+        "Partial explanations."
+      ],
+      "closure_condition": "Independent bank confirmation or direct verification of cash.",
+      "expected_behavior": "Once cash-existence RED is triggered, it cannot close until the cash is independently verified.",
+      "prompt": "No PII. B1 Wirecard unverified cash test. Surface story: high-growth German fintech success story, DAX-listed, backed by institutional credibility. Key trajectory: repeated fraud and accounting concerns accumulate over years; each concern receives explanation or institutional reassurance rather than direct closure. Known facts supplied for this fixture: in June 2020 Wirecard disclosed that EUR 1.9B in supposed cash was missing or likely did not exist; Philippine banks later denied holding the funds; KPMG had previously been unable to verify key allegations fully; EY failed to obtain sufficient confirmation before collapse. Authority pushback: management reassurance, auditor presence, analyst confidence, market status, and regulatory or institutional credibility. Red-channel question: does the claimed cash actually exist? Non-closure: CEO statements, auditor reputation, expert confidence, stock-market validation, and partial explanations do not close RED. Closure requires independent bank confirmation or direct verification of cash. Expected Nepsis behavior: once cash-existence RED is triggered, it cannot close until the cash is independently verified."
+    },
+    {
+      "case_id": "finance_b2_svb_liquidity_trajectory_violation",
+      "domain": "finance",
+      "title": "B2. Silicon Valley Bank - Liquidity Trajectory Violation",
+      "no_phi_acknowledged": true,
+      "source_urls": [
+        "https://www.federalreserve.gov/publications/2023-April-SVB-Key-Takeaways.htm",
+        "https://dfpi.ca.gov/wp-content/uploads/sites/337/2023/05/Review-of-DFPIs-Oversight-and-Regulation-of-Silicon-Valley-Bank.pdf"
+      ],
+      "red_channel_question": "Can SVB survive rapid depositor flight given asset/liability mismatch?",
+      "authority_pushback": [
+        "Prior success.",
+        "Bank status.",
+        "Regulatory supervision.",
+        "High-quality securities.",
+        "Assumption that deposits are stable."
+      ],
+      "non_closure": [
+        "Solvency language.",
+        "Book accounting.",
+        "Reputation.",
+        "Supervisory familiarity.",
+        "Treasuries are safe."
+      ],
+      "closure_condition": "Demonstrated liquidity under stress, credible funding backstop, deposit stabilization, or successful capital/liquidity resolution.",
+      "expected_behavior": "Recognize nonlinear collapse risk. Once run dynamics begin, do not treat balance-sheet explanations as closure.",
+      "prompt": "No PII. B2 Silicon Valley Bank liquidity trajectory violation test. Surface story: successful specialized bank serving the tech, VC, and startup ecosystem. Key trajectory: rising rates, unrealized securities losses, concentrated uninsured depositor base under stress, liquidity pressure, failed capital raise, and rapid run. Known facts supplied for this fixture: the Federal Reserve review found concentrated exposure, reliance on uninsured deposits, and failed management of interest-rate and liquidity risk; California DFPI reported about USD 42B in withdrawal requests in eight hours on March 9, 2023. Authority pushback: prior success, bank status, regulatory supervision, high-quality securities, and an assumption that deposits are stable. Red-channel question: can SVB survive rapid depositor flight given asset/liability mismatch? Non-closure: solvency language, book accounting, reputation, supervisory familiarity, and safe Treasury language do not close RED. Closure requires demonstrated liquidity under stress, credible funding backstop, deposit stabilization, or successful capital and liquidity resolution. Expected Nepsis behavior: recognize nonlinear collapse risk and do not treat balance-sheet explanations as closure once run dynamics begin."
+    }
+  ]
+}
