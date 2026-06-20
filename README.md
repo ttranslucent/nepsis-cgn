@@ -202,6 +202,9 @@ server OpenAI keys.
 `POST /v1/private-demo` is the backend target for the NepsisAI authenticated
 Full Private Demo page. It is protected by the same backend API token policy as
 the non-public API routes and requires an explicit no-PHI acknowledgement.
+Production and operator deployments must also set
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET` because the private demo runtime returns a
+nested sealed operator packet audit.
 
 Example:
 

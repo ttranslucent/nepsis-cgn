@@ -78,3 +78,23 @@ def test_asgi_private_demo_runtime_requires_no_phi_acknowledgement(monkeypatch) 
 
     assert response.status_code == 400
     assert "no_phi_acknowledged must be true" in response.json()["detail"]
+
+
+def test_asgi_private_demo_runtime_reports_missing_seal_secret_as_server_misconfiguration(monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.delenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.setenv("NODE_ENV", "production")
+
+    client = TestClient(asgi.create_app())
+    response = client.post(
+        "/v1/private-demo",
+        headers={"Authorization": "Bearer test-token"},
+        json={
+            "prompt": "No PHI. Preserve the private demo backend boundary.",
+            "no_phi_acknowledged": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Private demo runtime is not configured."

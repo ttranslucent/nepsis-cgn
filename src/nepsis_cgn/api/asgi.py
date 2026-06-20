@@ -28,6 +28,10 @@ from .service import EngineApiService, Family
 LOGGER = logging.getLogger("nepsis_cgn.api.asgi")
 _RATE_LIMIT_LOCK = RLock()
 _RATE_LIMIT_STATE: dict[str, list[float]] = {}
+_PRIVATE_DEMO_MISCONFIGURATION_DETAIL = "Private demo runtime is not configured."
+_PRIVATE_DEMO_SERVER_CONFIG_ERRORS = {
+    "NEPSIS_OPERATOR_PACKET_SEAL_SECRET is required in production or operator mode",
+}
 
 
 def _default_store_path() -> str:
@@ -45,6 +49,10 @@ def _operator_family(value: Any) -> Family:
     if value not in {"puzzle", "clinical", "safety"}:
         raise ValueError("family must be one of: puzzle, clinical, safety")
     return value
+
+
+def _is_private_demo_server_config_error(exc: ValueError) -> bool:
+    return str(exc) in _PRIVATE_DEMO_SERVER_CONFIG_ERRORS
 
 
 def _required_operator_packet(body: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +183,12 @@ def create_app():
         try:
             return build_private_demo_runtime_packet(body)
         except ValueError as exc:
+            if _is_private_demo_server_config_error(exc):
+                LOGGER.error(
+                    "private_demo_runtime_misconfigured",
+                    extra={"request_id": getattr(request.state, "request_id", None)},
+                )
+                raise HTTPException(status_code=503, detail=_PRIVATE_DEMO_MISCONFIGURATION_DETAIL) from exc
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/operator-packet/start")
