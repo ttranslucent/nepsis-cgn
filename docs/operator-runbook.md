@@ -76,6 +76,8 @@ npm run dev
 - Backend has `NEPSIS_API_HOST=0.0.0.0`, `NEPSIS_API_PORT=$PORT`,
   `NEPSIS_API_TOKEN`, `NEPSIS_API_ALLOWED_ORIGINS`, and, if sessions stay
   enabled, persistent `NEPSIS_API_STORE_PATH`.
+- Backend sets `NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so `/v1/private-demo` can
+  return a sealed nested operator packet audit.
 - Backend explicitly sets `NEPSIS_API_ALLOW_ANON=false`.
 - Web has `NEPSIS_API_BASE_URL=https://<render-service>` and matching
   `NEPSIS_API_TOKEN`.
@@ -107,6 +109,8 @@ npm run dev
 ## Private Demo Runtime Smoke
 
 Use this smoke when validating the backend before wiring the NepsisAI front door:
+confirm the backend has `NEPSIS_API_TOKEN` and
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET` set first.
 
 ```bash
 curl -sS -X POST https://<private-backend>/v1/private-demo \
