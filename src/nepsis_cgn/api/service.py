@@ -15,6 +15,13 @@ from typing import Any, Dict, Literal, Optional
 from uuid import uuid4
 
 from ..core import FrameVersion, GovernanceCalibration, GovernanceCosts, NavigationController
+from ..core.case_reasoning import (
+    compile_case_reasoning,
+    mark_case_reasoning_validation,
+    prompt_hash as case_reasoning_prompt_hash,
+    threshold_fields_from_case_reasoning,
+    validate_case_reasoning,
+)
 from ..core.interpretant import WordPuzzleSign
 from ..core.runtime import build_navigation_controller
 from ..manifolds.clinical import ClinicalSign
@@ -263,6 +270,11 @@ class EngineApiService:
             interpretation_context.setdefault("report_text", report_text)
             interpretation_context.setdefault("report_synced", True)
             interpretation_context.setdefault("contradictions_status", "none_identified")
+            _attach_case_reasoning(
+                session,
+                interpretation_context,
+                report_text=report_text,
+            )
             context["interpretation"] = interpretation_context
             threshold_context = context.get("threshold") or {}
             if not isinstance(threshold_context, dict):
@@ -355,6 +367,8 @@ class EngineApiService:
             threshold_context["decision"] = decision
             threshold_context["hold_reason"] = hold_reason
             context["threshold"] = threshold_context
+            # Thresholding must never run on raw frame text alone; it depends on
+            # a validated Case Reasoning Compiler packet tied to this frame.
             audit = self.stage_audit_session(
                 session.session_id,
                 context=context,
@@ -627,6 +641,17 @@ class EngineApiService:
             if context is None:
                 context = _stored_stage_audit_context(session.workspace_state)
             normalized_context = _normalize_stage_audit_context(context)
+            if "interpretation" in normalized_context:
+                report_text = _string_or_default(
+                    normalized_context["interpretation"],
+                    keys=("report_text", "reportText"),
+                    default="",
+                )
+                _attach_case_reasoning(
+                    session,
+                    normalized_context["interpretation"],
+                    report_text=report_text,
+                )
             if persist_context and normalized_context:
                 session.workspace_state = _merge_workspace_state(
                     session.workspace_state,
@@ -643,6 +668,8 @@ class EngineApiService:
             threshold_packet = _build_threshold_stage_packet(
                 normalized_context.get("threshold"),
                 latest_packet,
+                interpretation_context=normalized_context.get("interpretation"),
+                frame_packet=frame_packet,
             )
             latest_packet_id = _packet_meta_value(latest_packet, "packet_id")
             self._record_packet(
@@ -677,6 +704,28 @@ class EngineApiService:
             interpretation_checks = _evaluate_interpretation_checks(interpretation_packet)
             threshold_checks = _evaluate_threshold_checks(threshold_packet)
 
+            interpretation_gate = _build_stage_gate(
+                checks=interpretation_checks,
+                packet=interpretation_packet,
+                stage_name="Interpretation",
+                prompt_map=_INTERPRETATION_COACH_PROMPTS,
+            )
+            if isinstance(interpretation_packet.get("case_reasoning_validation"), dict):
+                interpretation_gate["case_reasoning_validation"] = _json_copy(
+                    interpretation_packet["case_reasoning_validation"]
+                )
+
+            threshold_gate = _build_stage_gate(
+                checks=threshold_checks,
+                packet=threshold_packet,
+                stage_name="Threshold",
+                prompt_map=_THRESHOLD_COACH_PROMPTS,
+            )
+            if isinstance(threshold_packet.get("case_reasoning_validation"), dict):
+                threshold_gate["case_reasoning_validation"] = _json_copy(
+                    threshold_packet["case_reasoning_validation"]
+                )
+
             return {
                 "session_id": session.session_id,
                 "stage": session.navigation.current_stage,
@@ -687,18 +736,8 @@ class EngineApiService:
                     stage_name="Frame",
                     prompt_map=_FRAME_COACH_PROMPTS,
                 ),
-                "interpretation": _build_stage_gate(
-                    checks=interpretation_checks,
-                    packet=interpretation_packet,
-                    stage_name="Interpretation",
-                    prompt_map=_INTERPRETATION_COACH_PROMPTS,
-                ),
-                "threshold": _build_stage_gate(
-                    checks=threshold_checks,
-                    packet=threshold_packet,
-                    stage_name="Threshold",
-                    prompt_map=_THRESHOLD_COACH_PROMPTS,
-                ),
+                "interpretation": interpretation_gate,
+                "threshold": threshold_gate,
                 "source": {
                     "packet_count": len(session.packets),
                     "latest_packet_id": _packet_meta_value(latest_packet, "packet_id"),
@@ -1718,12 +1757,14 @@ _INTERPRETATION_COACH_PROMPTS: dict[str, str] = {
     "report_text": "What observations, signals, or evidence do we have so far?",
     "hypothesis_count": "What competing interpretations are still live?",
     "evidence_count": "What evidence supports or contradicts each interpretation?",
+    "case_reasoning_compiler": "Run the Case Reasoning Compiler before locking the report.",
     "evaluation_freshness": "Evidence changed after the last run. Re-run CALL + REPORT now.",
     "contradictions_declared": "Declare contradiction status explicitly, or mark none identified.",
     "contradiction_density": "Contradictions are high. Add disambiguating evidence before locking.",
 }
 
 _THRESHOLD_COACH_PROMPTS: dict[str, str] = {
+    "case_reasoning_compiler": "Thresholding requires a valid Case Reasoning Compiler packet tied to this frame.",
     "posterior_available": "Posterior is missing. Run interpretation to generate hypotheses first.",
     "loss_asymmetry": "Define loss asymmetry (false positive vs false negative cost).",
     "red_override_metadata": "Missing red-gate metadata. Re-run interpretation to refresh governance values.",
@@ -1783,6 +1824,57 @@ def _operator_stage_context(session: EngineSession) -> Dict[str, Dict[str, Any]]
     if "frame" not in normalized:
         normalized["frame"] = _build_frame_stage_packet(session, None)
     return normalized
+
+
+def _attach_case_reasoning(
+    session: EngineSession,
+    interpretation_context: Dict[str, Any],
+    *,
+    report_text: str,
+) -> None:
+    frame = session.navigation.frame
+    frame_id = frame.frame_id if frame else ""
+    source_text = _string_or_default(
+        interpretation_context,
+        keys=("case_reasoning_source_text", "caseReasoningSourceText", "source_text", "sourceText"),
+        default=frame.text if frame and frame.text else report_text,
+    )
+    input_hash = _string_or_default(
+        interpretation_context,
+        keys=("input_prompt_hash", "inputPromptHash", "prompt_hash", "promptHash"),
+        default=case_reasoning_prompt_hash(source_text),
+    )
+    raw_case_id = _context_value(interpretation_context, "case_id", "caseId")
+    case_id = _as_string(raw_case_id) or "custom"
+    raw = _context_value(interpretation_context, "case_reasoning", "caseReasoning", "case_reasoning_compiler")
+
+    if isinstance(raw, dict):
+        compiler = _json_copy(raw) or {}
+        validation = validate_case_reasoning(
+            compiler,
+            source_text=source_text,
+            frame_id=frame_id,
+            input_prompt_hash=input_hash,
+        )
+        mark_case_reasoning_validation(compiler, validation)
+    else:
+        compiler = compile_case_reasoning(
+            source_text,
+            case_id=case_id,
+            frame_id=frame_id,
+            input_prompt_hash=input_hash,
+        )
+        validation = {
+            "status": "PASS" if compiler.get("compiler_valid") is True else "BLOCK",
+            "errors": _json_copy(compiler.get("validation_errors")) or [],
+            "warnings": _json_copy(compiler.get("validation_warnings")) or [],
+        }
+
+    interpretation_context["case_reasoning_source_text"] = source_text
+    interpretation_context["input_frame_id"] = frame_id
+    interpretation_context["input_prompt_hash"] = input_hash
+    interpretation_context["case_reasoning"] = compiler
+    interpretation_context["case_reasoning_validation"] = validation
 
 
 def _operator_phase_event_names(event_log: list[Dict[str, Any]]) -> list[str]:
@@ -2021,6 +2113,8 @@ def _build_frame_stage_packet(session: EngineSession, context: Optional[Dict[str
     soft_default = list(frame.constraints_soft) if frame else []
 
     return {
+        "frame_id": frame.frame_id if frame else "",
+        "frame_version": frame.frame_version if frame else None,
         "problem_statement": _string_or_default(section, keys=("problem_statement", "problemStatement"), default=frame.text if frame else ""),
         "catastrophic_outcome": _string_or_default(
             section,
@@ -2101,14 +2195,31 @@ def _build_interpretation_stage_packet(
             default="",
         ),
         "contradiction_density": contradiction_density,
+        "input_frame_id": _string_or_default(section, keys=("input_frame_id", "inputFrameId"), default=""),
+        "input_prompt_hash": _string_or_default(section, keys=("input_prompt_hash", "inputPromptHash", "prompt_hash", "promptHash"), default=""),
+        "case_reasoning": _json_copy(_context_value(section, "case_reasoning", "caseReasoning", "case_reasoning_compiler")),
+        "case_reasoning_validation": _json_copy(_context_value(section, "case_reasoning_validation", "caseReasoningValidation")) or {},
     }
 
 
 def _build_threshold_stage_packet(
     context: Optional[Dict[str, Any]],
     latest_packet: Optional[Dict[str, Any]],
+    *,
+    interpretation_context: Optional[Dict[str, Any]] = None,
+    frame_packet: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     section = context or {}
+    interpretation_section = interpretation_context or {}
+    case_reasoning = _json_copy(
+        _context_value(interpretation_section, "case_reasoning", "caseReasoning", "case_reasoning_compiler")
+    )
+    case_reasoning_validation = _json_copy(
+        _context_value(interpretation_section, "case_reasoning_validation", "caseReasoningValidation")
+    ) or {}
+    compiler_threshold = threshold_fields_from_case_reasoning(
+        case_reasoning if isinstance(case_reasoning, dict) else None
+    )
 
     posterior = latest_packet.get("posterior") if isinstance(latest_packet, dict) else None
     hypothesis_count = len(posterior) if isinstance(posterior, dict) else 0
@@ -2123,18 +2234,28 @@ def _build_threshold_stage_packet(
     if loss_not_treat is None and isinstance(governance, dict):
         loss_not_treat = _to_optional_float(governance.get("loss_notreat"))
 
-    warning_level = _string_or_default(section, keys=("warning_level", "warningLevel"), default="")
+    warning_level = _string_or_default(
+        section,
+        keys=("warning_level", "warningLevel"),
+        default=str(compiler_threshold.get("warning_level") or ""),
+    )
     if not warning_level and isinstance(governance, dict):
         warning_level = _as_string(governance.get("warning_level"))
 
     gate_crossed = _to_optional_bool(_context_value(section, "gate_crossed", "gateCrossed"))
+    if gate_crossed is None and "gate_crossed" in compiler_threshold:
+        gate_crossed = _to_optional_bool(compiler_threshold.get("gate_crossed"))
     if gate_crossed is None and isinstance(governance, dict) and isinstance(metrics, dict):
         p_bad = _to_optional_float(metrics.get("p_bad"))
         theta = _to_optional_float(governance.get("theta"))
         if p_bad is not None and theta is not None:
             gate_crossed = p_bad >= theta
 
-    recommendation = _string_or_default(section, keys=("recommendation",), default="")
+    recommendation = _string_or_default(
+        section,
+        keys=("recommendation",),
+        default=str(compiler_threshold.get("recommendation") or ""),
+    )
     if not recommendation and isinstance(governance, dict):
         recommendation = _as_string(governance.get("recommended_action"))
 
@@ -2149,8 +2270,27 @@ def _build_threshold_stage_packet(
         "warning_level": warning_level or None,
         "gate_crossed": gate_crossed,
         "recommendation": recommendation or None,
+        "recommended_threshold_action": _string_or_default(
+            section,
+            keys=("recommended_threshold_action", "recommendedThresholdAction"),
+            default=str(compiler_threshold.get("recommended_threshold_action") or ""),
+        )
+        or None,
         "decision": decision,
         "hold_reason": _string_or_default(section, keys=("hold_reason", "holdReason"), default=""),
+        "closure_basis": _string_or_default(
+            section,
+            keys=("closure_basis", "closureBasis"),
+            default=str(compiler_threshold.get("closure_basis") or ""),
+        ),
+        "case_reasoning": case_reasoning if isinstance(case_reasoning, dict) else None,
+        "case_reasoning_validation": case_reasoning_validation,
+        "expected_frame_id": _string_or_default(frame_packet or {}, keys=("frame_id", "frameId"), default=""),
+        "expected_prompt_hash": _string_or_default(
+            interpretation_section,
+            keys=("input_prompt_hash", "inputPromptHash", "prompt_hash", "promptHash"),
+            default="",
+        ),
     }
 
 
@@ -2214,6 +2354,12 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
     )
     contradiction_density = _to_optional_float(packet["contradiction_density"])
     high_contradiction_density = contradiction_density is not None and contradiction_density >= 0.35
+    case_reasoning_validation = packet.get("case_reasoning_validation")
+    case_reasoning_status = (
+        str(case_reasoning_validation.get("status"))
+        if isinstance(case_reasoning_validation, dict) and case_reasoning_validation.get("status")
+        else "BLOCK"
+    )
 
     return [
         {
@@ -2239,6 +2385,16 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
             "detail": f"{packet['evidence_count']} evidence lines captured."
             if packet["evidence_count"] > 0
             else "Add each observation as its own evidence line before running the report.",
+        },
+        {
+            "key": "case_reasoning_compiler",
+            "label": "Case Reasoning Compiler",
+            "status": "pass" if case_reasoning_status == "PASS" else "warn" if case_reasoning_status == "WARN" else "block",
+            "detail": "Case reasoning compiler valid."
+            if case_reasoning_status == "PASS"
+            else "Case reasoning compiler has warnings."
+            if case_reasoning_status == "WARN"
+            else "Case reasoning compiler is missing or invalid.",
         },
         {
             "key": "evaluation_freshness",
@@ -2268,6 +2424,16 @@ def _evaluate_interpretation_checks(packet: Dict[str, Any]) -> list[Dict[str, An
 
 
 def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
+    case_reasoning = packet.get("case_reasoning")
+    case_reasoning_validation = packet.get("case_reasoning_validation")
+    compiler_valid = (
+        isinstance(case_reasoning, dict)
+        and case_reasoning.get("compiler_valid") is True
+        and isinstance(case_reasoning_validation, dict)
+        and case_reasoning_validation.get("status") in {"PASS", "WARN"}
+        and case_reasoning.get("input_frame_id") == packet.get("expected_frame_id")
+        and case_reasoning.get("input_prompt_hash") == packet.get("expected_prompt_hash")
+    )
     loss_asymmetry_defined = packet["loss_treat"] is not None and packet["loss_not_treat"] is not None
     red_gate_metadata_ready = packet["warning_level"] is not None and packet["gate_crossed"] is not None
     decision_declared = packet["decision"] != "undecided"
@@ -2275,6 +2441,14 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
     red_override_violation = packet["gate_crossed"] is True and packet["decision"] == "recommend"
 
     return [
+        {
+            "key": "case_reasoning_compiler",
+            "label": "Case Reasoning Compiler",
+            "status": "pass" if compiler_valid else "block",
+            "detail": "Validated compiler packet is tied to this frame and prompt."
+            if compiler_valid
+            else "Thresholding requires a valid compiler packet tied to this frame and prompt.",
+        },
         {
             "key": "posterior_available",
             "label": "Posterior available",

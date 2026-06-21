@@ -31,6 +31,8 @@ def load_suite(path: str | Path) -> dict[str, Any]:
         _required_string(case, "case_id", f"case {index}")
         _required_string(case, "domain", f"case {index}")
         _required_string(case, "prompt", f"case {index}")
+        _required_string(case, "expected_red_status", f"case {index}")
+        _required_string(case, "expected_threshold_action", f"case {index}")
         if case.get("no_phi_acknowledged") is not True:
             raise ValueError(f"case {case.get('case_id', index)!r} must acknowledge no PHI")
     return suite
@@ -89,6 +91,12 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
     threshold_args = threshold_event.get("arguments") if isinstance(threshold_event.get("arguments"), dict) else {}
     threshold_decision = threshold_args.get("decision")
     latest_audit = packet.get("latest_audit") if isinstance(packet.get("latest_audit"), dict) else {}
+    threshold_packet = _audit_packet(latest_audit, "threshold")
+    compiler = packet.get("case_reasoning_compiler") if isinstance(packet.get("case_reasoning_compiler"), dict) else {}
+    compiler_hazard = compiler.get("domain_red_hazard") if isinstance(compiler.get("domain_red_hazard"), dict) else {}
+    expected_red_status = case["expected_red_status"]
+    expected_threshold_action = case["expected_threshold_action"]
+    recommended_threshold_action = compiler.get("recommended_threshold_action")
     latest_audit_statuses = {
         "frame": _audit_status(latest_audit, "frame"),
         "interpretation": _audit_status(latest_audit, "interpretation"),
@@ -96,6 +104,19 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
     }
     required_events_present = audit_events == required_events
     red_channel_held = threshold_decision == "hold"
+    compiler_matches = (
+        compiler.get("schema_id") == "nepsis.case_reasoning_compiler"
+        and compiler.get("compiler_valid") is True
+        and compiler.get("current_red_status") == expected_red_status
+        and recommended_threshold_action == expected_threshold_action
+    )
+    threshold_matches = (
+        threshold_packet.get("recommended_threshold_action") == expected_threshold_action
+        and (
+            (expected_threshold_action == "deescalate" and threshold_decision == "recommend")
+            or (expected_threshold_action != "deescalate" and threshold_decision == "hold")
+        )
+    )
     latest_audit_passed = all(status == "PASS" for status in latest_audit_statuses.values())
     return {
         "case_id": packet.get("case_id"),
@@ -109,8 +130,19 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
         "red_channel_question": case.get("red_channel_question"),
         "closure_condition": case.get("closure_condition"),
         "expected_behavior": case.get("expected_behavior"),
+        "expected_red_status": expected_red_status,
+        "expected_threshold_action": expected_threshold_action,
         "threshold_decision": threshold_decision,
+        "threshold_recommendation": threshold_packet.get("recommendation"),
         "hold_reason": threshold_args.get("hold_reason", ""),
+        "compiler_schema_id": compiler.get("schema_id"),
+        "compiler_valid": compiler.get("compiler_valid"),
+        "compiler_red_status": compiler.get("current_red_status"),
+        "recommended_threshold_action": recommended_threshold_action,
+        "runtime_safety_constraints": compiler.get("runtime_safety_constraints", []),
+        "domain_red_hazard": compiler_hazard,
+        "domain_catastrophic_outcome": compiler.get("domain_catastrophic_outcome", ""),
+        "decision_reason": compiler.get("decision_reason", ""),
         "audit_events": audit_events,
         "required_events_present": required_events_present,
         "latest_audit_statuses": latest_audit_statuses,
@@ -120,7 +152,8 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
             and operator_packet.get("schema_id") == "nepsis.operator_packet"
             and operator_packet.get("phase") == "threshold_set"
             and required_events_present
-            and red_channel_held
+            and compiler_matches
+            and threshold_matches
             and latest_audit_passed
         ),
     }
@@ -139,6 +172,14 @@ def _audit_status(latest_audit: dict[str, Any], key: str) -> str | None:
         return None
     status = section.get("status")
     return status if isinstance(status, str) else None
+
+
+def _audit_packet(latest_audit: dict[str, Any], key: str) -> dict[str, Any]:
+    section = latest_audit.get(key)
+    if not isinstance(section, dict):
+        return {}
+    packet = section.get("packet")
+    return packet if isinstance(packet, dict) else {}
 
 
 def _required_string(mapping: dict[str, Any], key: str, context: str) -> str:

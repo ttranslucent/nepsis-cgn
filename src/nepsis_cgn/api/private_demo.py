@@ -4,11 +4,12 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
+from ..core.case_reasoning import compile_case_reasoning
 from .operator_packet import (
     lock_frame,
     lock_report,
     run_report,
-    set_threshold_decision,
+    set_threshold_decision_from_case_reasoning,
     start_operator_packet,
 )
 
@@ -34,7 +35,14 @@ def build_private_demo_runtime_packet(body: dict[str, Any]) -> dict[str, Any]:
     )
     _raise_for_rejection(locked, "lock_frame")
 
-    report_text = _report_text(prompt=prompt, case_id=case_id)
+    frame_id = _frame_id(locked)
+    case_reasoning = compile_case_reasoning(
+        prompt,
+        case_id=case_id,
+        frame_id=frame_id,
+        input_prompt_hash=_prompt_hash(prompt),
+    )
+    report_text = _report_text(prompt=prompt, case_id=case_id, case_reasoning=case_reasoning)
     reported = run_report(
         packet=locked,
         report_text=report_text,
@@ -43,21 +51,19 @@ def build_private_demo_runtime_packet(body: dict[str, Any]) -> dict[str, Any]:
             "policy_violation": False,
             "notes": f"Private demo no-PHI prompt hash {_prompt_hash(prompt)}.",
         },
-        interpretation=_interpretation(prompt=prompt, report_text=report_text),
+        interpretation=_interpretation(
+            prompt=prompt,
+            case_id=case_id,
+            report_text=report_text,
+            case_reasoning=case_reasoning,
+        ),
     )
     _raise_for_rejection(reported, "run_report")
 
     report_locked = lock_report(packet=reported)
     _raise_for_rejection(report_locked, "lock_report")
 
-    threshold = set_threshold_decision(
-        packet=report_locked,
-        decision="hold",
-        hold_reason=(
-            "Private demo runtime captured the case and preserved the RED frame; "
-            "operator review is required before treating this as a recommendation."
-        ),
-    )
+    threshold = set_threshold_decision_from_case_reasoning(packet=report_locked)
     _raise_for_rejection(threshold, "set_threshold_decision")
 
     return {
@@ -74,8 +80,9 @@ def build_private_demo_runtime_packet(body: dict[str, Any]) -> dict[str, Any]:
         "prompt_excerpt": _excerpt(prompt),
         "summary": (
             "NepsisCGN private runtime completed a RED before BLUE operator-packet "
-            "pass and held the threshold for operator review."
+            "pass and thresholded a validated Case Reasoning Compiler packet."
         ),
+        "case_reasoning_compiler": _latest_case_reasoning(threshold) or case_reasoning,
         "operator_packet": threshold,
         "audit_trace": threshold.get("audit_trace", []),
         "latest_audit": threshold.get("latest_audit", {}),
@@ -141,24 +148,36 @@ def _frame(*, prompt: str, case_id: str) -> dict[str, Any]:
     }
 
 
-def _report_text(*, prompt: str, case_id: str) -> str:
+def _report_text(*, prompt: str, case_id: str, case_reasoning: dict[str, Any]) -> str:
     return "\n".join(
         [
             f"case_id: {case_id}",
             f"prompt_hash: {_prompt_hash(prompt)}",
             "input_boundary: user affirmed no PHI before the front-door run",
-            "red_frame: source facts and hard safety constraints were preserved before BLUE organization",
-            "review_posture: hold for operator review before recommendation",
+            f"red_channel_question: {case_reasoning.get('red_channel_question', '')}",
+            f"domain_red_hazard: {_domain_hazard_label(case_reasoning)}",
+            f"red_status: {case_reasoning.get('current_red_status', '')}",
+            f"decision_reason: {case_reasoning.get('decision_reason', '')}",
         ]
     )
 
 
-def _interpretation(*, prompt: str, report_text: str) -> dict[str, Any]:
+def _interpretation(
+    *,
+    prompt: str,
+    case_id: str,
+    report_text: str,
+    case_reasoning: dict[str, Any],
+) -> dict[str, Any]:
     has_jingall = "jingall" in prompt.lower()
     has_jailing = "jailing" in prompt.lower()
     contradiction_declared = has_jingall and has_jailing
 
     return {
+        "case_id": case_id,
+        "case_reasoning_source_text": prompt,
+        "input_prompt_hash": _prompt_hash(prompt),
+        "case_reasoning": case_reasoning,
         "report_text": report_text,
         "evidence_count": len([line for line in report_text.splitlines() if line.strip()]),
         "report_synced": True,
@@ -190,6 +209,34 @@ def _optional_string(value: Any) -> str | None:
         return None
     resolved = value.strip()
     return resolved or None
+
+
+def _frame_id(packet: dict[str, Any]) -> str:
+    frame = packet.get("frame")
+    if isinstance(frame, dict) and isinstance(frame.get("frame_id"), str):
+        return frame["frame_id"]
+    raise ValueError("private demo runtime lock_frame failed to return frame_id")
+
+
+def _domain_hazard_label(case_reasoning: dict[str, Any]) -> str:
+    hazard = case_reasoning.get("domain_red_hazard")
+    if isinstance(hazard, dict) and isinstance(hazard.get("hazard"), str):
+        return hazard["hazard"]
+    return ""
+
+
+def _latest_case_reasoning(packet: dict[str, Any]) -> dict[str, Any] | None:
+    latest = packet.get("latest_audit")
+    if not isinstance(latest, dict):
+        return None
+    interpretation = latest.get("interpretation")
+    if not isinstance(interpretation, dict):
+        return None
+    stage_packet = interpretation.get("packet")
+    if not isinstance(stage_packet, dict):
+        return None
+    compiler = stage_packet.get("case_reasoning")
+    return compiler if isinstance(compiler, dict) else None
 
 
 def _raise_for_rejection(packet: dict[str, Any], step: str) -> None:

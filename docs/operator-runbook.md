@@ -129,6 +129,10 @@ Expected response evidence:
 
 - `schema_id` is `nepsis.private_demo_runtime_packet`.
 - `mode` is `external-private-runtime`.
+- `case_reasoning_compiler.schema_id` is `nepsis.case_reasoning_compiler`.
+- `case_reasoning_compiler.compiler_valid` is `true`.
+- `case_reasoning_compiler.domain_red_hazard.hazard` names the domain hazard,
+  not the runtime safety boundary.
 - `operator_packet.schema_id` is `nepsis.operator_packet`.
 - `audit_trace` includes `LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and
   `SET_THRESHOLD_DECISION`.
@@ -157,9 +161,12 @@ PYTHONPATH=src .venv/bin/python scripts/run_private_demo_benchmark.py --json
 
 The report is a `nepsis.private_demo_benchmark_report`. A case passes when the
 private demo runtime returns a `nepsis.private_demo_runtime_packet`, the nested
-operator packet reaches `threshold_set`, the threshold decision is `hold`, and
-the audit trace includes `LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and
-`SET_THRESHOLD_DECISION`.
+operator packet reaches `threshold_set`, the audit trace includes
+`LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and `SET_THRESHOLD_DECISION`, and
+the validated Case Reasoning Compiler matches the fixture's expected RED
+status and threshold action. Authority-suppressed cases should hold and
+escalate RED; the true-closure case should de-escalate instead of proving an
+always-red behavior.
 
 ## Private operator deployment
 
