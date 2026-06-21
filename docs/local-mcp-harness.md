@@ -174,6 +174,9 @@ A passing run proves:
 - `health` reports `model_provider_keys_required=false`.
 - The stateless operator flow can start, inspect, lock frame, run report, lock
   report, set threshold, and commit a `nepsis.operator_packet`.
+- The V3 orchestration flow can start and inspect a
+  `nepsis.v3_orchestration_packet@0.1.0` without creating server-side model
+  output or hidden subagent memory.
 - The packet lifecycle is packet-in/packet-out; the model host keeps the packet
   between calls.
 

@@ -363,6 +363,14 @@ OpenAI, Anthropic, or Gemini provider keys for this path.
 - Raw provider key collection has been removed from the web app; do not
   reintroduce it as a browser-storage or raw database-token path.
 
+## V3 Packet Orchestration Kernel
+
+V3 orchestration is MCP-first and pure stateless in the first pass. Host models
+draft layer artifacts; NepsisCGN validates, seals, locks, and finalizes only
+packet-visible state. HMAC detects tampering, TTL detects expiration, and older
+valid packets may fork until expiration because no hidden run-head ledger exists
+in V3 first pass. See [docs/v3-orchestration-kernel.md](docs/v3-orchestration-kernel.md).
+
 ## Known Limitations
 
 - Runtime State Feedback is not implemented; current State Feedback is deterministic MVP packet scaffolding.
