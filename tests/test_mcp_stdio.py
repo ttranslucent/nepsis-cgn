@@ -60,6 +60,12 @@ def test_mcp_stdio_lists_public_and_operator_phase_tools(tmp_path: Path) -> None
         "set_threshold_decision",
         "commit_iteration",
         "abandon_packet",
+        "start_v3_orchestration",
+        "inspect_v3_orchestration",
+        "propose_v3_layer",
+        "lock_v3_layer",
+        "finalize_v3_orchestration",
+        "abandon_v3_orchestration",
     } <= tool_names
     assert "step_session" not in tool_names
     assert "reframe_session" not in tool_names
@@ -143,3 +149,42 @@ def test_mcp_stdio_run_mvp_and_stateless_phase_rejection_are_json_rpc(tmp_path: 
     assert rejection["current_phase"] == "frame_draft"
     assert not stderr.strip()
     assert not store_path.exists()
+
+
+def test_mcp_stdio_v3_start_and_inspect_are_packet_in_packet_out(tmp_path: Path) -> None:
+    proc = _start_mcp_stdio(tmp_path)
+    try:
+        _send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        started = _send(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "start_v3_orchestration",
+                    "arguments": {"goal": "Build V3 packet kernel.", "scope": "MCP stateless orchestration."},
+                },
+            },
+        )
+        packet = _tool_text(started)
+        inspected = _send(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "inspect_v3_orchestration", "arguments": {"packet": packet}},
+            },
+        )
+    finally:
+        proc.terminate()
+        _, stderr = proc.communicate(timeout=5)
+
+    assert started["result"]["isError"] is False
+    assert packet["schema"] == "nepsis.v3_orchestration_packet@0.1.0"
+    inspection = _tool_text(inspected)
+    assert inspection["valid"] is True
+    assert inspection["current_layer"] == "intake"
+    assert inspection["next_legal_actions"] == ["propose_v3_layer", "abandon_v3_orchestration"]
+    assert not stderr.strip()

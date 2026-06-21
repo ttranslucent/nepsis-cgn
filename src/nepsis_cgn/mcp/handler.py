@@ -20,6 +20,14 @@ from ..api.operator_packet import (
     set_threshold_decision,
     start_operator_packet,
 )
+from ..api.orchestration_packet import (
+    abandon_v3_orchestration,
+    finalize_v3_orchestration,
+    inspect_v3_orchestration,
+    lock_v3_layer,
+    propose_v3_layer,
+    start_v3_orchestration,
+)
 from ..core.mvp import build_nepsis_mvp_packet
 from ..provenance import record_packet_observation
 
@@ -167,6 +175,83 @@ def mcp_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {"packet": packet_schema, "reason": {"type": "string"}},
+                "required": ["packet"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "start_v3_orchestration",
+            "description": "Create a pure stateless V3 orchestration packet with fixed layer order and TTL.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "scope": {"type": "string"},
+                    "initial_context": {"type": "string"},
+                    "ttl_seconds": {"type": "integer"},
+                },
+                "required": ["goal", "scope"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "inspect_v3_orchestration",
+            "description": "Inspect a sealed V3 orchestration packet and return legal next actions.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"packet": {"type": "object", "description": "Current V3 orchestration packet."}},
+                "required": ["packet"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "propose_v3_layer",
+            "description": "Record a full packet-visible proposed V3 layer artifact without advancing layer state.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "packet": {"type": "object", "description": "Current V3 orchestration packet."},
+                    "layer": {"type": "string"},
+                    "artifact": {"type": "object"},
+                    "draft_metadata": {"type": "object"},
+                },
+                "required": ["packet", "layer", "artifact"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "lock_v3_layer",
+            "description": "Lock the current V3 layer with an explicit user assertion bound to the proposal hash.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "packet": {"type": "object", "description": "Current V3 orchestration packet."},
+                    "layer": {"type": "string"},
+                    "lock_assertion": {"type": "object"},
+                },
+                "required": ["packet", "layer", "lock_assertion"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "finalize_v3_orchestration",
+            "description": "Finalize only after all fixed V3 layers are locked and derive response state from locked artifacts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"packet": {"type": "object", "description": "Current V3 orchestration packet."}},
+                "required": ["packet"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "abandon_v3_orchestration",
+            "description": "Emit an abandoned V3 packet; pure stateless mode does not globally invalidate older valid packets.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "packet": {"type": "object", "description": "Current V3 orchestration packet."},
+                    "reason": {"type": "string"},
+                },
                 "required": ["packet"],
                 "additionalProperties": False,
             },
@@ -349,6 +434,40 @@ def _tool_payload(
     if name == "abandon_packet":
         return abandon_packet(
             packet=_required_object(arguments, "packet"),
+            reason=_optional_string(arguments, "reason") or "",
+        )
+    if name == "start_v3_orchestration":
+        ttl_seconds = arguments.get("ttl_seconds")
+        if ttl_seconds is None:
+            ttl_seconds = 6 * 60 * 60
+        if not isinstance(ttl_seconds, int):
+            raise ValueError("ttl_seconds must be an integer when provided")
+        return start_v3_orchestration(
+            goal=_required_string(arguments, "goal"),
+            scope=_required_string(arguments, "scope"),
+            initial_context=_optional_string(arguments, "initial_context"),
+            ttl_seconds=ttl_seconds,
+        )
+    if name == "inspect_v3_orchestration":
+        return inspect_v3_orchestration(_required_object(arguments, "packet"))
+    if name == "propose_v3_layer":
+        return propose_v3_layer(
+            _required_object(arguments, "packet"),
+            layer=_required_string(arguments, "layer"),
+            artifact=_required_object(arguments, "artifact"),
+            draft_metadata=_optional_object(arguments, "draft_metadata"),
+        )
+    if name == "lock_v3_layer":
+        return lock_v3_layer(
+            _required_object(arguments, "packet"),
+            layer=_required_string(arguments, "layer"),
+            lock_assertion=_required_object(arguments, "lock_assertion"),
+        )
+    if name == "finalize_v3_orchestration":
+        return finalize_v3_orchestration(_required_object(arguments, "packet"))
+    if name == "abandon_v3_orchestration":
+        return abandon_v3_orchestration(
+            _required_object(arguments, "packet"),
             reason=_optional_string(arguments, "reason") or "",
         )
     raise KeyError(name)

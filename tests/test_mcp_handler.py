@@ -48,6 +48,34 @@ def _report_interpretation() -> dict[str, object]:
     }
 
 
+def _v3_field(state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed.") -> dict[str, object]:
+    return {"status": state, "items": items if items is not None else ["captured"], "rationale": rationale}
+
+
+def _v3_intake_artifact() -> dict[str, object]:
+    return {
+        "layer": "intake",
+        "summary": "intake layer artifact.",
+        "goal_scope": _v3_field(items=["goal", "scope"]),
+        "red_triggers": _v3_field("unknown", [], "Not assessed until red layer."),
+        "blue_opportunity_space": _v3_field("unknown", [], "Not assessed until blue layer."),
+        "constraints": _v3_field(items=["No hidden memory."]),
+        "manifold_match_mismatch": _v3_field("not_applicable", [], "Not assessed until manifold layer."),
+        "still_blockers": _v3_field("unknown", [], "Not assessed until STILL layer."),
+        "unresolved_questions": _v3_field("none_found", [], "No unresolved intake question."),
+        "audit_notes": _v3_field(items=["packet visible"]),
+        "proposed_status": _v3_field(items=["ready"]),
+        "lock_eligibility": _v3_field(items=["eligible"]),
+        "layer_findings": {"risk": [], "ruin": [], "win": [], "recommendations": []},
+        "intake": {
+            "goal": "Build V3 packet kernel.",
+            "scope": "MCP stateless orchestration.",
+            "assumptions": ["Host model drafts artifacts."],
+            "unresolved_questions": ["None for first pass."],
+        },
+    }
+
+
 def _report_locked_packet() -> dict[str, object]:
     packet = start_operator_packet()
     locked = lock_frame(
@@ -118,6 +146,15 @@ def test_tools_list_advertises_auth_requirement_and_run_mvp_aliases() -> None:
 
     run_mvp = next(tool for tool in tools if tool["name"] == "run_mvp")
     assert {"case_id", "case", "input_text", "inputText"} <= set(run_mvp["inputSchema"]["properties"])
+    tool_names = {tool["name"] for tool in tools}
+    assert {
+        "start_v3_orchestration",
+        "inspect_v3_orchestration",
+        "propose_v3_layer",
+        "lock_v3_layer",
+        "finalize_v3_orchestration",
+        "abandon_v3_orchestration",
+    } <= tool_names
 
 
 def test_capability_token_logs_metadata_without_raw_token(monkeypatch, caplog) -> None:
@@ -238,6 +275,116 @@ def test_set_threshold_decision_rejects_non_string_hold_reason() -> None:
     assert response is not None
     assert response["error"]["code"] == -32602
     assert "hold_reason" in response["error"]["message"]
+
+
+def test_v3_mcp_tools_execute_packet_in_packet_out() -> None:
+    started_response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": {
+                "name": "start_v3_orchestration",
+                "arguments": {"goal": "Build V3 packet kernel.", "scope": "MCP stateless orchestration."},
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+    assert started_response is not None
+    started = _tool_payload(started_response)
+    assert started["schema"] == "nepsis.v3_orchestration_packet@0.1.0"
+    assert started["current_layer"] == "intake"
+
+    proposed_response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": {
+                "name": "propose_v3_layer",
+                "arguments": {
+                    "packet": started,
+                    "layer": "intake",
+                    "artifact": _v3_intake_artifact(),
+                    "draft_metadata": {"host": "codex", "model_name": "gpt-5"},
+                },
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+    assert proposed_response is not None
+    proposed = _tool_payload(proposed_response)
+    proposal_hash = proposed["current_proposal"]["artifact_hash"]
+
+    locked_response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": {
+                "name": "lock_v3_layer",
+                "arguments": {
+                    "packet": proposed,
+                    "layer": "intake",
+                    "lock_assertion": {
+                        "asserted": True,
+                        "assertion_text": "I explicitly lock the intake layer.",
+                        "proposal_hash": proposal_hash,
+                        "lock_nonce": "unit-test-nonce",
+                    },
+                },
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+    assert locked_response is not None
+    locked = _tool_payload(locked_response)
+
+    assert locked["current_layer"] == "red"
+    assert locked["locked_layers"]["intake"]["artifact_hash"] == proposal_hash
+
+
+def test_v3_mcp_rejects_raw_token_like_draft_metadata() -> None:
+    started_response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "tools/call",
+            "params": {
+                "name": "start_v3_orchestration",
+                "arguments": {"goal": "Build V3 packet kernel.", "scope": "MCP stateless orchestration."},
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+    packet = _tool_payload(started_response)
+
+    rejected = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {
+                "name": "propose_v3_layer",
+                "arguments": {
+                    "packet": packet,
+                    "layer": "intake",
+                    "artifact": _v3_intake_artifact(),
+                    "draft_metadata": {"capability_token": "raw-secret-token"},
+                },
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+
+    assert rejected is not None
+    assert rejected["error"]["code"] == -32602
+    assert "raw secret" in rejected["error"]["message"]
 
 
 def test_abandon_packet_rejects_non_string_reason() -> None:
