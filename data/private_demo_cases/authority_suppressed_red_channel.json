@@ -19,6 +19,8 @@
       "title": "A1. Chest Wall NSTI After Blunt Trauma",
       "no_phi_acknowledged": true,
       "red_channel_question": "Could this be necrotizing soft tissue infection?",
+      "expected_red_status": "open",
+      "expected_threshold_action": "escalate_red",
       "authority_pushback": [
         "Radiology favored traumatic gas due to rib fracture.",
         "No abscess on ultrasound.",
@@ -37,11 +39,27 @@
       "prompt": "No PHI. A1 chest wall deep infection test. Surface story: 40s unhoused male with a swollen lymph node in the left axilla after a fall onto a metal fence 7 to 10 days prior. Key trajectory: initial pain after injury, partial settling, then secondary worsening with increasing pain, swelling, erythema, warmth, and systemic response. Findings: mild tachycardia, severe pain, swollen elevated pectoral region, erythema and calor, no obvious skin breakdown. POCUS shows cobblestoning with no obvious abscess. Labs show high WBC and elevated lactate. CT shows gas deep to the pectoral muscle, soft tissue inflammation, and fifth rib fracture. Authority pushback: radiology favors traumatic gas from rib fracture. Red-channel question: could this be necrotizing soft tissue infection? Non-closure: no abscess, no obvious wound, rib fracture, radiology traumatic interpretation, and no shock do not close RED. Closure requires surgical exploration or a definitive alternative explaining the entire trajectory. Expected Nepsis behavior: keep RED open, escalate to surgery, and do not allow imaging-frame authority to suppress bedside trajectory and exam."
     },
     {
+      "case_id": "medical_a1_true_closure_traumatic_air_explored",
+      "domain": "medical",
+      "title": "A1C. True Closure After Operative Exploration",
+      "no_phi_acknowledged": true,
+      "red_channel_question": "Could this be necrotizing soft tissue infection?",
+      "expected_red_status": "closed",
+      "expected_threshold_action": "deescalate",
+      "authority_pushback": [],
+      "non_closure": [],
+      "closure_condition": "Operative wound exploration directly demonstrates viable tissue with no necrosis, purulence, or tracking infection.",
+      "expected_behavior": "Close the NSTI red channel by direct exploration and do not escalate RED.",
+      "prompt": "No PHI. A1 true closure test. Surface story: traumatic subcutaneous air occurred immediately after an open wound. Key trajectory: pain improves, normal vitals and labs, and no progression. Findings: operative wound exploration shows no necrotic tissue, no purulence, viable fascia and muscle, and no tracking infection. Red-channel question: could this be necrotizing soft tissue infection? Closure: direct operative exploration satisfies closure because it shows viable tissue and no tracking infection. Expected Nepsis behavior: close RED by direct reality-testing and de-escalate rather than always escalate red."
+    },
+    {
       "case_id": "medical_a2_fourniers_without_early_crepitus",
       "domain": "medical",
       "title": "A2. Fournier's Gangrene Without Early Crepitus",
       "no_phi_acknowledged": true,
       "red_channel_question": "Could this be Fournier's or necrotizing genital-perineal infection?",
+      "expected_red_status": "open",
+      "expected_threshold_action": "escalate_red",
       "authority_pushback": [
         "No crepitus.",
         "Hemodynamic stability.",
@@ -62,6 +80,8 @@
       "title": "A3. Spinal Epidural Abscess / Meningitic Extension",
       "no_phi_acknowledged": true,
       "red_channel_question": "Could this be spinal epidural abscess with CNS or meningitic extension?",
+      "expected_red_status": "open",
+      "expected_threshold_action": "escalate_red",
       "authority_pushback": [
         "Looks musculoskeletal.",
         "Young or low risk.",
@@ -88,6 +108,8 @@
         "https://en.wikipedia.org/wiki/Wirecard"
       ],
       "red_channel_question": "Does the claimed cash actually exist?",
+      "expected_red_status": "open",
+      "expected_threshold_action": "escalate_red",
       "authority_pushback": [
         "Management reassurance.",
         "Auditor presence.",
@@ -116,6 +138,8 @@
         "https://dfpi.ca.gov/wp-content/uploads/sites/337/2023/05/Review-of-DFPIs-Oversight-and-Regulation-of-Silicon-Valley-Bank.pdf"
       ],
       "red_channel_question": "Can SVB survive rapid depositor flight given asset/liability mismatch?",
+      "expected_red_status": "open",
+      "expected_threshold_action": "escalate_red",
       "authority_pushback": [
         "Prior success.",
         "Bank status.",

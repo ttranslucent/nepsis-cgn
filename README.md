@@ -224,7 +224,11 @@ curl -sS -X POST https://<private-backend>/v1/private-demo \
 The response has `schema_id: "nepsis.private_demo_runtime_packet"`,
 `mode: "external-private-runtime"`, a nested
 `operator_packet.schema_id: "nepsis.operator_packet"`, and audit events such as
-`LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and `SET_THRESHOLD_DECISION`.
+`LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and `SET_THRESHOLD_DECISION`. The
+`RUN_REPORT` interpretation includes a validated
+`case_reasoning_compiler` packet so thresholding consumes domain-specific RED
+hazard, closure, authority-pushback, and trajectory fields rather than a
+process-safety receipt.
 This is a no-PHI packet/audit runtime for invited testing. It is not the public
 deterministic `/v1/mvp` packet and it is not an autonomous clinical or model
 recommendation endpoint.

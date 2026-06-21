@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from ..core.case_reasoning import threshold_fields_from_case_reasoning
 from .service import EngineApiService, Family
 
 SCHEMA_ID = "nepsis.operator_packet"
@@ -120,12 +121,14 @@ def lock_frame(
     )
     if _is_rejection(result):
         return _stateless_rejection(result)
+    session = _transition_session(result)
+    trace_frame = _json_copy(session.get("frame") if isinstance(session.get("frame"), dict) else frame)
     trace = _append_trace(
         packet,
         "LOCK_FRAME",
         {
             "family": resolved_family,
-            "frame": frame,
+            "frame": trace_frame,
             "governance_costs": resolved_governance,
             "governance_calibration": resolved_calibration,
             "manifest_path": resolved_manifest,
@@ -185,6 +188,20 @@ def set_threshold_decision(
         {"decision": decision, "hold_reason": hold_reason, "assist_acceptances": accepted_assists},
     )
     return _packet_from_transition(packet, result, trace)
+
+
+def set_threshold_decision_from_case_reasoning(
+    *,
+    packet: dict[str, Any],
+    assist_acceptances: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    fields = threshold_fields_from_case_reasoning(_latest_case_reasoning(packet))
+    return set_threshold_decision(
+        packet=packet,
+        decision=str(fields["decision"]),
+        hold_reason=str(fields["hold_reason"]),
+        assist_acceptances=assist_acceptances,
+    )
 
 
 def commit_iteration(
@@ -652,6 +669,20 @@ def _missing_commit_trace_events(packet: dict[str, Any]) -> list[str]:
     return [event for event in _COMMIT_REQUIRED_TRACE_EVENTS if event not in events]
 
 
+def _latest_case_reasoning(packet: dict[str, Any]) -> dict[str, Any] | None:
+    latest = packet.get("latest_audit")
+    if not isinstance(latest, dict):
+        return None
+    interpretation = latest.get("interpretation")
+    if not isinstance(interpretation, dict):
+        return None
+    stage_packet = interpretation.get("packet")
+    if not isinstance(stage_packet, dict):
+        return None
+    compiler = stage_packet.get("case_reasoning")
+    return compiler if isinstance(compiler, dict) else None
+
+
 def _legal_next_tools(phase: str) -> list[str]:
     return list(_LEGAL_NEXT.get(phase, _LEGAL_NEXT["frame_draft"]))
 
@@ -811,5 +842,6 @@ __all__ = [
     "packet_hash",
     "run_report",
     "set_threshold_decision",
+    "set_threshold_decision_from_case_reasoning",
     "start_operator_packet",
 ]
