@@ -177,6 +177,17 @@ export async function GET() {
   const operatorEnabled = liveOperatorEnabled();
   const serverModelKeyConfigured = hasConfiguredOpenAiKey();
   const apiTokenConfigured = Boolean(process.env.NEPSIS_API_TOKEN?.trim());
+  const privateDemo = {
+    configured: Boolean(process.env.NEPSIS_API_BASE_URL?.trim() && process.env.NEPSIS_API_TOKEN?.trim()),
+    route: "/private-demo",
+    proxyPath: "/api/engine/private-demo",
+    backendPath: "/v1/private-demo",
+    requiresAuth: true,
+    requiresCsrf: true,
+    requiresNoPhiAcknowledgement: true,
+    modelKeysRequired: false,
+    publicMvpFallback: false,
+  };
   const mcpToolNames = [
     "run_mvp",
     "get_mvp_schema",
@@ -206,6 +217,7 @@ export async function GET() {
   return NextResponse.json({
     backend,
     mvp,
+    privateDemo,
     operator: {
       enabled: operatorEnabled,
       operatorSiteMode: operatorMode,

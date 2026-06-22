@@ -17,6 +17,17 @@ type StatusPayload = {
     noLoginRequired: boolean;
     detail?: string;
   };
+  privateDemo: {
+    configured: boolean;
+    route: string;
+    proxyPath: string;
+    backendPath: string;
+    requiresAuth: boolean;
+    requiresCsrf: boolean;
+    requiresNoPhiAcknowledgement: boolean;
+    modelKeysRequired: boolean;
+    publicMvpFallback: boolean;
+  };
   operator: {
     enabled: boolean;
     operatorSiteMode: boolean;
@@ -220,6 +231,24 @@ export default function StatusPage() {
                 : "Backend health check is not reachable."}
             </p>
             {status.backend.status && <p>HTTP status: {status.backend.status}</p>}
+          </StatusCard>
+
+          <StatusCard title="Private demo" ok={status.privateDemo.configured}>
+            <p>
+              {status.privateDemo.configured
+                ? "Private demo backend proxy is configured."
+                : "Private demo backend proxy is not configured."}
+            </p>
+            <p>Route: {status.privateDemo.route}</p>
+            <p>Proxy: {status.privateDemo.proxyPath}</p>
+            <p>Backend: {status.privateDemo.backendPath}</p>
+            <p>{status.privateDemo.requiresAuth ? "Operator login required" : "Operator login not required"}</p>
+            <p>
+              {status.privateDemo.requiresNoPhiAcknowledgement
+                ? "No-PHI acknowledgement required"
+                : "No-PHI acknowledgement not required"}
+            </p>
+            <p>{status.privateDemo.publicMvpFallback ? "Public MVP fallback enabled" : "No public MVP fallback"}</p>
           </StatusCard>
 
           {status.setup?.publicSite && <SetupPathCard title="Public Site Setup" path={status.setup.publicSite} />}
