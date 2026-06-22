@@ -106,7 +106,9 @@ test("authenticated operator can run private demo and inspect packet views", asy
   await expect(page.getByText("nepsis.private_demo_runtime_packet")).toBeVisible();
   await expect(page.getByText("LOCK_FRAME")).toBeVisible();
   await expect(page.getByText("SET_THRESHOLD_DECISION")).toBeVisible();
-  await expect(page.getByText("escalate_red")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Private demo topology" }).getByText("escalate_red").first(),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Audit" }).click();
   await expect(page.getByRole("region", { name: "Private demo audit" })).toBeVisible();
