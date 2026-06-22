@@ -175,6 +175,58 @@ def test_operator_packet_proxy_routes_require_auth_and_csrf(route: str) -> None:
     assert "requireCsrfToken" in text
 
 
+def test_private_demo_proxy_requires_operator_auth_and_csrf() -> None:
+    route = ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "private-demo" / "route.ts"
+    assert route.exists()
+    text = route.read_text(encoding="utf-8")
+
+    assert "requireEngineControlAuth" in text
+    assert "requireCsrfToken" in text
+    assert "engineControlOwner" in text
+    assert 'proxyEngineRequest("/v1/private-demo"' in text
+    assert "proxyJsonResponse(upstream)" in text
+    assert "buildBundledMvpFallbackResponse" not in text
+    assert '"/v1/mvp"' not in text
+
+
+def test_private_demo_client_contract_is_explicit() -> None:
+    client = (ROOT / "nepsis-web" / "src" / "lib" / "engineClient.ts").read_text(encoding="utf-8")
+
+    assert "export type NepsisPrivateDemoPayload" in client
+    assert "export type NepsisPrivateDemoRuntimePacket" in client
+    assert 'schema_id: "nepsis.private_demo_runtime_packet"' in client
+    assert 'schema_id: "nepsis.case_reasoning_compiler"' in client
+    assert "runPrivateDemo(payload: NepsisPrivateDemoPayload): Promise<NepsisPrivateDemoRuntimePacket>" in client
+    assert '"/private-demo"' in client
+
+
+def test_private_demo_page_uses_private_runtime_not_public_mvp() -> None:
+    page = ROOT / "nepsis-web" / "src" / "app" / "private-demo" / "page.tsx"
+    assert page.exists()
+    text = page.read_text(encoding="utf-8")
+
+    assert "engineClient.runPrivateDemo" in text
+    assert "PrivateDemoPacketView" in text
+    assert "no_phi_acknowledged" in text
+    assert "/api/auth/session" in text
+    assert "OperatorAccessNotice" in text
+    assert "runMvp" not in text
+    assert "/api/engine/mvp" not in text
+    assert "buildBundledMvpFallbackResponse" not in text
+
+
+def test_status_api_exposes_private_demo_readiness_metadata() -> None:
+    route = ROOT / "nepsis-web" / "src" / "app" / "api" / "status" / "route.ts"
+    page = ROOT / "nepsis-web" / "src" / "app" / "status" / "page.tsx"
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in [route, page])
+
+    assert "privateDemo" in combined
+    assert 'proxyPath: "/api/engine/private-demo"' in route.read_text(encoding="utf-8")
+    assert 'backendPath: "/v1/private-demo"' in route.read_text(encoding="utf-8")
+    assert "requiresNoPhiAcknowledgement" in combined
+    assert "Private demo" in page.read_text(encoding="utf-8")
+
+
 def test_operator_frontend_uses_packet_proxy_routes() -> None:
     root = ROOT / "nepsis-web" / "src"
     client = (root / "lib" / "engineClient.ts").read_text(encoding="utf-8")

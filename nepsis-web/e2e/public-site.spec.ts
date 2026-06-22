@@ -85,8 +85,10 @@ test("public MVP toggles between provenance tabs", async ({ page }) => {
 
 test("public operator routes are gated and do not ask for browser API keys", async ({ page }) => {
   await page.goto("/settings");
-  await expect(page.getByRole("heading", { name: /Operator settings/i })).toBeVisible();
-  await expect(page.getByText(/API keys are disabled/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Model Access/i })).toBeVisible();
+  await expect(
+    page.getByText(/NepsisCGN does not collect or store user provider API keys in the browser/i),
+  ).toBeVisible();
   await expect(page.getByLabel(/OpenAI API Key/i)).toHaveCount(0);
 
   await page.goto("/playground");
@@ -104,6 +106,14 @@ test("public live operator route is labeled and gated", async ({ page }) => {
   await expect(page.getByRole("link", { name: /Run MVP Demo/i })).toBeVisible();
   await expect(page.getByLabel(/OpenAI API Key/i)).toHaveCount(0);
   await expect(page.getByText(/deterministic MVP demo remains available/i)).toBeVisible();
+});
+
+test("public visitors cannot run the private demo", async ({ page }) => {
+  await page.goto("/private-demo");
+  await expect(page.getByRole("heading", { name: /Private demo access required/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Run MVP Demo/i })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /No-PHI prompt/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Run Private Demo/i })).toHaveCount(0);
 });
 
 test("public model API routes are disabled without provider keys", async ({ request }) => {
@@ -134,6 +144,15 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mvp.available).toBe(true);
   expect(payload.mvp.schemaId).toBe("nepsis.mvp_packet");
   expect(payload.mvp.noLoginRequired).toBe(true);
+  expect(payload.privateDemo.configured).toBe(false);
+  expect(payload.privateDemo.route).toBe("/private-demo");
+  expect(payload.privateDemo.proxyPath).toBe("/api/engine/private-demo");
+  expect(payload.privateDemo.backendPath).toBe("/v1/private-demo");
+  expect(payload.privateDemo.requiresAuth).toBe(true);
+  expect(payload.privateDemo.requiresCsrf).toBe(true);
+  expect(payload.privateDemo.requiresNoPhiAcknowledgement).toBe(true);
+  expect(payload.privateDemo.modelKeysRequired).toBe(false);
+  expect(payload.privateDemo.publicMvpFallback).toBe(false);
   expect(payload.auth.loginConfigured).toBe(true);
   expect(payload.auth.allowedEmailsConfigured).toBe(false);
   expect(payload.auth.emailConfigured).toBe(false);
@@ -179,6 +198,17 @@ test("status page exposes safe public system posture", async ({ page }) => {
           status: 200,
           schemaId: "nepsis.mvp_packet",
           noLoginRequired: true,
+        },
+        privateDemo: {
+          configured: false,
+          route: "/private-demo",
+          proxyPath: "/api/engine/private-demo",
+          backendPath: "/v1/private-demo",
+          requiresAuth: true,
+          requiresCsrf: true,
+          requiresNoPhiAcknowledgement: true,
+          modelKeysRequired: false,
+          publicMvpFallback: false,
         },
         operator: {
           enabled: false,
@@ -269,6 +299,12 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Private demo" })).toBeVisible();
+  await expect(page.getByText("Private demo backend proxy is not configured.")).toBeVisible();
+  await expect(page.getByText("No-PHI acknowledgement required")).toBeVisible();
+  await expect(page.getByText("CSRF protection required")).toBeVisible();
+  await expect(page.getByText("No model provider keys required")).toBeVisible();
+  await expect(page.getByText("No public MVP fallback")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Public Site Setup" })).toBeVisible();
   await expect(page.getByText("Env example: nepsis-web/.env.public.example")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Private Operator Setup" })).toBeVisible();

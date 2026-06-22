@@ -140,6 +140,42 @@ Expected response evidence:
 The private demo runtime is still no-PHI and operator-reviewed. A threshold hold
 is expected; do not present the packet as autonomous clinical guidance.
 
+## Private Demo Web Smoke
+
+The authenticated web path is `/private-demo`. It submits no-PHI prompts through
+the web proxy at `/api/engine/private-demo`, which forwards to backend
+`POST /v1/private-demo`. This path is distinct from public `/mvp` and must not
+serve bundled MVP fallback packets.
+
+Before testing the page, confirm:
+
+- Backend has `NEPSIS_API_TOKEN`.
+- Backend has `NEPSIS_OPERATOR_PACKET_SEAL_SECRET`.
+- Backend has `NEPSIS_API_ALLOW_ANON=false`.
+- Web has `NEPSIS_API_BASE_URL` pointed at the backend origin.
+- Web has matching `NEPSIS_API_TOKEN`.
+- Web has operator login configured.
+
+Local verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_private_demo_benchmark.py
+npm --prefix nepsis-web run lint
+npm --prefix nepsis-web run test:e2e:auth -- e2e-auth/private-demo.spec.ts
+```
+
+Expected UI evidence:
+
+- `/private-demo` requires operator access when signed out.
+- The form requires a no-PHI acknowledgement before submission.
+- The packet view shows `nepsis.private_demo_runtime_packet`.
+- Topology shows `LOCK_FRAME`, `RUN_REPORT`, `LOCK_REPORT`, and
+  `SET_THRESHOLD_DECISION`.
+- Compiler view shows `nepsis.case_reasoning_compiler` and
+  `compiler_valid: true`.
+- Lineage view shows the nested `nepsis.operator_packet` packet ID and loop ID.
+- Raw view exposes the full packet artifact for review.
+
 ## Private Demo Benchmark Suite
 
 The repo includes a no-PHI/no-PII authority-suppression benchmark fixture at
