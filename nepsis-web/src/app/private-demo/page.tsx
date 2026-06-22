@@ -26,6 +26,31 @@ async function readAuthState(): Promise<AuthState> {
   return response.json();
 }
 
+function formatErrorDetail(detail: unknown): string | null {
+  if (detail == null) {
+    return null;
+  }
+  if (typeof detail === "string") {
+    return detail;
+  }
+  try {
+    const serialized = JSON.stringify(detail);
+    if (serialized) {
+      return serialized;
+    }
+  } catch {
+    // Fall through to the guarded string conversion below.
+  }
+  if (typeof detail === "object") {
+    return "Unserializable error detail";
+  }
+  try {
+    return String(detail);
+  } catch {
+    return "Unserializable error detail";
+  }
+}
+
 export default function PrivateDemoPage() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [caseId, setCaseId] = useState("jailing");
@@ -51,6 +76,10 @@ export default function PrivateDemoPage() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (running) {
+      return;
+    }
+
     setError(null);
     setPacket(null);
 
@@ -77,7 +106,8 @@ export default function PrivateDemoPage() {
       setPacket(result);
     } catch (caught) {
       if (caught instanceof EngineClientError) {
-        setError(caught.detail ? `${caught.message}: ${String(caught.detail)}` : caught.message);
+        const detail = formatErrorDetail(caught.detail);
+        setError(detail ? `${caught.message}: ${detail}` : caught.message);
       } else {
         setError((caught as Error)?.message ?? "Private demo request failed.");
       }
@@ -90,7 +120,9 @@ export default function PrivateDemoPage() {
     return <OperatorAccessNotice checking />;
   }
 
-  if (!auth.engineControlAllowed) {
+  const signedInUser = auth.authenticated && auth.user?.trim() ? auth.user : null;
+
+  if (!signedInUser || !auth.engineControlAllowed) {
     return (
       <OperatorAccessNotice
         title="Private demo access required"
@@ -158,7 +190,7 @@ export default function PrivateDemoPage() {
             >
               {running ? "Running..." : "Run Private Demo"}
             </button>
-            <span className="text-xs text-nepsis-muted">Signed in as {auth.user ?? "operator"}</span>
+            <span className="text-xs text-nepsis-muted">Signed in as {signedInUser}</span>
           </div>
         </form>
       </section>
