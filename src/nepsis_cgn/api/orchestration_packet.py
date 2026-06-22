@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -14,7 +13,6 @@ INTEGRITY_SEAL_VERSION = "hmac-sha256:v1"
 DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LAYER_ORDER = ["intake", "red", "manifold", "blue", "still", "synthesis", "audit"]
 
-_DEVELOPMENT_SEAL_SECRET = secrets.token_bytes(32)
 _FIELD_STATES = {"unknown", "none_found", "not_applicable", "present"}
 _SHARED_CONTRACT_FIELDS = (
     "goal_scope",
@@ -567,7 +565,10 @@ def _v3_packet_seal_secret() -> bytes:
     raw = os.getenv("NEPSIS_V3_PACKET_SEAL_SECRET") or os.getenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET")
     if raw and raw.strip():
         return raw.strip().encode("utf-8")
-    return _DEVELOPMENT_SEAL_SECRET
+    raise ValueError(
+        "NEPSIS_V3_PACKET_SEAL_SECRET or NEPSIS_OPERATOR_PACKET_SEAL_SECRET "
+        "is required for V3 stateless packet sealing"
+    )
 
 
 def _legal_actions(packet: dict[str, Any], *, lock_eligible: bool) -> list[str]:

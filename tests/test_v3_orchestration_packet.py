@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +24,12 @@ from nepsis_cgn.api.orchestration_packet import (
 
 
 NOW = datetime(2026, 6, 21, 12, 0, 0, tzinfo=timezone.utc)
+TEST_V3_SEAL_SECRET = "unit-test-v3-packet-seal-secret"
+
+
+@pytest.fixture(autouse=True)
+def _configured_v3_packet_seal_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", TEST_V3_SEAL_SECRET)
 
 
 def _field(state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed.") -> dict[str, object]:
@@ -136,6 +147,73 @@ def _locked_through(layer: str) -> dict[str, object]:
         if current == layer:
             return packet
     return packet
+
+
+def _subprocess_env(*, seal_secret: str | None) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env.pop("NEPSIS_V3_PACKET_SEAL_SECRET", None)
+    env.pop("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", None)
+    if seal_secret is not None:
+        env["NEPSIS_V3_PACKET_SEAL_SECRET"] = seal_secret
+    return env
+
+
+def test_v3_stateless_packet_seal_requires_configured_stable_secret() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from nepsis_cgn.api.orchestration_packet import start_v3_orchestration; "
+                "start_v3_orchestration(goal='Goal', scope='Scope')"
+            ),
+        ],
+        env=_subprocess_env(seal_secret=None),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "NEPSIS_V3_PACKET_SEAL_SECRET" in result.stderr
+
+
+def test_v3_stateless_packet_seal_survives_cross_process_when_secret_is_configured() -> None:
+    start = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "from nepsis_cgn.api.orchestration_packet import start_v3_orchestration; "
+                "print(json.dumps(start_v3_orchestration(goal='Goal', scope='Scope')))"
+            ),
+        ],
+        env=_subprocess_env(seal_secret=TEST_V3_SEAL_SECRET),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    inspected = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json, sys; "
+                "from nepsis_cgn.api.orchestration_packet import inspect_v3_orchestration; "
+                "packet = json.loads(sys.stdin.read()); "
+                "print(json.dumps(inspect_v3_orchestration(packet)))"
+            ),
+        ],
+        input=start.stdout,
+        env=_subprocess_env(seal_secret=TEST_V3_SEAL_SECRET),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert json.loads(inspected.stdout)["status"] == "active"
 
 
 def test_start_packet_has_schema_ttl_layer_order_and_integrity() -> None:

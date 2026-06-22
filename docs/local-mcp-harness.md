@@ -180,6 +180,12 @@ A passing run proves:
 - The packet lifecycle is packet-in/packet-out; the model host keeps the packet
   between calls.
 
+V3 packet tools require a stable HMAC key in the MCP process environment. Set
+`NEPSIS_V3_PACKET_SEAL_SECRET` for local MCP use, or intentionally share
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET`. Without one of those secrets, V3 packet
+creation fails closed instead of creating packets that cannot survive a process
+restart.
+
 Expected output includes:
 
 ```json

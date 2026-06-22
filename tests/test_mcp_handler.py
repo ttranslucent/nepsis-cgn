@@ -4,9 +4,18 @@ import hashlib
 import json
 import logging
 
+import pytest
+
 from nepsis_cgn.api.operator_packet import lock_frame, lock_report, run_report, start_operator_packet
 from nepsis_cgn.mcp.handler import handle_mcp_request
 from nepsis_cgn.provenance import PacketProvenanceStore
+
+TEST_V3_SEAL_SECRET = "unit-test-v3-packet-seal-secret"
+
+
+@pytest.fixture(autouse=True)
+def _configured_v3_packet_seal_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", TEST_V3_SEAL_SECRET)
 
 
 def _tool_payload(response: dict[str, object]) -> dict[str, object]:
