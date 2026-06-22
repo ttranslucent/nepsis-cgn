@@ -15,8 +15,12 @@ from nepsis_cgn.api.operator_packet import (
     commit_iteration,
     lock_frame,
     lock_report,
+    lock_v3_operator_layer,
+    propose_v3_operator_layer,
     run_report,
     set_threshold_decision,
+    set_v3_layer_field,
+    start_v3_layer_loop,
     start_operator_packet,
 )
 
@@ -52,6 +56,91 @@ def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _canonical_v3_field_text(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _v3_field(
+    state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed."
+) -> dict[str, object]:
+    return {
+        "status": state,
+        "items": items if items is not None else ["captured"],
+        "rationale": rationale,
+    }
+
+
+def _v3_layer_artifact(layer: str) -> dict[str, object]:
+    artifact: dict[str, object] = {
+        "layer": layer,
+        "summary": f"{layer} layer artifact.",
+        "goal_scope": _v3_field(items=["goal", "scope"]),
+        "red_triggers": _v3_field(),
+        "blue_opportunity_space": _v3_field(),
+        "constraints": _v3_field(),
+        "manifold_match_mismatch": _v3_field(),
+        "still_blockers": _v3_field(
+            "none_found", [], "No blocker found at this layer."
+        ),
+        "unresolved_questions": _v3_field(
+            "none_found", [], "No unresolved question found at this layer."
+        ),
+        "audit_notes": _v3_field(items=["packet visible"]),
+        "proposed_status": _v3_field(items=["ready"]),
+        "lock_eligibility": _v3_field(items=["eligible"]),
+        "layer_findings": {"risk": [], "ruin": [], "win": [], "recommendations": []},
+    }
+    if layer == "intake":
+        artifact["intake"] = {
+            "goal": "Prototype V3 layer locks.",
+            "scope": "Operator packet layer loop.",
+            "assumptions": ["Frame is already locked."],
+            "unresolved_questions": ["None for the prototype slice."],
+        }
+    elif layer == "red":
+        artifact["red"] = {
+            "triggers": ["RED must precede BLUE"],
+            "ruin_paths": [
+                "BLUE optimization masks an unresolved must-not-miss condition"
+            ],
+            "constraints": ["Do not advance to BLUE before RED is locked."],
+            "safety_blockers": ["Unresolved RED artifact"],
+        }
+    elif layer == "blue":
+        artifact["blue"] = {
+            "wins": ["Faster iteration inside locked RED constraints"],
+            "bounded_by_red": ["No BLUE field can precede RED lock"],
+        }
+    return artifact
+
+
+def _set_v3_artifact_fields(
+    packet: dict[str, object], layer: str, artifact: dict[str, object]
+) -> dict[str, object]:
+    updated = packet
+    for field, value in artifact.items():
+        updated = set_v3_layer_field(
+            packet=updated, layer=layer, field=field, value=value
+        )
+    return updated
+
+
+def _propose_and_lock_v3(packet: dict[str, object], layer: str) -> dict[str, object]:
+    proposed = propose_v3_operator_layer(packet=packet, layer=layer)
+    proposal = proposed["v3_layer_loop"]["packet"]["current_proposal"]
+    assert isinstance(proposal, dict)
+    return lock_v3_operator_layer(
+        packet=proposed,
+        layer=layer,
+        lock_assertion={
+            "asserted": True,
+            "assertion_text": f"I explicitly lock the {layer} layer.",
+            "proposal_hash": proposal["artifact_hash"],
+            "lock_nonce": f"operator-{layer}-nonce",
+        },
+    )
+
+
 _PROPOSAL_SECRET = "unit-test-proposal-receipt-secret"
 
 
@@ -76,11 +165,15 @@ def _receipt(
         "loop_id": loop_id or str(packet["loop_id"]),
         "proposed_value_hash": _h(proposed_text),
     }
-    signed = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    signed = json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
     body["signature"] = {
         "algorithm": "hmac-sha256",
         "key_id": "default",
-        "signature": hmac.new(_PROPOSAL_SECRET.encode("utf-8"), signed, hashlib.sha256).hexdigest(),
+        "signature": hmac.new(
+            _PROPOSAL_SECRET.encode("utf-8"), signed, hashlib.sha256
+        ).hexdigest(),
         "signed_at": "2026-06-12T00:00:00.000Z",
     }
     return body
@@ -202,9 +295,15 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
     assert committed["integrity"]["seal_version"] == "hmac-sha256:v1"
     assert committed["integrity"]["seal"]
     assert committed["phase"] == "frame_draft"
-    assert committed["legal_next_tools"] == ["start_operator_packet", "lock_frame", "abandon_packet"]
+    assert committed["legal_next_tools"] == [
+        "start_operator_packet",
+        "lock_frame",
+        "abandon_packet",
+    ]
     assert committed["audit_trace"] == []
-    assert committed["last_commit_packet"]["schema_id"] == "nepsis.operator_audit_packet"
+    assert (
+        committed["last_commit_packet"]["schema_id"] == "nepsis.operator_audit_packet"
+    )
     assert committed["last_commit_packet"]["phase_events"] == [
         "LOCK_FRAME",
         "RUN_REPORT",
@@ -227,7 +326,11 @@ def test_stateless_operator_packet_rejects_report_before_frame_lock() -> None:
     assert result["schema_id"] == "nepsis.phase_rejection"
     assert result["attempted_tool"] == "run_report"
     assert result["current_phase"] == "frame_draft"
-    assert result["legal_next_tools"] == ["start_operator_packet", "lock_frame", "abandon_packet"]
+    assert result["legal_next_tools"] == [
+        "start_operator_packet",
+        "lock_frame",
+        "abandon_packet",
+    ]
 
 
 def test_stateless_operator_packet_rejects_commit_before_threshold() -> None:
@@ -254,7 +357,9 @@ def test_stateless_operator_packet_rejects_commit_before_threshold() -> None:
     assert result["failed_precondition"] == "threshold_decision_required"
 
 
-def test_stateless_operator_packet_rejects_commit_when_trace_does_not_prove_gates() -> None:
+def test_stateless_operator_packet_rejects_commit_when_trace_does_not_prove_gates() -> (
+    None
+):
     packet = start_operator_packet()
     packet["phase"] = "threshold_set"
     packet["audit_trace"] = []
@@ -265,7 +370,12 @@ def test_stateless_operator_packet_rejects_commit_when_trace_does_not_prove_gate
     assert result["attempted_tool"] == "commit_iteration"
     assert result["current_phase"] == "threshold_set"
     assert result["failed_precondition"] == "audit_trace_required"
-    assert result["missing"] == ["LOCK_FRAME", "RUN_REPORT", "LOCK_REPORT", "SET_THRESHOLD_DECISION"]
+    assert result["missing"] == [
+        "LOCK_FRAME",
+        "RUN_REPORT",
+        "LOCK_REPORT",
+        "SET_THRESHOLD_DECISION",
+    ]
 
 
 def test_serialized_operator_packet_continues_without_server_memory() -> None:
@@ -287,11 +397,18 @@ def test_serialized_operator_packet_continues_without_server_memory() -> None:
 
     assert reported["schema_id"] == "nepsis.operator_packet"
     assert reported["phase"] == "report_evaluated"
-    assert [entry["event"] for entry in reported["audit_trace"]] == ["LOCK_FRAME", "RUN_REPORT"]
+    assert [entry["event"] for entry in reported["audit_trace"]] == [
+        "LOCK_FRAME",
+        "RUN_REPORT",
+    ]
 
 
-def test_stateless_operator_packet_seals_output_and_accepts_valid_sealed_flow(monkeypatch) -> None:
-    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+def test_stateless_operator_packet_seals_output_and_accepts_valid_sealed_flow(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret"
+    )
     packet = start_operator_packet()
 
     locked = lock_frame(
@@ -315,7 +432,9 @@ def test_stateless_operator_packet_seals_output_and_accepts_valid_sealed_flow(mo
 
 
 def test_stateless_operator_packet_rejects_tampered_seal(monkeypatch) -> None:
-    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret"
+    )
     packet = start_operator_packet()
     locked = lock_frame(
         packet=packet,
@@ -333,8 +452,12 @@ def test_stateless_operator_packet_rejects_tampered_seal(monkeypatch) -> None:
         )
 
 
-def test_stateless_operator_packet_rejects_trace_over_configured_cap(monkeypatch) -> None:
-    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+def test_stateless_operator_packet_rejects_trace_over_configured_cap(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret"
+    )
     monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS", "1")
     packet = start_operator_packet()
     locked = lock_frame(
@@ -354,7 +477,9 @@ def test_stateless_operator_packet_rejects_trace_over_configured_cap(monkeypatch
         lock_report(packet=reported)
 
 
-def test_operator_packet_requires_configured_seal_secret_in_operator_mode(monkeypatch) -> None:
+def test_operator_packet_requires_configured_seal_secret_in_operator_mode(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", raising=False)
     monkeypatch.setenv("NEPSIS_DEPLOYMENT_MODE", "operator")
 
@@ -362,7 +487,9 @@ def test_operator_packet_requires_configured_seal_secret_in_operator_mode(monkey
         start_operator_packet()
 
 
-def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions(monkeypatch) -> None:
+def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
@@ -379,7 +506,9 @@ def test_stateless_operator_packet_preserves_hash_checked_assist_dispositions(mo
                 "disposition": "accepted",
                 "proposed_value_hash": _h(hard_text),
                 "final_value_hash": _h(hard_text),
-                "proposal_receipt": _receipt(packet, target="frame.constraints_hard", proposed_text=hard_text),
+                "proposal_receipt": _receipt(
+                    packet, target="frame.constraints_hard", proposed_text=hard_text
+                ),
                 "summary": "Preserved RED-before-BLUE sequencing.",
             }
         ],
@@ -423,9 +552,13 @@ def test_assist_disposition_rejects_proposal_receipt_hash_mismatch(monkeypatch) 
     packet = start_operator_packet()
     frame = _operator_frame()
     hard_text = _hard_text(frame)
-    receipt = _receipt(packet, target="frame.constraints_hard", proposed_text="different model text")
+    receipt = _receipt(
+        packet, target="frame.constraints_hard", proposed_text="different model text"
+    )
 
-    with pytest.raises(ValueError, match="proposal_receipt proposed_value_hash mismatch"):
+    with pytest.raises(
+        ValueError, match="proposal_receipt proposed_value_hash mismatch"
+    ):
         lock_frame(
             packet=packet,
             family="safety",
@@ -445,12 +578,19 @@ def test_assist_disposition_rejects_proposal_receipt_hash_mismatch(monkeypatch) 
         )
 
 
-def test_assist_disposition_rejects_proposal_receipt_from_other_loop(monkeypatch) -> None:
+def test_assist_disposition_rejects_proposal_receipt_from_other_loop(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
     hard_text = _hard_text(frame)
-    receipt = _receipt(packet, target="frame.constraints_hard", proposed_text=hard_text, loop_id="other-loop")
+    receipt = _receipt(
+        packet,
+        target="frame.constraints_hard",
+        proposed_text=hard_text,
+        loop_id="other-loop",
+    )
 
     with pytest.raises(ValueError, match="proposal_receipt loop_id mismatch"):
         lock_frame(
@@ -477,7 +617,9 @@ def test_node_signed_proposal_receipt_verifies_in_python(monkeypatch) -> None:
     packet = start_operator_packet()
     frame = _operator_frame()
     hard_text = _hard_text(frame)
-    receipt = _node_receipt(packet, target="frame.constraints_hard", proposed_text=hard_text)
+    receipt = _node_receipt(
+        packet, target="frame.constraints_hard", proposed_text=hard_text
+    )
 
     locked = lock_frame(
         packet=packet,
@@ -574,7 +716,9 @@ def test_assist_disposition_rejects_overflow_instead_of_truncating() -> None:
     ]
 
     with pytest.raises(ValueError, match="exceeds"):
-        lock_frame(packet=packet, family="safety", frame=frame, assist_acceptances=too_many)
+        lock_frame(
+            packet=packet, family="safety", frame=frame, assist_acceptances=too_many
+        )
 
 
 def test_assist_disposition_resolves_rationale_segments(monkeypatch) -> None:
@@ -589,26 +733,30 @@ def test_assist_disposition_resolves_rationale_segments(monkeypatch) -> None:
         family="safety",
         frame=frame,
         assist_acceptances=[
-                {
-                    "target": "frame.red_definition",
-                    "model": "gpt-4.1-mini",
-                    "disposition": "edited",
-                    "proposed_value_hash": _h(proposed_text),
-                    "final_value_hash": _h(red),
-                    "proposal_receipt": _receipt(
-                        packet,
-                        target="frame.red_definition",
-                        proposed_text=proposed_text,
-                    ),
-                    "summary": "Tightened RED definition.",
-                }
-            ],
+            {
+                "target": "frame.red_definition",
+                "model": "gpt-4.1-mini",
+                "disposition": "edited",
+                "proposed_value_hash": _h(proposed_text),
+                "final_value_hash": _h(red),
+                "proposal_receipt": _receipt(
+                    packet,
+                    target="frame.red_definition",
+                    proposed_text=proposed_text,
+                ),
+                "summary": "Tightened RED definition.",
+            }
+        ],
     )
 
-    assert locked["audit_trace"][-1]["arguments"]["assist_acceptances"][0]["final_value_hash"] == _h(red)
+    assert locked["audit_trace"][-1]["arguments"]["assist_acceptances"][0][
+        "final_value_hash"
+    ] == _h(red)
 
 
-def test_assist_disposition_rejects_target_outside_transition_scope(monkeypatch) -> None:
+def test_assist_disposition_rejects_target_outside_transition_scope(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
     packet = start_operator_packet()
     frame = _operator_frame()
@@ -653,7 +801,9 @@ def test_assist_disposition_records_rejected_without_final_hash(monkeypatch) -> 
                 "model": "gpt-4.1-mini",
                 "disposition": "rejected",
                 "proposed_value_hash": _h(proposed_text),
-                "proposal_receipt": _receipt(packet, target="next_frame.text", proposed_text=proposed_text),
+                "proposal_receipt": _receipt(
+                    packet, target="next_frame.text", proposed_text=proposed_text
+                ),
                 "summary": "Declined carry-forward suggestion.",
             }
         ],
@@ -671,8 +821,18 @@ def test_assist_rationale_segment_vectors_are_exact_case_and_pipe_delimited() ->
     assert _read_rationale_segment(rationale, "Red channel") == "avoid harm"
     assert _read_rationale_segment(rationale, "Blue channel") == "move carefully"
     assert _read_rationale_segment(rationale, "Uncertainty") == "report quality"
-    assert _read_rationale_segment("red channel: avoid harm | Blue channel: x", "Red channel") == ""
-    assert _read_rationale_segment("Red channel: avoid | embedded pipe | Blue channel: x", "Red channel") == "avoid"
+    assert (
+        _read_rationale_segment(
+            "red channel: avoid harm | Blue channel: x", "Red channel"
+        )
+        == ""
+    )
+    assert (
+        _read_rationale_segment(
+            "Red channel: avoid | embedded pipe | Blue channel: x", "Red channel"
+        )
+        == "avoid"
+    )
     assert _read_rationale_segment("Red channel: avoid harm", "Uncertainty") == ""
 
 
@@ -690,5 +850,109 @@ def test_stateless_operator_packet_abandon_returns_noncommitted_fragment() -> No
     assert abandoned["schema_id"] == "nepsis.operator_packet"
     assert abandoned["phase"] == "frame_draft"
     assert abandoned["audit_trace"] == []
-    assert abandoned["last_abandoned_packet"]["schema_id"] == "nepsis.operator_abandoned_loop"
+    assert (
+        abandoned["last_abandoned_packet"]["schema_id"]
+        == "nepsis.operator_abandoned_loop"
+    )
     assert abandoned["last_abandoned_packet"]["reason"] == "Frame was too broad."
+
+
+def test_v3_layer_loop_reuses_operator_gate_assists_and_audit_trace(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", _PROPOSAL_SECRET)
+    monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", "unit-test-v3-layer-loop-secret")
+    packet = start_operator_packet()
+
+    premature = start_v3_layer_loop(
+        packet=packet,
+        goal="Prototype V3 layer locks.",
+        scope="Operator packet layer loop.",
+    )
+    assert premature["schema_id"] == "nepsis.phase_rejection"
+    assert premature["failed_precondition"] == "frame_lock_required"
+    assert premature["missing"] == ["LOCK_FRAME"]
+
+    locked_frame = lock_frame(packet=packet, family="safety", frame=_operator_frame())
+    looped = start_v3_layer_loop(
+        packet=locked_frame,
+        goal="Prototype V3 layer locks.",
+        scope="Operator packet layer loop.",
+        initial_context="Reuse the locked operator frame.",
+    )
+    assert looped["phase"] == "frame_locked"
+    assert looped["v3_layer_loop"]["packet"]["current_layer"] == "intake"
+    assert looped["v3_layer_loop"]["navigation_shortcuts"] == {
+        "next_layer": "Meta+ArrowRight",
+        "previous_layer": "Meta+ArrowLeft",
+    }
+
+    intake_ready = _set_v3_artifact_fields(
+        looped, "intake", _v3_layer_artifact("intake")
+    )
+    red_current = _propose_and_lock_v3(intake_ready, "intake")
+    assert red_current["v3_layer_loop"]["packet"]["current_layer"] == "red"
+
+    blue_too_early = set_v3_layer_field(
+        packet=red_current,
+        layer="blue",
+        field="blue",
+        value=_v3_layer_artifact("blue")["blue"],
+    )
+    assert blue_too_early["schema_id"] == "nepsis.phase_rejection"
+    assert blue_too_early["failed_precondition"] == "v3_layer_order_required"
+    assert blue_too_early["current_layer"] == "red"
+
+    red_artifact = _v3_layer_artifact("red")
+    red_section_text = _canonical_v3_field_text(red_artifact["red"])
+    red_updated = set_v3_layer_field(
+        packet=red_current,
+        layer="red",
+        field="red",
+        value=red_artifact["red"],
+        assist_acceptances=[
+            {
+                "target": "v3_layer.red.red",
+                "source": "model_suggestion",
+                "model": "gpt-4.1-mini",
+                "disposition": "accepted",
+                "proposed_value_hash": _h(red_section_text),
+                "final_value_hash": _h(red_section_text),
+                "proposal_receipt": _receipt(
+                    red_current,
+                    target="v3_layer.red.red",
+                    proposed_text=red_section_text,
+                ),
+                "summary": "Accepted RED layer constraints before BLUE optimization.",
+            }
+        ],
+    )
+    for field, value in red_artifact.items():
+        if field != "red":
+            red_updated = set_v3_layer_field(
+                packet=red_updated, layer="red", field=field, value=value
+            )
+    manifold_current = _propose_and_lock_v3(red_updated, "red")
+
+    events = [entry["event"] for entry in manifold_current["audit_trace"]]
+    assert events[0] == "LOCK_FRAME"
+    assert events.index("LOCK_V3_LAYER") < events.index(
+        "SET_V3_LAYER_FIELD", events.index("LOCK_V3_LAYER") + 1
+    )
+    assert [
+        entry["arguments"]["layer"]
+        for entry in manifold_current["audit_trace"]
+        if entry["event"] == "LOCK_V3_LAYER"
+    ] == [
+        "intake",
+        "red",
+    ]
+    red_assist = [
+        entry["arguments"]["assist_acceptances"][0]
+        for entry in manifold_current["audit_trace"]
+        if entry["event"] == "SET_V3_LAYER_FIELD"
+        and entry["arguments"]["field"] == "red"
+    ][0]
+    assert red_assist["target"] == "v3_layer.red.red"
+    assert red_assist["final_value_hash"] == _h(red_section_text)
+    assert manifold_current["v3_layer_loop"]["packet"]["current_layer"] == "manifold"

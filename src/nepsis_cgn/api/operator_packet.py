@@ -11,11 +11,23 @@ from typing import Any
 from uuid import uuid4
 
 from ..core.case_reasoning import threshold_fields_from_case_reasoning
+from .orchestration_packet import (
+    LAYER_ORDER as V3_LAYER_ORDER,
+    lock_v3_layer as _lock_v3_orchestration_layer,
+    propose_v3_layer as _propose_v3_orchestration_layer,
+    start_v3_orchestration,
+)
 from .service import EngineApiService, Family
 
 SCHEMA_ID = "nepsis.operator_packet"
 SCHEMA_VERSION = "2.1.0"
 INTEGRITY_SEAL_VERSION = "hmac-sha256:v1"
+V3_LAYER_LOOP_SCHEMA_ID = "nepsis.operator_v3_layer_loop"
+V3_LAYER_LOOP_SCHEMA_VERSION = "0.1.0"
+V3_LAYER_NAVIGATION_SHORTCUTS = {
+    "next_layer": "Meta+ArrowRight",
+    "previous_layer": "Meta+ArrowLeft",
+}
 POLICY = {
     "name": "nepsis_cgn.stateless_operator_packet",
     "version": "2026-05-22",
@@ -26,7 +38,18 @@ PROPOSAL_RECEIPT_SCHEMA_ID = "nepsis.operator_model_proposal_receipt"
 PROPOSAL_RECEIPT_SCHEMA_VERSION = "1.0.0"
 PROPOSAL_RECEIPT_ROUTE = "/api/operator/model"
 PROPOSAL_RECEIPT_SIGNATURE_ALGORITHM = "hmac-sha256"
-_COMMIT_REQUIRED_TRACE_EVENTS = ["LOCK_FRAME", "RUN_REPORT", "LOCK_REPORT", "SET_THRESHOLD_DECISION"]
+_COMMIT_REQUIRED_TRACE_EVENTS = [
+    "LOCK_FRAME",
+    "RUN_REPORT",
+    "LOCK_REPORT",
+    "SET_THRESHOLD_DECISION",
+]
+_V3_OPERATOR_TRACE_EVENTS = {
+    "START_V3_LAYER_LOOP",
+    "SET_V3_LAYER_FIELD",
+    "PROPOSE_V3_LAYER_LOCK",
+    "LOCK_V3_LAYER",
+}
 _DEVELOPMENT_SEAL_SECRET = secrets.token_bytes(32)
 
 _DEFAULT_FRAME = {
@@ -70,9 +93,13 @@ def start_operator_packet(
 ) -> dict[str, Any]:
     if family not in {"puzzle", "clinical", "safety"}:
         raise ValueError("family must be one of: puzzle, clinical, safety")
-    resolved_frame = _json_copy(frame) if frame is not None else _json_copy(_DEFAULT_FRAME)
+    resolved_frame = (
+        _json_copy(frame) if frame is not None else _json_copy(_DEFAULT_FRAME)
+    )
     resolved_governance = (
-        _json_copy(governance_costs) if governance_costs is not None else _json_copy(_DEFAULT_GOVERNANCE)
+        _json_copy(governance_costs)
+        if governance_costs is not None
+        else _json_copy(_DEFAULT_GOVERNANCE)
     )
     return _packet(
         loop_id=str(uuid4()),
@@ -107,11 +134,17 @@ def lock_frame(
     )
     svc = _service_from_packet(packet)
     resolved_family = family or _packet_family(packet)
-    resolved_governance = governance_costs if governance_costs is not None else _packet_governance(packet)
-    resolved_calibration = (
-        governance_calibration if governance_calibration is not None else _packet_calibration(packet)
+    resolved_governance = (
+        governance_costs if governance_costs is not None else _packet_governance(packet)
     )
-    resolved_manifest = manifest_path if manifest_path is not None else _packet_manifest_path(packet)
+    resolved_calibration = (
+        governance_calibration
+        if governance_calibration is not None
+        else _packet_calibration(packet)
+    )
+    resolved_manifest = (
+        manifest_path if manifest_path is not None else _packet_manifest_path(packet)
+    )
     result = svc.operator_lock_frame(
         family=resolved_family,
         frame=frame,
@@ -122,7 +155,9 @@ def lock_frame(
     if _is_rejection(result):
         return _stateless_rejection(result)
     session = _transition_session(result)
-    trace_frame = _json_copy(session.get("frame") if isinstance(session.get("frame"), dict) else frame)
+    trace_frame = _json_copy(
+        session.get("frame") if isinstance(session.get("frame"), dict) else frame
+    )
     trace = _append_trace(
         packet,
         "LOCK_FRAME",
@@ -146,7 +181,9 @@ def run_report(
     interpretation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     svc = _service_from_packet(packet)
-    result = svc.operator_run_report(report_text=report_text, sign=sign, interpretation=interpretation)
+    result = svc.operator_run_report(
+        report_text=report_text, sign=sign, interpretation=interpretation
+    )
     if _is_rejection(result):
         return _stateless_rejection(result)
     trace = _append_trace(
@@ -179,13 +216,19 @@ def set_threshold_decision(
         loop_id=_packet_loop_id(packet),
     )
     svc = _service_from_packet(packet)
-    result = svc.operator_set_threshold_decision(decision=decision, hold_reason=hold_reason)
+    result = svc.operator_set_threshold_decision(
+        decision=decision, hold_reason=hold_reason
+    )
     if _is_rejection(result):
         return _stateless_rejection(result)
     trace = _append_trace(
         packet,
         "SET_THRESHOLD_DECISION",
-        {"decision": decision, "hold_reason": hold_reason, "assist_acceptances": accepted_assists},
+        {
+            "decision": decision,
+            "hold_reason": hold_reason,
+            "assist_acceptances": accepted_assists,
+        },
     )
     return _packet_from_transition(packet, result, trace)
 
@@ -202,6 +245,233 @@ def set_threshold_decision_from_case_reasoning(
         hold_reason=str(fields["hold_reason"]),
         assist_acceptances=assist_acceptances,
     )
+
+
+def start_v3_layer_loop(
+    *,
+    packet: dict[str, Any],
+    goal: str,
+    scope: str,
+    initial_context: str | None = None,
+) -> dict[str, Any]:
+    _service_from_packet(packet)
+    phase = _packet_phase(packet)
+    if phase == "frame_draft":
+        return _local_rejection(
+            attempted_tool="start_v3_layer_loop",
+            current_phase=phase,
+            failed_precondition="frame_lock_required",
+            missing=["LOCK_FRAME"],
+            coach_prompts=[
+                "Lock the operator frame before starting the V3 layer loop."
+            ],
+        )
+    if _packet_v3_layer_loop(packet) is not None:
+        raise ValueError("v3 layer loop is already active")
+
+    v3_packet = start_v3_orchestration(
+        goal=goal,
+        scope=scope,
+        initial_context=initial_context,
+    )
+    loop = _new_v3_layer_loop(v3_packet)
+    trace = _append_trace(
+        packet,
+        "START_V3_LAYER_LOOP",
+        {
+            "goal": goal,
+            "scope": scope,
+            "initial_context": initial_context or "",
+            "v3_run_id": v3_packet["run_id"],
+        },
+    )
+    return _packet_from_v3_transition(packet, trace, loop)
+
+
+def set_v3_layer_field(
+    *,
+    packet: dict[str, Any],
+    layer: str,
+    field: str,
+    value: Any,
+    assist_acceptances: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    _service_from_packet(packet)
+    loop = _packet_v3_layer_loop(packet)
+    if loop is None:
+        return _local_rejection(
+            attempted_tool="set_v3_layer_field",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_loop_required",
+            missing=["START_V3_LAYER_LOOP"],
+            coach_prompts=["Start the V3 layer loop after locking the operator frame."],
+        )
+    v3_packet = _v3_packet_from_loop(loop)
+    current_layer = _v3_current_layer(v3_packet)
+    resolved_layer = _validate_v3_layer(layer)
+    if resolved_layer != current_layer:
+        return _local_rejection(
+            attempted_tool="set_v3_layer_field",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_order_required",
+            missing=[f"LOCK_V3_LAYER:{current_layer}"],
+            coach_prompts=[
+                f"Current V3 layer is {current_layer}; lock it before editing {resolved_layer}."
+            ],
+            extra={"current_layer": current_layer, "attempted_layer": resolved_layer},
+        )
+
+    resolved_field = _validate_v3_field(field)
+    target = _v3_assist_target(resolved_layer, resolved_field)
+    canonical_value = _canonical_v3_field_text(value)
+    accepted_assists = _normalize_assist_acceptances(
+        assist_acceptances,
+        final_values={target: canonical_value},
+        loop_id=_packet_loop_id(packet),
+    )
+    draft_layers = _v3_draft_layers(loop)
+    draft = dict(draft_layers.get(resolved_layer) or {})
+    draft[resolved_field] = _json_copy(value)
+    draft_layers[resolved_layer] = draft
+    loop["draft_layers"] = draft_layers
+
+    trace = _append_trace(
+        packet,
+        "SET_V3_LAYER_FIELD",
+        {
+            "layer": resolved_layer,
+            "field": resolved_field,
+            "value": _json_copy(value),
+            "value_hash": _sha256_hex(canonical_value),
+            "assist_acceptances": accepted_assists,
+        },
+    )
+    return _packet_from_v3_transition(packet, trace, loop)
+
+
+def propose_v3_operator_layer(*, packet: dict[str, Any], layer: str) -> dict[str, Any]:
+    _service_from_packet(packet)
+    loop = _packet_v3_layer_loop(packet)
+    if loop is None:
+        return _local_rejection(
+            attempted_tool="propose_v3_operator_layer",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_loop_required",
+            missing=["START_V3_LAYER_LOOP"],
+            coach_prompts=["Start the V3 layer loop before proposing a layer lock."],
+        )
+    v3_packet = _v3_packet_from_loop(loop)
+    current_layer = _v3_current_layer(v3_packet)
+    resolved_layer = _validate_v3_layer(layer)
+    if resolved_layer != current_layer:
+        return _local_rejection(
+            attempted_tool="propose_v3_operator_layer",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_order_required",
+            missing=[f"LOCK_V3_LAYER:{current_layer}"],
+            coach_prompts=[
+                f"Current V3 layer is {current_layer}; lock it before proposing {resolved_layer}."
+            ],
+            extra={"current_layer": current_layer, "attempted_layer": resolved_layer},
+        )
+    artifact = _v3_draft_layers(loop).get(resolved_layer)
+    if not isinstance(artifact, dict):
+        return _local_rejection(
+            attempted_tool="propose_v3_operator_layer",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_fields_required",
+            missing=["SET_V3_LAYER_FIELD"],
+            coach_prompts=[
+                f"Set at least one field for the {resolved_layer} V3 layer before proposing a lock."
+            ],
+            extra={"current_layer": current_layer},
+        )
+
+    proposed = _propose_v3_orchestration_layer(
+        v3_packet,
+        layer=resolved_layer,
+        artifact=artifact,
+        draft_metadata={
+            "source": "operator_packet",
+            "operator_loop_id": _packet_loop_id(packet),
+        },
+    )
+    proposal = proposed["current_proposal"]
+    loop["packet"] = proposed
+    trace = _append_trace(
+        packet,
+        "PROPOSE_V3_LAYER_LOCK",
+        {
+            "layer": resolved_layer,
+            "artifact_hash": proposal["artifact_hash"],
+            "draft_fields": sorted(artifact.keys()),
+            "validation": _json_copy(proposal.get("validation") or {}),
+        },
+    )
+    return _packet_from_v3_transition(packet, trace, loop)
+
+
+def lock_v3_operator_layer(
+    *,
+    packet: dict[str, Any],
+    layer: str,
+    lock_assertion: dict[str, Any],
+) -> dict[str, Any]:
+    _service_from_packet(packet)
+    loop = _packet_v3_layer_loop(packet)
+    if loop is None:
+        return _local_rejection(
+            attempted_tool="lock_v3_operator_layer",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_loop_required",
+            missing=["START_V3_LAYER_LOOP"],
+            coach_prompts=["Start the V3 layer loop before locking a layer."],
+        )
+    v3_packet = _v3_packet_from_loop(loop)
+    current_layer = _v3_current_layer(v3_packet)
+    resolved_layer = _validate_v3_layer(layer)
+    if resolved_layer != current_layer:
+        return _local_rejection(
+            attempted_tool="lock_v3_operator_layer",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_order_required",
+            missing=[f"LOCK_V3_LAYER:{current_layer}"],
+            coach_prompts=[
+                f"Current V3 layer is {current_layer}; lock it before locking {resolved_layer}."
+            ],
+            extra={"current_layer": current_layer, "attempted_layer": resolved_layer},
+        )
+    proposal = v3_packet.get("current_proposal")
+    if not isinstance(proposal, dict):
+        return _local_rejection(
+            attempted_tool="lock_v3_operator_layer",
+            current_phase=_packet_phase(packet),
+            failed_precondition="v3_layer_proposal_required",
+            missing=["PROPOSE_V3_LAYER_LOCK"],
+            coach_prompts=[f"Propose the {resolved_layer} V3 layer before locking it."],
+            extra={"current_layer": current_layer},
+        )
+
+    locked = _lock_v3_orchestration_layer(
+        v3_packet,
+        layer=resolved_layer,
+        lock_assertion=lock_assertion,
+    )
+    loop["packet"] = locked
+    trace = _append_trace(
+        packet,
+        "LOCK_V3_LAYER",
+        {
+            "layer": resolved_layer,
+            "artifact_hash": proposal["artifact_hash"],
+            "locked_layers": list(locked.get("locked_layers", {}).keys()),
+            "next_layer": locked.get("current_layer"),
+            "lock_assertion_hash": locked["locked_layers"][resolved_layer][
+                "locked_by_assertion_hash"
+            ],
+        },
+    )
+    return _packet_from_v3_transition(packet, trace, loop)
 
 
 def commit_iteration(
@@ -223,7 +493,9 @@ def commit_iteration(
                 current_phase="threshold_set",
                 failed_precondition="audit_trace_required",
                 missing=missing_events,
-                coach_prompts=["Commit requires the packet trace to prove each prior operator gate."],
+                coach_prompts=[
+                    "Commit requires the packet trace to prove each prior operator gate."
+                ],
             )
     svc = _service_from_packet(packet)
     result = svc.operator_commit_iteration(carry_forward_frame=carry_forward_frame)
@@ -232,7 +504,10 @@ def commit_iteration(
     trace = _append_trace(
         packet,
         "COMMIT_ITERATION",
-        {"carry_forward_frame": carry_forward_frame, "assist_acceptances": accepted_assists},
+        {
+            "carry_forward_frame": carry_forward_frame,
+            "assist_acceptances": accepted_assists,
+        },
     )
     committed_packet = _json_copy(result.get("packet"))
     session = _transition_session(result)
@@ -241,9 +516,17 @@ def commit_iteration(
         phase=str(result.get("phase") or "frame_draft"),
         family=str(session.get("family") or _packet_family(packet)),
         frame=_json_copy(session.get("frame") or _packet_frame(packet)),
-        governance_costs=_json_copy(session.get("governance") or _packet_governance(packet)),
-        governance_calibration=_json_copy(session.get("calibration") or _packet_calibration(packet)),
-        manifest_path=session.get("manifest_path") if isinstance(session.get("manifest_path"), str) else _packet_manifest_path(packet),
+        governance_costs=_json_copy(
+            session.get("governance") or _packet_governance(packet)
+        ),
+        governance_calibration=_json_copy(
+            session.get("calibration") or _packet_calibration(packet)
+        ),
+        manifest_path=(
+            session.get("manifest_path")
+            if isinstance(session.get("manifest_path"), str)
+            else _packet_manifest_path(packet)
+        ),
         audit_trace=[],
         latest_audit=_json_copy(result.get("audit") or {}),
         latest_step=None,
@@ -267,7 +550,9 @@ def abandon_packet(*, packet: dict[str, Any], reason: str = "") -> dict[str, Any
     started["loop_id"] = _packet_loop_id(packet)
     started["last_commit_packet"] = _json_copy(packet.get("last_commit_packet"))
     started["last_abandoned_packet"] = abandoned
-    started["previous_trace"] = _append_trace(packet, "ABANDON_PACKET", {"reason": reason})
+    started["previous_trace"] = _append_trace(
+        packet, "ABANDON_PACKET", {"reason": reason}
+    )
     return started
 
 
@@ -277,15 +562,22 @@ def inspect_operator_packet(packet: dict[str, Any] | None = None) -> dict[str, A
     else:
         _validate_packet(packet)
         resolved = packet
-    return {
+    state = {
         "schema_id": "nepsis.operator_packet_state",
         "loop_id": _packet_loop_id(resolved),
         "phase": _packet_phase(resolved),
-        "legal_next_tools": _legal_next_tools(_packet_phase(resolved)),
+        "legal_next_tools": _legal_next_tools(
+            _packet_phase(resolved),
+            v3_layer_loop=_packet_v3_layer_loop(resolved),
+        ),
         "audit_trace": _json_copy(resolved.get("audit_trace")) or [],
         "latest_audit": _json_copy(resolved.get("latest_audit")) or {},
         "packet_hash": packet_hash(resolved),
     }
+    v3_loop = _packet_v3_layer_loop(resolved)
+    if v3_loop is not None:
+        state["v3_layer_loop"] = _json_copy(v3_loop)
+    return state
 
 
 def packet_hash(packet: dict[str, Any] | None) -> str | None:
@@ -315,7 +607,9 @@ def _sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _bounded_string(value: Any, *, max_len: int = _ASSIST_ACCEPTANCE_MAX_TEXT, field: str) -> str:
+def _bounded_string(
+    value: Any, *, max_len: int = _ASSIST_ACCEPTANCE_MAX_TEXT, field: str
+) -> str:
     if not isinstance(value, str):
         return ""
     resolved = value.strip()
@@ -340,11 +634,15 @@ def _verify_assist_proposal_receipt(
     proposed_hash: str,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise ValueError("proposal_receipt is required for model_suggestion assist provenance")
+        raise ValueError(
+            "proposal_receipt is required for model_suggestion assist provenance"
+        )
     if value.get("schema_id") != PROPOSAL_RECEIPT_SCHEMA_ID:
         raise ValueError("proposal_receipt schema_id mismatch")
     if value.get("schema_version") != PROPOSAL_RECEIPT_SCHEMA_VERSION:
-        raise ValueError(f"proposal_receipt schema_version must be {PROPOSAL_RECEIPT_SCHEMA_VERSION}")
+        raise ValueError(
+            f"proposal_receipt schema_version must be {PROPOSAL_RECEIPT_SCHEMA_VERSION}"
+        )
     if value.get("route") != PROPOSAL_RECEIPT_ROUTE:
         raise ValueError("proposal_receipt route mismatch")
     if value.get("target") != target:
@@ -363,11 +661,16 @@ def _verify_assist_proposal_receipt(
         raise ValueError("proposal_receipt signature is required")
     if signature.get("algorithm") != PROPOSAL_RECEIPT_SIGNATURE_ALGORITHM:
         raise ValueError("proposal_receipt signature algorithm mismatch")
-    key_id = os.getenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_KEY_ID", "default").strip() or "default"
+    key_id = (
+        os.getenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_KEY_ID", "default").strip()
+        or "default"
+    )
     if signature.get("key_id") != key_id:
         raise ValueError("proposal_receipt key_id mismatch")
     signature_value = signature.get("signature")
-    if not isinstance(signature_value, str) or not _SHA256_HEX_RE.match(signature_value):
+    if not isinstance(signature_value, str) or not _SHA256_HEX_RE.match(
+        signature_value
+    ):
         raise ValueError("proposal_receipt signature must be a sha256 hex digest")
 
     expected = hmac.new(
@@ -381,14 +684,20 @@ def _verify_assist_proposal_receipt(
 
 
 def _proposal_receipt_signing_bytes(receipt: dict[str, Any]) -> bytes:
-    unsigned = {key: _json_copy(value) for key, value in receipt.items() if key != "signature"}
-    return json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    unsigned = {
+        key: _json_copy(value) for key, value in receipt.items() if key != "signature"
+    }
+    return json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _operator_proposal_receipt_secret() -> bytes:
     raw = os.getenv("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET", "").strip()
     if not raw:
-        raise ValueError("NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET is required for model proposal receipts")
+        raise ValueError(
+            "NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET is required for model proposal receipts"
+        )
     return raw.encode("utf-8")
 
 
@@ -407,7 +716,9 @@ def _canonical_assist_text(value: Any) -> str | None:
     return None
 
 
-def _frame_assist_values(frame: dict[str, Any] | None, *, prefix: str = "frame") -> dict[str, str]:
+def _frame_assist_values(
+    frame: dict[str, Any] | None, *, prefix: str = "frame"
+) -> dict[str, str]:
     if not isinstance(frame, dict):
         return {}
     values: dict[str, str] = {}
@@ -420,8 +731,12 @@ def _frame_assist_values(frame: dict[str, Any] | None, *, prefix: str = "frame")
         if resolved is not None:
             values[target] = resolved
     rationale = frame.get("rationale_for_change")
-    values[f"{prefix}.key_uncertainty"] = _read_rationale_segment(rationale, "Uncertainty")
-    values[f"{prefix}.red_definition"] = _read_rationale_segment(rationale, "Red channel")
+    values[f"{prefix}.key_uncertainty"] = _read_rationale_segment(
+        rationale, "Uncertainty"
+    )
+    values[f"{prefix}.red_definition"] = _read_rationale_segment(
+        rationale, "Red channel"
+    )
     values[f"{prefix}.blue_goals"] = _read_rationale_segment(rationale, "Blue channel")
     return values
 
@@ -448,20 +763,26 @@ def _normalize_assist_acceptances(
     if not isinstance(value, list):
         raise ValueError("assist_acceptances must be a list when provided")
     if len(value) > _ASSIST_ACCEPTANCE_MAX_ITEMS:
-        raise ValueError(f"assist_acceptances exceeds {_ASSIST_ACCEPTANCE_MAX_ITEMS} entries")
+        raise ValueError(
+            f"assist_acceptances exceeds {_ASSIST_ACCEPTANCE_MAX_ITEMS} entries"
+        )
 
     normalized: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
             raise ValueError("assist_acceptances entries must be objects")
         target = _bounded_string(item.get("target"), max_len=120, field="assist target")
-        disposition = _bounded_string(item.get("disposition"), max_len=40, field="assist disposition")
-        if target not in _ASSIST_TARGETS:
+        disposition = _bounded_string(
+            item.get("disposition"), max_len=40, field="assist disposition"
+        )
+        if target not in _ASSIST_TARGETS and not _is_v3_assist_target(target):
             raise ValueError(f"unsupported assist target: {target}")
         if disposition not in _ASSIST_DISPOSITIONS:
             raise ValueError("assist disposition must be accepted, edited, or rejected")
 
-        proposed_hash = _required_hash(item.get("proposed_value_hash"), field="proposed_value_hash")
+        proposed_hash = _required_hash(
+            item.get("proposed_value_hash"), field="proposed_value_hash"
+        )
         model = _bounded_string(item.get("model"), max_len=120, field="assist model")
         receipt = _verify_assist_proposal_receipt(
             item.get("proposal_receipt"),
@@ -473,20 +794,28 @@ def _normalize_assist_acceptances(
         final_hash = ""
         if disposition in {"accepted", "edited"}:
             if target not in final_values:
-                raise ValueError(f"assist target {target!r} is not part of this transition")
-            final_hash = _required_hash(item.get("final_value_hash"), field="final_value_hash")
+                raise ValueError(
+                    f"assist target {target!r} is not part of this transition"
+                )
+            final_hash = _required_hash(
+                item.get("final_value_hash"), field="final_value_hash"
+            )
             actual_hash = _sha256_hex(final_values[target])
             if actual_hash != final_hash:
                 raise ValueError(f"assist final_value_hash mismatch for {target}")
             if disposition == "accepted" and proposed_hash != final_hash:
-                raise ValueError("accepted assist hashes diverge; use disposition=edited")
+                raise ValueError(
+                    "accepted assist hashes diverge; use disposition=edited"
+                )
             if disposition == "edited" and proposed_hash == final_hash:
                 raise ValueError("edited assist hashes match; use disposition=accepted")
 
         normalized.append(
             {
                 "target": target,
-                "source": _bounded_string(item.get("source"), max_len=80, field="assist source")
+                "source": _bounded_string(
+                    item.get("source"), max_len=80, field="assist source"
+                )
                 or "model_suggestion",
                 "model": model,
                 "disposition": disposition,
@@ -514,6 +843,7 @@ def _packet(
     last_commit_packet: dict[str, Any] | None,
     last_abandoned_packet: dict[str, Any] | None,
     previous_trace: list[dict[str, Any]] | None = None,
+    v3_layer_loop: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     packet = {
         "schema_id": SCHEMA_ID,
@@ -528,7 +858,7 @@ def _packet(
         "governance_calibration": _json_copy(governance_calibration),
         "manifest_path": manifest_path,
         "audit_trace": _json_copy(audit_trace) or [],
-        "legal_next_tools": _legal_next_tools(phase),
+        "legal_next_tools": _legal_next_tools(phase, v3_layer_loop=v3_layer_loop),
         "latest_audit": _json_copy(latest_audit) or {},
         "latest_step": _json_copy(latest_step),
         "last_commit_packet": _json_copy(last_commit_packet),
@@ -536,6 +866,8 @@ def _packet(
         "previous_trace": _json_copy(previous_trace) or [],
         "policy": dict(POLICY),
     }
+    if v3_layer_loop is not None:
+        packet["v3_layer_loop"] = _json_copy(v3_layer_loop)
     return _seal_packet(packet)
 
 
@@ -545,20 +877,55 @@ def _packet_from_transition(
     trace: list[dict[str, Any]],
 ) -> dict[str, Any]:
     session = _transition_session(result)
-    phase = str(result.get("phase") or session.get("operator_phase") or _packet_phase(previous))
+    phase = str(
+        result.get("phase") or session.get("operator_phase") or _packet_phase(previous)
+    )
     return _packet(
         loop_id=_packet_loop_id(previous),
         phase=phase,
         family=str(session.get("family") or _packet_family(previous)),
         frame=_json_copy(session.get("frame") or _packet_frame(previous)),
-        governance_costs=_json_copy(session.get("governance") or _packet_governance(previous)),
-        governance_calibration=_json_copy(session.get("calibration") or _packet_calibration(previous)),
-        manifest_path=session.get("manifest_path") if isinstance(session.get("manifest_path"), str) else _packet_manifest_path(previous),
+        governance_costs=_json_copy(
+            session.get("governance") or _packet_governance(previous)
+        ),
+        governance_calibration=_json_copy(
+            session.get("calibration") or _packet_calibration(previous)
+        ),
+        manifest_path=(
+            session.get("manifest_path")
+            if isinstance(session.get("manifest_path"), str)
+            else _packet_manifest_path(previous)
+        ),
         audit_trace=trace,
-        latest_audit=_json_copy(result.get("audit") or previous.get("latest_audit") or {}),
+        latest_audit=_json_copy(
+            result.get("audit") or previous.get("latest_audit") or {}
+        ),
         latest_step=_json_copy(result.get("step")),
         last_commit_packet=_json_copy(previous.get("last_commit_packet")),
         last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
+        v3_layer_loop=_packet_v3_layer_loop(previous),
+    )
+
+
+def _packet_from_v3_transition(
+    previous: dict[str, Any],
+    trace: list[dict[str, Any]],
+    v3_layer_loop: dict[str, Any],
+) -> dict[str, Any]:
+    return _packet(
+        loop_id=_packet_loop_id(previous),
+        phase=_packet_phase(previous),
+        family=_packet_family(previous),
+        frame=_packet_frame(previous),
+        governance_costs=_packet_governance(previous),
+        governance_calibration=_packet_calibration(previous),
+        manifest_path=_packet_manifest_path(previous),
+        audit_trace=trace,
+        latest_audit=_json_copy(previous.get("latest_audit") or {}),
+        latest_step=_json_copy(previous.get("latest_step")),
+        last_commit_packet=_json_copy(previous.get("last_commit_packet")),
+        last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
+        v3_layer_loop=v3_layer_loop,
     )
 
 
@@ -569,14 +936,20 @@ def _service_from_packet(packet: dict[str, Any]) -> EngineApiService:
         event = entry.get("event")
         args = entry.get("arguments")
         if not isinstance(event, str) or not isinstance(args, dict):
-            raise PacketReplayError("operator packet audit_trace entries require event and arguments")
+            raise PacketReplayError(
+                "operator packet audit_trace entries require event and arguments"
+            )
         result = _replay_event(svc, event, args)
         if _is_rejection(result):
-            raise PacketReplayError(f"operator packet trace is not replayable at {event}: {result}")
+            raise PacketReplayError(
+                f"operator packet trace is not replayable at {event}: {result}"
+            )
     return svc
 
 
-def _replay_event(svc: EngineApiService, event: str, args: dict[str, Any]) -> dict[str, Any]:
+def _replay_event(
+    svc: EngineApiService, event: str, args: dict[str, Any]
+) -> dict[str, Any]:
     if event == "LOCK_FRAME":
         return svc.operator_lock_frame(
             family=args.get("family", "safety"),
@@ -598,14 +971,20 @@ def _replay_event(svc: EngineApiService, event: str, args: dict[str, Any]) -> di
             decision=str(args.get("decision") or ""),
             hold_reason=str(args.get("hold_reason") or ""),
         )
+    if event in _V3_OPERATOR_TRACE_EVENTS:
+        return svc.get_operator_session_state()
     if event in {"COMMIT_ITERATION", "ABANDON_PACKET"}:
         return svc.get_operator_session_state()
     raise PacketReplayError(f"unsupported operator packet trace event: {event}")
 
 
-def _append_trace(packet: dict[str, Any], event: str, arguments: dict[str, Any]) -> list[dict[str, Any]]:
+def _append_trace(
+    packet: dict[str, Any], event: str, arguments: dict[str, Any]
+) -> list[dict[str, Any]]:
     trace = _packet_trace(packet)
-    trace.append({"event": event, "at": _now(), "arguments": _json_copy(arguments) or {}})
+    trace.append(
+        {"event": event, "at": _now(), "arguments": _json_copy(arguments) or {}}
+    )
     return trace
 
 
@@ -621,7 +1000,9 @@ def _validate_packet(packet: dict[str, Any]) -> None:
         raise ValueError("operator packet audit_trace must be a list")
     max_trace = _operator_packet_max_trace_events()
     if len(trace) > max_trace:
-        raise ValueError(f"operator packet audit_trace exceeds configured maximum of {max_trace} events")
+        raise ValueError(
+            f"operator packet audit_trace exceeds configured maximum of {max_trace} events"
+        )
     _verify_packet_integrity(packet)
 
 
@@ -639,7 +1020,9 @@ def _stateless_rejection(result: dict[str, Any]) -> dict[str, Any]:
     phase = str(rejection.get("current_phase") or "frame_draft")
     rejection["legal_next_tools"] = _legal_next_tools(phase)
     if isinstance(rejection.get("attempted_tool"), str):
-        rejection["attempted_tool"] = _stateful_to_stateless_tool(rejection["attempted_tool"])
+        rejection["attempted_tool"] = _stateful_to_stateless_tool(
+            rejection["attempted_tool"]
+        )
     return rejection
 
 
@@ -650,8 +1033,9 @@ def _local_rejection(
     failed_precondition: str,
     missing: list[str],
     coach_prompts: list[str],
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    rejection = {
         "schema_id": "nepsis.phase_rejection",
         "schema_version": "1.0.0",
         "attempted_tool": attempted_tool,
@@ -662,10 +1046,15 @@ def _local_rejection(
         "missing": missing,
         "coach_prompts": coach_prompts,
     }
+    if extra:
+        rejection.update(_json_copy(extra) or {})
+    return rejection
 
 
 def _missing_commit_trace_events(packet: dict[str, Any]) -> list[str]:
-    events = [entry.get("event") for entry in _packet_trace(packet) if isinstance(entry, dict)]
+    events = [
+        entry.get("event") for entry in _packet_trace(packet) if isinstance(entry, dict)
+    ]
     return [event for event in _COMMIT_REQUIRED_TRACE_EVENTS if event not in events]
 
 
@@ -683,8 +1072,23 @@ def _latest_case_reasoning(packet: dict[str, Any]) -> dict[str, Any] | None:
     return compiler if isinstance(compiler, dict) else None
 
 
-def _legal_next_tools(phase: str) -> list[str]:
-    return list(_LEGAL_NEXT.get(phase, _LEGAL_NEXT["frame_draft"]))
+def _legal_next_tools(
+    phase: str, *, v3_layer_loop: dict[str, Any] | None = None
+) -> list[str]:
+    tools = list(_LEGAL_NEXT.get(phase, _LEGAL_NEXT["frame_draft"]))
+    if phase != "frame_locked":
+        return tools
+    if _is_v3_layer_loop(v3_layer_loop):
+        for tool in (
+            "set_v3_layer_field",
+            "propose_v3_operator_layer",
+            "lock_v3_operator_layer",
+        ):
+            if tool not in tools:
+                tools.insert(0, tool)
+    elif "start_v3_layer_loop" not in tools:
+        tools.insert(0, "start_v3_layer_loop")
+    return tools
 
 
 def _stateful_to_stateless_tool(name: str) -> str:
@@ -720,7 +1124,11 @@ def _packet_frame(packet: dict[str, Any]) -> dict[str, Any]:
 
 def _packet_governance(packet: dict[str, Any]) -> dict[str, Any] | None:
     governance = packet.get("governance_costs")
-    return _json_copy(governance) if isinstance(governance, dict) else _json_copy(_DEFAULT_GOVERNANCE)
+    return (
+        _json_copy(governance)
+        if isinstance(governance, dict)
+        else _json_copy(_DEFAULT_GOVERNANCE)
+    )
 
 
 def _packet_calibration(packet: dict[str, Any]) -> dict[str, Any] | None:
@@ -731,6 +1139,82 @@ def _packet_calibration(packet: dict[str, Any]) -> dict[str, Any] | None:
 def _packet_manifest_path(packet: dict[str, Any]) -> str | None:
     value = packet.get("manifest_path")
     return value if isinstance(value, str) and value else None
+
+
+def _new_v3_layer_loop(v3_packet: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_id": V3_LAYER_LOOP_SCHEMA_ID,
+        "schema_version": V3_LAYER_LOOP_SCHEMA_VERSION,
+        "packet": _json_copy(v3_packet),
+        "draft_layers": {},
+        "navigation_shortcuts": dict(V3_LAYER_NAVIGATION_SHORTCUTS),
+    }
+
+
+def _packet_v3_layer_loop(packet: dict[str, Any]) -> dict[str, Any] | None:
+    loop = packet.get("v3_layer_loop")
+    return _json_copy(loop) if _is_v3_layer_loop(loop) else None
+
+
+def _is_v3_layer_loop(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("schema_id") == V3_LAYER_LOOP_SCHEMA_ID
+
+
+def _v3_packet_from_loop(loop: dict[str, Any]) -> dict[str, Any]:
+    packet = loop.get("packet")
+    if not isinstance(packet, dict):
+        raise ValueError("v3 layer loop packet is required")
+    return _json_copy(packet)
+
+
+def _v3_draft_layers(loop: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = loop.get("draft_layers")
+    if not isinstance(raw, dict):
+        return {}
+    drafts: dict[str, dict[str, Any]] = {}
+    for layer, artifact in raw.items():
+        if isinstance(layer, str) and isinstance(artifact, dict):
+            drafts[layer] = _json_copy(artifact)
+    return drafts
+
+
+def _v3_current_layer(v3_packet: dict[str, Any]) -> str:
+    layer = v3_packet.get("current_layer")
+    if isinstance(layer, str) and layer in V3_LAYER_ORDER:
+        return layer
+    raise ValueError("v3 layer loop does not have a current layer")
+
+
+def _validate_v3_layer(layer: Any) -> str:
+    if not isinstance(layer, str) or layer not in V3_LAYER_ORDER:
+        raise ValueError(f"layer must be one of: {', '.join(V3_LAYER_ORDER)}")
+    return layer
+
+
+def _validate_v3_field(field: Any) -> str:
+    if not isinstance(field, str) or not re.match(r"^[a-z][a-z0-9_]*$", field):
+        raise ValueError("v3 layer field must be snake_case")
+    return field
+
+
+def _v3_assist_target(layer: str, field: str) -> str:
+    return f"v3_layer.{layer}.{field}"
+
+
+def _is_v3_assist_target(target: str) -> bool:
+    parts = target.split(".")
+    return (
+        len(parts) == 3
+        and parts[0] == "v3_layer"
+        and parts[1] in V3_LAYER_ORDER
+        and re.match(r"^[a-z][a-z0-9_]*$", parts[2]) is not None
+    )
+
+
+def _canonical_v3_field_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _json_copy(value: Any) -> Any:
@@ -766,10 +1250,14 @@ def _verify_packet_integrity(packet: dict[str, Any]) -> None:
     if not isinstance(seal, str) or not seal:
         raise ValueError("operator packet integrity seal is required")
     if not isinstance(counter, int) or counter < 0:
-        raise ValueError("operator packet integrity counter must be a non-negative integer")
+        raise ValueError(
+            "operator packet integrity counter must be a non-negative integer"
+        )
     expected_counter = _packet_integrity_counter(packet)
     if counter != expected_counter:
-        raise ValueError("operator packet integrity counter does not match packet trace state")
+        raise ValueError(
+            "operator packet integrity counter does not match packet trace state"
+        )
     expected = _packet_integrity_seal(packet, counter)
     if not hmac.compare_digest(seal, expected):
         raise ValueError("operator packet integrity seal verification failed")
@@ -804,7 +1292,9 @@ def _operator_packet_max_trace_events() -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise ValueError("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS must be an integer") from exc
+        raise ValueError(
+            "NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS must be an integer"
+        ) from exc
     if value <= 0:
         raise ValueError("NEPSIS_OPERATOR_PACKET_MAX_TRACE_EVENTS must be > 0")
     return value
@@ -815,7 +1305,9 @@ def _operator_packet_seal_secret() -> bytes:
     if raw and raw.strip():
         return raw.strip().encode("utf-8")
     if _operator_packet_requires_configured_secret():
-        raise ValueError("NEPSIS_OPERATOR_PACKET_SEAL_SECRET is required in production or operator mode")
+        raise ValueError(
+            "NEPSIS_OPERATOR_PACKET_SEAL_SECRET is required in production or operator mode"
+        )
     return _DEVELOPMENT_SEAL_SECRET
 
 
@@ -839,9 +1331,13 @@ __all__ = [
     "inspect_operator_packet",
     "lock_frame",
     "lock_report",
+    "lock_v3_operator_layer",
     "packet_hash",
+    "propose_v3_operator_layer",
     "run_report",
     "set_threshold_decision",
     "set_threshold_decision_from_case_reasoning",
+    "set_v3_layer_field",
+    "start_v3_layer_loop",
     "start_operator_packet",
 ]
