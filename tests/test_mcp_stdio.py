@@ -12,6 +12,7 @@ def _start_mcp_stdio(tmp_path: Path) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env["NEPSIS_API_STORE_PATH"] = str(tmp_path / "mcp-sessions.json")
+    env["NEPSIS_V3_PACKET_SEAL_SECRET"] = "unit-test-v3-packet-seal-secret"
     return subprocess.Popen(
         [sys.executable, "-m", "nepsis_cgn.mcp.stdio"],
         stdin=subprocess.PIPE,

@@ -76,8 +76,9 @@ npm run dev
 - Backend has `NEPSIS_API_HOST=0.0.0.0`, `NEPSIS_API_PORT=$PORT`,
   `NEPSIS_API_TOKEN`, `NEPSIS_API_ALLOWED_ORIGINS`, and, if sessions stay
   enabled, persistent `NEPSIS_API_STORE_PATH`.
-- Backend sets `NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so `/v1/private-demo` can
-  return a sealed nested operator packet audit.
+- Backend sets `NEPSIS_V3_PACKET_SEAL_SECRET` for V3 MCP packets and
+  `NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so `/v1/private-demo` can return a
+  sealed nested operator packet audit.
 - Backend explicitly sets `NEPSIS_API_ALLOW_ANON=false`.
 - Web has `NEPSIS_API_BASE_URL=https://<render-service>` and matching
   `NEPSIS_API_TOKEN`.
@@ -219,6 +220,7 @@ NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true
 NEPSIS_LIVE_OPERATOR_ENABLED=true
 NEPSIS_API_BASE_URL=https://<private-render-service>
 NEPSIS_API_TOKEN=<private-backend-token>
+NEPSIS_V3_PACKET_SEAL_SECRET=<long-random-v3-packet-seal-secret>
 NEPSIS_OPERATOR_PACKET_SEAL_SECRET=<long-random-operator-packet-seal-secret>
 NEPSIS_AUTH_SECRET=<long-random-secret>
 NEPSIS_AUTH_ALLOWED_EMAILS=<operator-email-list>
@@ -318,7 +320,9 @@ discovery (`initialize`, `tools/list`) and capability-token-protected tool
 calls. The operator flow is stateless packet-in/packet-out: each tool receives a
 `nepsis.operator_packet` v2 object and returns the next packet, with
 RED-before-BLUE gates enforced by phase transitions. Operator runtimes require
-`NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so inbound packets can be rejected if they
-were tampered with before replay. MCP clients should use their own
-ChatGPT/Codex, Claude Code, or Gemini authentication; NepsisCGN should not
-collect or subsidize visitor model accounts.
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so inbound operator packets can be
+rejected if they were tampered with before replay. V3 orchestration tools also
+require `NEPSIS_V3_PACKET_SEAL_SECRET` so packet artifacts stay verifiable
+across MCP process boundaries. MCP clients should use their own ChatGPT/Codex,
+Claude Code, or Gemini authentication; NepsisCGN should not collect or
+subsidize visitor model accounts.

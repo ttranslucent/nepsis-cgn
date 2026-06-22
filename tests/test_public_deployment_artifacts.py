@@ -75,6 +75,7 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
     assert operator["RESEND_API_KEY"]
     assert operator["NEPSIS_AUTH_FROM_EMAIL"]
     assert operator["OPENAI_API_KEY"]
+    assert operator["NEPSIS_V3_PACKET_SEAL_SECRET"]
     assert operator["NEPSIS_OPERATOR_PROPOSAL_RECEIPT_SECRET"]
 
 

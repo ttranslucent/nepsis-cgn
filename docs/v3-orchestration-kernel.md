@@ -22,6 +22,17 @@ This is intentional for V3. A visible run-head ledger can be added later if
 rollback prevention becomes necessary, but that would no longer be purely
 packet-run-only.
 
+## Seal Secret Requirement
+
+V3 stateless packets require a stable HMAC seal secret. Set
+`NEPSIS_V3_PACKET_SEAL_SECRET` for V3 packet use. If the deployment
+intentionally shares the operator packet seal key, `NEPSIS_OPERATOR_PACKET_SEAL_SECRET`
+is accepted as a fallback.
+
+Do not rely on process-local development secrets for V3. A packet created in
+one MCP or Python process must be inspectable by a later process using the same
+configured secret; otherwise the packet is not a portable artifact.
+
 ## Layer Order
 
 The fixed layer order is:

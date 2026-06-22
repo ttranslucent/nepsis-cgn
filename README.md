@@ -168,7 +168,8 @@ Do not enable live model routes on the public demo deployment.
 
 Start private operator Vercel env from `nepsis-web/.env.operator.example`, not
 the public template. That path requires a reachable backend, `NEPSIS_API_TOKEN`,
-`NEPSIS_OPERATOR_PACKET_SEAL_SECRET`, `NEPSIS_AUTH_SECRET`,
+`NEPSIS_V3_PACKET_SEAL_SECRET`, `NEPSIS_OPERATOR_PACKET_SEAL_SECRET`,
+`NEPSIS_AUTH_SECRET`,
 `NEPSIS_AUTH_ALLOWED_EMAILS`, real email delivery with `RESEND_API_KEY` and
 `NEPSIS_AUTH_FROM_EMAIL`, `NEPSIS_DEPLOYMENT_MODE=operator`,
 `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
@@ -369,7 +370,11 @@ V3 orchestration is MCP-first and pure stateless in the first pass. Host models
 draft layer artifacts; NepsisCGN validates, seals, locks, and finalizes only
 packet-visible state. HMAC detects tampering, TTL detects expiration, and older
 valid packets may fork until expiration because no hidden run-head ledger exists
-in V3 first pass. See [docs/v3-orchestration-kernel.md](docs/v3-orchestration-kernel.md).
+in V3 first pass. V3 packet use requires a stable
+`NEPSIS_V3_PACKET_SEAL_SECRET`, or an intentional fallback to
+`NEPSIS_OPERATOR_PACKET_SEAL_SECRET`, so packet artifacts remain verifiable
+across MCP/Python process boundaries. See
+[docs/v3-orchestration-kernel.md](docs/v3-orchestration-kernel.md).
 
 ## Known Limitations
 
