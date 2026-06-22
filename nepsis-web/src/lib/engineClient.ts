@@ -255,6 +255,46 @@ export type EngineOperatorPacket = {
   integrity?: Record<string, unknown>;
 };
 
+export type NepsisCaseReasoningCompilerPacket = Record<string, unknown> & {
+  schema_id: "nepsis.case_reasoning_compiler";
+  schema_version?: string;
+  compiler_valid: boolean;
+  compiler_source?: string;
+  input_frame_id?: string | null;
+  input_prompt_hash?: string | null;
+  recommended_threshold_action?: "escalate_red" | "request_more_data" | "deescalate" | "hold_for_review" | string;
+  validation_errors?: string[];
+  validation_warnings?: string[];
+  domain_red_hazard?: Record<string, unknown>;
+};
+
+export type NepsisPrivateDemoPayload = {
+  case_id?: string;
+  prompt: string;
+  no_phi_acknowledged: true;
+  thread_id?: string;
+  user_id?: string;
+};
+
+export type NepsisPrivateDemoRuntimePacket = {
+  schema_id: "nepsis.private_demo_runtime_packet";
+  schema_version: string;
+  runtime: "nepsis-cgn.operator_packet";
+  mode: "external-private-runtime";
+  generated_at: string;
+  case_id: string;
+  thread_id: string | null;
+  user_id: string | null;
+  no_phi_acknowledged: true;
+  prompt_hash: string;
+  prompt_excerpt: string;
+  summary: string;
+  case_reasoning_compiler: NepsisCaseReasoningCompilerPacket;
+  operator_packet: EngineOperatorPacket;
+  audit_trace: Array<Record<string, unknown>>;
+  latest_audit: EngineStageAuditResponse | Record<string, unknown>;
+};
+
 export type EngineOperatorPacketState = {
   schema_id: "nepsis.operator_packet_state";
   loop_id: string;
@@ -749,6 +789,10 @@ export const engineClient = {
 
   runMvp(payload: NepsisMvpPayload): Promise<NepsisMvpPacket> {
     return requestEngine<NepsisMvpPacket>("/mvp", jsonRequest("POST", payload));
+  },
+
+  runPrivateDemo(payload: NepsisPrivateDemoPayload): Promise<NepsisPrivateDemoRuntimePacket> {
+    return requestEngine<NepsisPrivateDemoRuntimePacket>("/private-demo", jsonRequest("POST", payload));
   },
 
   startOperatorPacket(payload: {
