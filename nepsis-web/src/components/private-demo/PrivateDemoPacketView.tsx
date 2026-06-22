@@ -5,6 +5,17 @@ import type { NepsisPrivateDemoRuntimePacket } from "@/lib/engineClient";
 
 type ViewMode = "topology" | "audit" | "lineage" | "compiler" | "raw";
 
+type NormalizedPacket = {
+  packet: Record<string, unknown>;
+  raw: NepsisPrivateDemoRuntimePacket;
+  auditTrace: Record<string, unknown>[];
+  operatorPacket: Record<string, unknown>;
+  compiler: Record<string, unknown>;
+  latestAudit: Record<string, unknown>;
+  threshold: Record<string, unknown>;
+  thresholdEventArguments: Record<string, unknown>;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
@@ -17,13 +28,40 @@ function readBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-function thresholdPacket(packet: NepsisPrivateDemoRuntimePacket): Record<string, unknown> {
-  const latestAudit = asRecord(packet.latest_audit);
-  return asRecord(asRecord(latestAudit.threshold).packet);
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function eventNames(packet: NepsisPrivateDemoRuntimePacket): string[] {
-  return packet.audit_trace
+function lastEventArguments(auditTrace: Record<string, unknown>[], eventName: string): Record<string, unknown> {
+  for (let index = auditTrace.length - 1; index >= 0; index -= 1) {
+    const event = auditTrace[index];
+    if (readString(event.event) === eventName) {
+      return asRecord(event.arguments);
+    }
+  }
+  return {};
+}
+
+function normalizePacket(packet: NepsisPrivateDemoRuntimePacket): NormalizedPacket {
+  const packetRecord = asRecord(packet);
+  const latestAudit = asRecord(packetRecord.latest_audit);
+  const thresholdGate = asRecord(latestAudit.threshold);
+  const auditTrace = Array.isArray(packetRecord.audit_trace) ? packetRecord.audit_trace.map(asRecord) : [];
+
+  return {
+    packet: packetRecord,
+    raw: packet,
+    auditTrace,
+    operatorPacket: asRecord(packetRecord.operator_packet),
+    compiler: asRecord(packetRecord.case_reasoning_compiler),
+    latestAudit,
+    threshold: asRecord(thresholdGate.packet),
+    thresholdEventArguments: lastEventArguments(auditTrace, "SET_THRESHOLD_DECISION"),
+  };
+}
+
+function eventNames(auditTrace: Record<string, unknown>[]): string[] {
+  return auditTrace
     .map((event) => readString(event.event))
     .filter((event): event is string => Boolean(event));
 }
@@ -64,25 +102,28 @@ function ModeButton({
   );
 }
 
-function TopologyView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
-  const compiler = packet.case_reasoning_compiler;
-  const threshold = thresholdPacket(packet);
-  const operatorPacket = packet.operator_packet;
-  const events = eventNames(packet);
+function TopologyView({ normalized }: { normalized: NormalizedPacket }) {
+  const { packet, compiler, threshold, operatorPacket, thresholdEventArguments } = normalized;
+  const events = eventNames(normalized.auditTrace);
   const compilerValid = readBoolean(compiler.compiler_valid);
-  const recommendedAction = readString(compiler.recommended_threshold_action);
-  const lastEventArguments = asRecord(asRecord(packet.audit_trace.at(-1)).arguments);
-  const thresholdDecision = readString(lastEventArguments.decision);
+  const recommendedAction =
+    readString(threshold.recommended_threshold_action) ?? readString(compiler.recommended_threshold_action);
+  const thresholdDecision = readString(threshold.decision) ?? readString(thresholdEventArguments.decision);
+  const thresholdHoldReason = readString(threshold.hold_reason) ?? readString(thresholdEventArguments.hold_reason);
+  const closureBasis = readString(threshold.closure_basis) ?? readString(compiler.closure_basis);
+  const hypothesisCount = readNumber(threshold.hypothesis_count) ?? readNumber(compiler.hypothesis_count);
+  const inputFrame = readString(threshold.input_frame_id) ?? readString(compiler.input_frame_id);
+  const inputPromptHash = readString(threshold.input_prompt_hash) ?? readString(compiler.input_prompt_hash);
 
   return (
     <section aria-label="Private demo topology" className="space-y-4">
       <div className="grid gap-3 md:grid-cols-3">
-        <KeyValue label="Schema" value={packet.schema_id} />
-        <KeyValue label="Mode" value={packet.mode} />
+        <KeyValue label="Schema" value={readString(packet.schema_id)} />
+        <KeyValue label="Mode" value={readString(packet.mode)} />
         <KeyValue label="Compiler valid" value={compilerValid} />
         <KeyValue label="Threshold action" value={recommendedAction} />
         <KeyValue label="Threshold decision" value={thresholdDecision} />
-        <KeyValue label="Operator phase" value={operatorPacket.phase} />
+        <KeyValue label="Operator phase" value={readString(operatorPacket.phase)} />
       </div>
 
       <div className="grid gap-3 md:grid-cols-4">
@@ -108,16 +149,34 @@ function TopologyView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
           <KeyValue label="Gate crossed" value={readBoolean(threshold.gate_crossed)} />
           <KeyValue label="Warning level" value={readString(threshold.warning_level)} />
           <KeyValue label="Recommendation" value={readString(threshold.recommendation)} />
+          <KeyValue label="Recommended threshold action" value={recommendedAction} />
+          <KeyValue label="Decision" value={thresholdDecision} />
+          <KeyValue label="Hold reason" value={thresholdHoldReason} />
+          <KeyValue label="Closure basis" value={closureBasis} />
+          <KeyValue label="Hypothesis count" value={hypothesisCount} />
+          <KeyValue label="Input frame" value={inputFrame} />
+          <KeyValue label="Input prompt hash" value={inputPromptHash} />
         </div>
+        <pre className="mt-3 max-h-72 overflow-auto rounded-md bg-black/30 p-3 text-xs text-nepsis-text">
+          {JSON.stringify(threshold, null, 2)}
+        </pre>
       </div>
     </section>
   );
 }
 
-function AuditView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
+function AuditView({ normalized }: { normalized: NormalizedPacket }) {
+  if (normalized.auditTrace.length === 0) {
+    return (
+      <section aria-label="Private demo audit" className="rounded-lg border border-nepsis-border bg-nepsis-panel p-4">
+        <div className="text-sm text-nepsis-muted">No audit events recorded in this packet.</div>
+      </section>
+    );
+  }
+
   return (
     <section aria-label="Private demo audit" className="space-y-3">
-      {packet.audit_trace.map((event, index) => (
+      {normalized.auditTrace.map((event, index) => (
         <article key={`${readString(event.event) ?? "event"}-${index}`} className="rounded-lg border border-nepsis-border bg-nepsis-panel p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-mono text-sm font-semibold">{readString(event.event) ?? `event-${index}`}</h2>
@@ -132,27 +191,27 @@ function AuditView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
   );
 }
 
-function LineageView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
-  const operator = packet.operator_packet;
+function LineageView({ normalized }: { normalized: NormalizedPacket }) {
+  const { packet, operatorPacket } = normalized;
   return (
     <section aria-label="Private demo lineage" className="grid gap-3 md:grid-cols-2">
-      <KeyValue label="Runtime packet hash" value={packet.prompt_hash} />
-      <KeyValue label="Operator packet" value={operator.packet_id} />
-      <KeyValue label="Loop" value={operator.loop_id} />
-      <KeyValue label="Generated" value={packet.generated_at} />
-      <KeyValue label="Thread" value={packet.thread_id} />
-      <KeyValue label="User" value={packet.user_id} />
+      <KeyValue label="Prompt hash" value={readString(packet.prompt_hash)} />
+      <KeyValue label="Operator packet" value={readString(operatorPacket.packet_id)} />
+      <KeyValue label="Loop" value={readString(operatorPacket.loop_id)} />
+      <KeyValue label="Generated" value={readString(packet.generated_at)} />
+      <KeyValue label="Thread" value={readString(packet.thread_id)} />
+      <KeyValue label="User" value={readString(packet.user_id)} />
     </section>
   );
 }
 
-function CompilerView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
-  const compiler = packet.case_reasoning_compiler;
+function CompilerView({ normalized }: { normalized: NormalizedPacket }) {
+  const compiler = normalized.compiler;
   return (
     <section aria-label="Case reasoning compiler" className="space-y-3">
       <div className="grid gap-3 md:grid-cols-3">
-        <KeyValue label="Schema" value={compiler.schema_id} />
-        <KeyValue label="Valid" value={compiler.compiler_valid} />
+        <KeyValue label="Schema" value={readString(compiler.schema_id)} />
+        <KeyValue label="Valid" value={readBoolean(compiler.compiler_valid)} />
         <KeyValue label="Source" value={readString(compiler.compiler_source)} />
         <KeyValue label="Input frame" value={readString(compiler.input_frame_id)} />
         <KeyValue label="Input prompt hash" value={readString(compiler.input_prompt_hash)} />
@@ -167,21 +226,24 @@ function CompilerView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
 
 export function PrivateDemoPacketView({ packet }: { packet: NepsisPrivateDemoRuntimePacket }) {
   const [mode, setMode] = useState<ViewMode>("topology");
+  const normalized = useMemo(() => normalizePacket(packet), [packet]);
   const summary = useMemo(
     () => ({
-      events: eventNames(packet).length,
-      operatorPhase: packet.operator_packet.phase,
-      thresholdAction: readString(packet.case_reasoning_compiler.recommended_threshold_action),
+      events: eventNames(normalized.auditTrace).length,
+      operatorPhase: readString(normalized.operatorPacket.phase),
+      thresholdAction:
+        readString(normalized.threshold.recommended_threshold_action) ??
+        readString(normalized.compiler.recommended_threshold_action),
     }),
-    [packet],
+    [normalized],
   );
 
   return (
     <section className="space-y-5">
       <div className="rounded-lg border border-nepsis-border bg-nepsis-panel p-4">
         <div className="text-xs uppercase text-nepsis-muted">Private runtime packet</div>
-        <h1 className="mt-2 text-xl font-semibold">{packet.case_id}</h1>
-        <p className="mt-2 text-sm leading-6 text-nepsis-muted">{packet.summary}</p>
+        <h1 className="mt-2 text-xl font-semibold">{readString(normalized.packet.case_id) ?? "Unknown case"}</h1>
+        <p className="mt-2 text-sm leading-6 text-nepsis-muted">{readString(normalized.packet.summary) ?? "n/a"}</p>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           <KeyValue label="Events" value={summary.events} />
           <KeyValue label="Operator phase" value={summary.operatorPhase} />
@@ -197,13 +259,13 @@ export function PrivateDemoPacketView({ packet }: { packet: NepsisPrivateDemoRun
         <ModeButton mode="raw" active={mode === "raw"} onClick={setMode}>Raw</ModeButton>
       </div>
 
-      {mode === "topology" && <TopologyView packet={packet} />}
-      {mode === "audit" && <AuditView packet={packet} />}
-      {mode === "lineage" && <LineageView packet={packet} />}
-      {mode === "compiler" && <CompilerView packet={packet} />}
+      {mode === "topology" && <TopologyView normalized={normalized} />}
+      {mode === "audit" && <AuditView normalized={normalized} />}
+      {mode === "lineage" && <LineageView normalized={normalized} />}
+      {mode === "compiler" && <CompilerView normalized={normalized} />}
       {mode === "raw" && (
         <pre className="max-h-[42rem] overflow-auto rounded-lg border border-nepsis-border bg-black/30 p-4 text-xs text-nepsis-text">
-          {JSON.stringify(packet, null, 2)}
+          {JSON.stringify(normalized.raw, null, 2)}
         </pre>
       )}
     </section>
