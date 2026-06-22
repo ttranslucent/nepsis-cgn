@@ -432,6 +432,164 @@ function readStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function readRecordArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)));
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function compilerFromStageAudit(audit: unknown): Record<string, unknown> | null {
+  const record = asRecord(audit);
+  if (!record) {
+    return null;
+  }
+
+  for (const stage of ["interpretation", "threshold"] as const) {
+    const gate = asRecord(record[stage]);
+    const packet = asRecord(gate?.packet);
+    const compiler =
+      asRecord(packet?.case_reasoning) ??
+      asRecord(packet?.caseReasoning) ??
+      asRecord(packet?.case_reasoning_compiler);
+    if (compiler?.schema_id === "nepsis.case_reasoning_compiler") {
+      return compiler;
+    }
+  }
+
+  return null;
+}
+
+function findCaseReasoningCompiler(
+  audit: EngineStageAuditResponse | null,
+  packet: unknown,
+): Record<string, unknown> | null {
+  return compilerFromStageAudit(audit) ?? compilerFromStageAudit(asRecord(packet)?.latest_audit);
+}
+
+function formatCompilerList(records: Record<string, unknown>[], formatter: (record: Record<string, unknown>) => string) {
+  return records.map(formatter).filter((item) => item.length > 0);
+}
+
+function formatAuthorityPushback(record: Record<string, unknown>): string {
+  const source = firstString(record.source);
+  const claim = firstString(record.claim);
+  const notClosed = readStringArray(record.what_it_does_not_close);
+  const closureStatus = firstString(record.closure_status);
+  return [
+    source ? `source: ${source}` : null,
+    claim ? `claim: ${claim}` : null,
+    notClosed.length > 0 ? `does not close: ${notClosed.join(", ")}` : null,
+    closureStatus ? `status: ${closureStatus}` : null,
+  ]
+    .filter((item): item is string => item !== null)
+    .join(" | ");
+}
+
+function formatFalseReassurance(record: Record<string, unknown>): string {
+  const token = firstString(record.token);
+  const whyReassuring = firstString(record.why_reassuring);
+  const whyNonClosing = firstString(record.why_non_closing);
+  return [
+    token ? `token: ${token}` : null,
+    whyReassuring ? `why reassuring: ${whyReassuring}` : null,
+    whyNonClosing ? `why non-closing: ${whyNonClosing}` : null,
+  ]
+    .filter((item): item is string => item !== null)
+    .join(" | ");
+}
+
+function CaseReasoningCompilerPanel({ compiler }: { compiler: Record<string, unknown> }) {
+  const hazard = asRecord(compiler.domain_red_hazard);
+  const closure = asRecord(compiler.closure_condition);
+  const authorityRows = formatCompilerList(readRecordArray(compiler.authority_pushback), formatAuthorityPushback);
+  const reassuranceRows = formatCompilerList(
+    readRecordArray(compiler.false_reassurance_tokens),
+    formatFalseReassurance,
+  );
+  const compilerValid = compiler.compiler_valid === true ? "valid" : "not valid";
+  const thresholdAction = firstString(compiler.recommended_threshold_action) ?? "n/a";
+  const currentRedStatus = firstString(compiler.current_red_status) ?? "n/a";
+  const decisionReason = firstString(compiler.decision_reason);
+
+  return (
+    <section
+      aria-label="Case Reasoning Compiler packet"
+      className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-amber-100">Case Reasoning Compiler packet</h3>
+          <div className="mt-1 text-nepsis-muted">
+            {firstString(compiler.compiler_source) ?? "compiler source unknown"} · {compilerValid} · RED{" "}
+            {currentRedStatus}
+          </div>
+        </div>
+        <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-[11px] text-amber-100">
+          {firstString(compiler.schema_id) ?? "nepsis.case_reasoning_compiler"}
+        </span>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2">
+        <div className="rounded border border-nepsis-border bg-black/20 p-2">
+          <div className="text-nepsis-muted">Domain RED hazard</div>
+          <div className="mt-1 font-medium text-nepsis-text">{firstString(hazard?.hazard) ?? "n/a"}</div>
+          <div className="mt-1 text-nepsis-muted">
+            {firstString(hazard?.mechanism_of_harm) ?? "mechanism n/a"} · time{" "}
+            {firstString(hazard?.time_sensitivity) ?? "n/a"}
+          </div>
+          <div className="mt-1 text-nepsis-muted">
+            closure requirement: {firstString(hazard?.closure_requirement) ?? "n/a"}
+          </div>
+        </div>
+
+        <div className="rounded border border-nepsis-border bg-black/20 p-2">
+          <div className="text-nepsis-muted">Threshold recommendation</div>
+          <div className="mt-1 font-mono text-amber-100">{thresholdAction}</div>
+          {decisionReason ? <div className="mt-1 text-nepsis-muted">{decisionReason}</div> : null}
+        </div>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-3">
+        <div className="rounded border border-nepsis-border bg-black/20 p-2">
+          <div className="text-nepsis-muted">Authority pushback</div>
+          <ul className="mt-1 space-y-1 text-nepsis-text">
+            {(authorityRows.length > 0 ? authorityRows : ["None recorded in compiler packet."]).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="rounded border border-nepsis-border bg-black/20 p-2">
+          <div className="text-nepsis-muted">False reassurance</div>
+          <ul className="mt-1 space-y-1 text-nepsis-text">
+            {(reassuranceRows.length > 0 ? reassuranceRows : ["None recorded in compiler packet."]).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="rounded border border-nepsis-border bg-black/20 p-2">
+          <div className="text-nepsis-muted">Closure condition</div>
+          <div className="mt-1 text-nepsis-text">{firstString(closure?.required_to_close) ?? "n/a"}</div>
+          <div className="mt-1 font-mono text-nepsis-muted">
+            {firstString(closure?.current_closure_status) ?? "status n/a"}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function packetMatchesCurrent(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -2891,6 +3049,10 @@ export default function EnginePage() {
   const showReportPanel = showOperatorControls || currentStageStep >= 2;
   const showPosteriorPanel = showOperatorControls || currentStageStep >= 3;
   const showTimeline = showOperatorControls || currentStageStep >= 3;
+  const caseReasoningCompiler = useMemo(
+    () => findCaseReasoningCompiler(lastAudit, operatorPacket),
+    [lastAudit, operatorPacket],
+  );
 
   const selectedTimeline = compactTimeline.find((item) => item.id === selectedTimelineId) ?? null;
   const selectedPacket = selectedTimeline?.event
@@ -3686,6 +3848,9 @@ export default function EnginePage() {
                     warning: {reportResult?.governance?.warning_level ?? "n/a"} · violations: {reportResult?.violation_count ?? 0}
                   </div>
                 </div>
+                {caseReasoningCompiler ? (
+                  <CaseReasoningCompilerPanel compiler={caseReasoningCompiler} />
+                ) : null}
               </div>
             ) : (
               <div className="flex-1 space-y-3">
@@ -3792,6 +3957,9 @@ export default function EnginePage() {
                     </div>
                   </div>
                 )}
+                {caseReasoningCompiler ? (
+                  <CaseReasoningCompilerPanel compiler={caseReasoningCompiler} />
+                ) : null}
               </div>
             )}
 
