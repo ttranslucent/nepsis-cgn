@@ -134,6 +134,15 @@ test("status API reports bundled MVP available without backend env", async ({ re
   expect(payload.mvp.available).toBe(true);
   expect(payload.mvp.schemaId).toBe("nepsis.mvp_packet");
   expect(payload.mvp.noLoginRequired).toBe(true);
+  expect(payload.privateDemo.configured).toBe(false);
+  expect(payload.privateDemo.route).toBe("/private-demo");
+  expect(payload.privateDemo.proxyPath).toBe("/api/engine/private-demo");
+  expect(payload.privateDemo.backendPath).toBe("/v1/private-demo");
+  expect(payload.privateDemo.requiresAuth).toBe(true);
+  expect(payload.privateDemo.requiresCsrf).toBe(true);
+  expect(payload.privateDemo.requiresNoPhiAcknowledgement).toBe(true);
+  expect(payload.privateDemo.modelKeysRequired).toBe(false);
+  expect(payload.privateDemo.publicMvpFallback).toBe(false);
   expect(payload.auth.loginConfigured).toBe(true);
   expect(payload.auth.allowedEmailsConfigured).toBe(false);
   expect(payload.auth.emailConfigured).toBe(false);
@@ -179,6 +188,17 @@ test("status page exposes safe public system posture", async ({ page }) => {
           status: 200,
           schemaId: "nepsis.mvp_packet",
           noLoginRequired: true,
+        },
+        privateDemo: {
+          configured: false,
+          route: "/private-demo",
+          proxyPath: "/api/engine/private-demo",
+          backendPath: "/v1/private-demo",
+          requiresAuth: true,
+          requiresCsrf: true,
+          requiresNoPhiAcknowledgement: true,
+          modelKeysRequired: false,
+          publicMvpFallback: false,
         },
         operator: {
           enabled: false,
@@ -269,6 +289,12 @@ test("status page exposes safe public system posture", async ({ page }) => {
   await expect(page.getByText("nepsis.mvp_packet")).toBeVisible();
   await expect(page.getByText("No login required")).toBeVisible();
   await expect(page.getByText("Backend API")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Private demo" })).toBeVisible();
+  await expect(page.getByText("Private demo backend proxy is not configured.")).toBeVisible();
+  await expect(page.getByText("No-PHI acknowledgement required")).toBeVisible();
+  await expect(page.getByText("CSRF protection required")).toBeVisible();
+  await expect(page.getByText("No model provider keys required")).toBeVisible();
+  await expect(page.getByText("No public MVP fallback")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Public Site Setup" })).toBeVisible();
   await expect(page.getByText("Env example: nepsis-web/.env.public.example")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Private Operator Setup" })).toBeVisible();

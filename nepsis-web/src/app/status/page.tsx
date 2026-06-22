@@ -243,11 +243,13 @@ export default function StatusPage() {
             <p>Proxy: {status.privateDemo.proxyPath}</p>
             <p>Backend: {status.privateDemo.backendPath}</p>
             <p>{status.privateDemo.requiresAuth ? "Operator login required" : "Operator login not required"}</p>
+            <p>{status.privateDemo.requiresCsrf ? "CSRF protection required" : "CSRF protection not required"}</p>
             <p>
               {status.privateDemo.requiresNoPhiAcknowledgement
                 ? "No-PHI acknowledgement required"
                 : "No-PHI acknowledgement not required"}
             </p>
+            <p>{status.privateDemo.modelKeysRequired ? "Model provider keys required" : "No model provider keys required"}</p>
             <p>{status.privateDemo.publicMvpFallback ? "Public MVP fallback enabled" : "No public MVP fallback"}</p>
           </StatusCard>
 
