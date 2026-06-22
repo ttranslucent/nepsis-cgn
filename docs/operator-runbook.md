@@ -160,8 +160,8 @@ Local verification:
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/run_private_demo_benchmark.py
-cd nepsis-web && npm run lint
-cd nepsis-web && npm run test:e2e:auth -- e2e-auth/private-demo.spec.ts
+npm --prefix nepsis-web run lint
+npm --prefix nepsis-web run test:e2e:auth -- e2e-auth/private-demo.spec.ts
 ```
 
 Expected UI evidence:
