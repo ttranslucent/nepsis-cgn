@@ -85,8 +85,10 @@ test("public MVP toggles between provenance tabs", async ({ page }) => {
 
 test("public operator routes are gated and do not ask for browser API keys", async ({ page }) => {
   await page.goto("/settings");
-  await expect(page.getByRole("heading", { name: /Operator settings/i })).toBeVisible();
-  await expect(page.getByText(/API keys are disabled/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Model Access/i })).toBeVisible();
+  await expect(
+    page.getByText(/NepsisCGN does not collect or store user provider API keys in the browser/i),
+  ).toBeVisible();
   await expect(page.getByLabel(/OpenAI API Key/i)).toHaveCount(0);
 
   await page.goto("/playground");
