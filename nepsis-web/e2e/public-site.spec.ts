@@ -106,6 +106,14 @@ test("public live operator route is labeled and gated", async ({ page }) => {
   await expect(page.getByText(/deterministic MVP demo remains available/i)).toBeVisible();
 });
 
+test("public visitors cannot run the private demo", async ({ page }) => {
+  await page.goto("/private-demo");
+  await expect(page.getByRole("heading", { name: /Private demo access required/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Run MVP Demo/i })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /No-PHI prompt/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Run Private Demo/i })).toHaveCount(0);
+});
+
 test("public model API routes are disabled without provider keys", async ({ request }) => {
   const playgroundStatus = await request.get("/api/playground-nepsis");
   expect(playgroundStatus.ok()).toBeTruthy();
