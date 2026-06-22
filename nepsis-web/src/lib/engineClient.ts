@@ -2,7 +2,7 @@ import { withCsrfHeader } from "@/lib/csrfClient";
 import type { OperatorProposalReceipt } from "@/lib/operatorProposalReceipt";
 
 export type EngineFamily = "puzzle" | "clinical" | "safety";
-export type NepsisMvpCaseId = "jailing" | "clinical";
+export type NepsisMvpCaseId = "jailing" | "sea_ivdu" | "wirecard";
 
 export type EngineRoute = {
   method: string;
@@ -482,6 +482,15 @@ export type NepsisMvpPacket = {
   created_at: string;
   case_id: NepsisMvpCaseId;
   input_text: string;
+  public_release: {
+    release_id: string;
+    label: string;
+    mode: string;
+    model_free: boolean;
+    login_required: boolean;
+    api_key_required: boolean;
+    supported_cases: NepsisMvpCaseId[];
+  };
   observations: string[];
   constraints: string[];
   red_channel: {

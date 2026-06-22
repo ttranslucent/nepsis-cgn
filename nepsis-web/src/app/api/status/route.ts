@@ -74,7 +74,7 @@ async function mvpHealth(baseUrl: string | undefined, token: string | undefined)
       schemaId,
       noLoginRequired: true,
       detail: available
-        ? "Bundled frozen MVP packet check passed without backend configuration."
+        ? "Bundled public MVP v0.4 packet check passed without backend configuration."
         : "Bundled MVP packet response did not match the expected schema.",
     };
   }
@@ -105,7 +105,7 @@ async function mvpHealth(baseUrl: string | undefined, token: string | undefined)
       schemaId,
       noLoginRequired: true,
       detail: available
-        ? "Frozen MVP packet check passed."
+        ? "Public MVP v0.4 packet check passed."
         : typeof payload === "string"
           ? payload
           : "MVP packet response did not match the expected schema.",
@@ -262,7 +262,7 @@ export async function GET() {
             id: "public-site-mode",
             ok: publicSiteMode(),
             label: "Public site mode active",
-            detail: "The web deployment is rendering the frozen public /mvp posture.",
+            detail: "The web deployment is rendering the public v0.4 deterministic /mvp posture.",
             env: ["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true"],
           },
           {

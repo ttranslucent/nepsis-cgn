@@ -28,7 +28,7 @@ from ..api.orchestration_packet import (
     propose_v3_layer,
     start_v3_orchestration,
 )
-from ..core.mvp import build_nepsis_mvp_packet
+from ..core.mvp import PUBLIC_MVP_CASE_IDS, build_nepsis_mvp_packet
 from ..provenance import record_packet_observation
 
 LOGGER = logging.getLogger("nepsis_cgn.mcp.handler")
@@ -45,7 +45,10 @@ class CapabilityAuth:
 
 
 def mcp_tools() -> list[dict[str, Any]]:
-    packet_schema = {"type": "object", "description": "Current nepsis.operator_packet v2 object."}
+    packet_schema = {
+        "type": "object",
+        "description": "Current nepsis.operator_packet v2 object.",
+    }
     tools = [
         {
             "name": "run_mvp",
@@ -53,8 +56,8 @@ def mcp_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "case_id": {"type": "string", "enum": ["jailing", "clinical"]},
-                    "case": {"type": "string", "enum": ["jailing", "clinical"]},
+                    "case_id": {"type": "string", "enum": list(PUBLIC_MVP_CASE_IDS)},
+                    "case": {"type": "string", "enum": list(PUBLIC_MVP_CASE_IDS)},
                     "input_text": {"type": "string"},
                     "inputText": {"type": "string"},
                 },
@@ -64,17 +67,29 @@ def mcp_tools() -> list[dict[str, Any]]:
         {
             "name": "get_mvp_schema",
             "description": "Return the canonical MVP packet schema fields and supported cases.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         },
         {
             "name": "health",
             "description": "Return NepsisCGN MCP bridge health.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         },
         {
             "name": "get_routes",
             "description": "Return the NepsisCGN API route manifest.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         },
         {
             "name": "start_operator_packet",
@@ -82,7 +97,10 @@ def mcp_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "family": {"type": "string", "enum": ["puzzle", "clinical", "safety"]},
+                    "family": {
+                        "type": "string",
+                        "enum": ["puzzle", "clinical", "safety"],
+                    },
                     "frame": {"type": "object"},
                     "governance_costs": {"type": "object"},
                     "governance_calibration": {"type": "object"},
@@ -107,7 +125,10 @@ def mcp_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "packet": packet_schema,
-                    "family": {"type": "string", "enum": ["puzzle", "clinical", "safety"]},
+                    "family": {
+                        "type": "string",
+                        "enum": ["puzzle", "clinical", "safety"],
+                    },
                     "frame": {"type": "object"},
                     "governance_costs": {"type": "object"},
                     "governance_calibration": {"type": "object"},
@@ -199,7 +220,12 @@ def mcp_tools() -> list[dict[str, Any]]:
             "description": "Inspect a sealed V3 orchestration packet and return legal next actions.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"packet": {"type": "object", "description": "Current V3 orchestration packet."}},
+                "properties": {
+                    "packet": {
+                        "type": "object",
+                        "description": "Current V3 orchestration packet.",
+                    }
+                },
                 "required": ["packet"],
                 "additionalProperties": False,
             },
@@ -210,7 +236,10 @@ def mcp_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "packet": {"type": "object", "description": "Current V3 orchestration packet."},
+                    "packet": {
+                        "type": "object",
+                        "description": "Current V3 orchestration packet.",
+                    },
                     "layer": {"type": "string"},
                     "artifact": {"type": "object"},
                     "draft_metadata": {"type": "object"},
@@ -225,7 +254,10 @@ def mcp_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "packet": {"type": "object", "description": "Current V3 orchestration packet."},
+                    "packet": {
+                        "type": "object",
+                        "description": "Current V3 orchestration packet.",
+                    },
                     "layer": {"type": "string"},
                     "lock_assertion": {"type": "object"},
                 },
@@ -238,7 +270,12 @@ def mcp_tools() -> list[dict[str, Any]]:
             "description": "Finalize only after all fixed V3 layers are locked and derive response state from locked artifacts.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"packet": {"type": "object", "description": "Current V3 orchestration packet."}},
+                "properties": {
+                    "packet": {
+                        "type": "object",
+                        "description": "Current V3 orchestration packet.",
+                    }
+                },
                 "required": ["packet"],
                 "additionalProperties": False,
             },
@@ -249,7 +286,10 @@ def mcp_tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "packet": {"type": "object", "description": "Current V3 orchestration packet."},
+                    "packet": {
+                        "type": "object",
+                        "description": "Current V3 orchestration packet.",
+                    },
                     "reason": {"type": "string"},
                 },
                 "required": ["packet"],
@@ -344,14 +384,20 @@ def _call_tool(
     arguments = params.get("arguments", {})
     auth = authorize_capability(headers)
     if not isinstance(name, str):
-        return _mcp_error(jsonrpc_id, -32602, "MCP tools/call requires string field 'name'.")
+        return _mcp_error(
+            jsonrpc_id, -32602, "MCP tools/call requires string field 'name'."
+        )
     if arguments is None:
         arguments = {}
     if not isinstance(arguments, dict):
         return _mcp_error(jsonrpc_id, -32602, "MCP tool arguments must be an object.")
     if require_capability_token and not auth.authorized:
-        response = _mcp_error(jsonrpc_id, -32001, "MCP tool requires a valid Nepsis capability token.")
-        _log_tool_call(request_id, name, "unauthorized", auth.token_id, arguments, started)
+        response = _mcp_error(
+            jsonrpc_id, -32001, "MCP tool requires a valid Nepsis capability token."
+        )
+        _log_tool_call(
+            request_id, name, "unauthorized", auth.token_id, arguments, started
+        )
         return response
 
     try:
@@ -370,10 +416,22 @@ def _call_tool(
         packet=result,
         source="mcp_tool_call",
         retention_mode="hash_only",
-        request_context={"request_id": request_id, "method": "MCP", "path": f"tools/call/{name}"},
+        request_context={
+            "request_id": request_id,
+            "method": "MCP",
+            "path": f"tools/call/{name}",
+        },
     )
     response = _tool_result(jsonrpc_id, result, is_error=is_error)
-    _log_tool_call(request_id, name, "phase_rejection" if is_error else "ok", auth.token_id, arguments, started, result)
+    _log_tool_call(
+        request_id,
+        name,
+        "phase_rejection" if is_error else "ok",
+        auth.token_id,
+        arguments,
+        started,
+        result,
+    )
     return response
 
 
@@ -395,7 +453,9 @@ def _tool_payload(
             family=arguments.get("family", "safety"),
             frame=_optional_object(arguments, "frame"),
             governance_costs=_optional_object(arguments, "governance_costs"),
-            governance_calibration=_optional_object(arguments, "governance_calibration"),
+            governance_calibration=_optional_object(
+                arguments, "governance_calibration"
+            ),
             manifest_path=_optional_string(arguments, "manifest_path"),
         )
     if name == "get_session_state":
@@ -408,7 +468,9 @@ def _tool_payload(
             family=arguments.get("family"),
             frame=_required_object(arguments, "frame"),
             governance_costs=_optional_object(arguments, "governance_costs"),
-            governance_calibration=_optional_object(arguments, "governance_calibration"),
+            governance_calibration=_optional_object(
+                arguments, "governance_calibration"
+            ),
             manifest_path=_optional_string(arguments, "manifest_path"),
         )
     if name == "run_report":
@@ -475,8 +537,8 @@ def _tool_payload(
 
 def _run_mvp(arguments: dict[str, Any]) -> dict[str, Any]:
     case_id = arguments.get("case_id", arguments.get("case", "jailing"))
-    if case_id not in {"jailing", "clinical"}:
-        raise ValueError("case_id must be one of: jailing, clinical")
+    if case_id not in PUBLIC_MVP_CASE_IDS:
+        raise ValueError(f"case_id must be one of: {', '.join(PUBLIC_MVP_CASE_IDS)}")
     input_text = arguments.get("input_text", arguments.get("inputText"))
     if input_text is not None and not isinstance(input_text, str):
         raise ValueError("input_text must be a string when provided")
@@ -486,7 +548,7 @@ def _run_mvp(arguments: dict[str, Any]) -> dict[str, Any]:
 def _mvp_schema() -> dict[str, Any]:
     return {
         "schema_id": "nepsis.mvp_packet",
-        "supported_cases": ["jailing", "clinical"],
+        "supported_cases": list(PUBLIC_MVP_CASE_IDS),
         "top_level_fields": [
             "case_id",
             "input_text",
@@ -545,7 +607,9 @@ def _request_capability_token(headers: dict[str, Any]) -> str | None:
         token = auth[7:].strip()
         if token:
             return token
-    direct = headers.get("x-nepsis-capability-token") or headers.get("X-Nepsis-Capability-Token")
+    direct = headers.get("x-nepsis-capability-token") or headers.get(
+        "X-Nepsis-Capability-Token"
+    )
     if isinstance(direct, str) and direct.strip():
         return direct.strip()
     return None
@@ -580,7 +644,9 @@ def hmac_compare(left: str, right: str) -> bool:
     return hmac.compare_digest(left, right)
 
 
-def _tool_result(request_id: Any, payload: dict[str, Any], *, is_error: bool) -> dict[str, Any]:
+def _tool_result(
+    request_id: Any, payload: dict[str, Any], *, is_error: bool
+) -> dict[str, Any]:
     return _mcp_result(
         request_id,
         {
@@ -595,7 +661,11 @@ def _mcp_result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _mcp_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
 
 
 def _log_tool_call(
@@ -608,7 +678,11 @@ def _log_tool_call(
     result: dict[str, Any] | None = None,
 ) -> None:
     packet = arguments.get("packet")
-    logged_packet = packet if isinstance(packet, dict) else result if isinstance(result, dict) else None
+    logged_packet = (
+        packet
+        if isinstance(packet, dict)
+        else result if isinstance(result, dict) else None
+    )
     LOGGER.info(
         json.dumps(
             {

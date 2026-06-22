@@ -31,9 +31,22 @@ def test_cli_mvp_json_emits_canonical_packet(capsys) -> None:
     out = capsys.readouterr().out.strip()
     payload = json.loads(out)
     assert payload["schema_id"] == "nepsis.mvp_packet"
+    assert payload["schema_version"] == "0.2.0"
     assert payload["case_id"] == "jailing"
     assert payload["red_channel"]["escalation_required"] is True
     assert payload["denominator_collapse"]["retessellation_required"] is True
+
+
+def test_cli_mvp_json_emits_public_v04_triad(capsys) -> None:
+    for case_id in ("jailing", "sea_ivdu", "wirecard"):
+        code = main(["--json", "mvp", "--case", case_id])
+        assert code == 0
+        out = capsys.readouterr().out.strip()
+        payload = json.loads(out)
+        assert payload["schema_id"] == "nepsis.mvp_packet"
+        assert payload["schema_version"] == "0.2.0"
+        assert payload["case_id"] == case_id
+        assert payload["public_release"]["release_id"] == "public_mvp_v0.4"
 
 
 def test_cli_safety_json_with_governance(capsys) -> None:
@@ -55,7 +68,9 @@ def test_cli_requires_both_governance_costs() -> None:
     except ValueError as exc:
         assert "Both --c-fp and --c-fn" in str(exc)
     else:
-        raise AssertionError("Expected ValueError when only one governance cost is provided.")
+        raise AssertionError(
+            "Expected ValueError when only one governance cost is provided."
+        )
 
 
 def test_cli_can_emit_iteration_packet(capsys) -> None:
@@ -83,11 +98,24 @@ def test_cli_can_emit_committed_stage(capsys) -> None:
 
 def test_cli_continue_override_requires_reason() -> None:
     try:
-        main(["--json", "--c-fp", "1", "--c-fn", "9", "--continue-override", "safety", "--critical-signal"])
+        main(
+            [
+                "--json",
+                "--c-fp",
+                "1",
+                "--c-fn",
+                "9",
+                "--continue-override",
+                "safety",
+                "--critical-signal",
+            ]
+        )
     except ValueError as exc:
         assert "--override-reason is required" in str(exc)
     else:
-        raise AssertionError("Expected ValueError when --continue-override has no reason.")
+        raise AssertionError(
+            "Expected ValueError when --continue-override has no reason."
+        )
 
 
 def test_cli_writes_iteration_packet_to_directory(tmp_path, capsys) -> None:

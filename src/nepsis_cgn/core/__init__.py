@@ -39,6 +39,7 @@ from .packet import (
 from .mvp import (
     MVP_PACKET_SCHEMA_ID,
     MVP_PACKET_SCHEMA_VERSION,
+    PUBLIC_MVP_CASE_IDS,
     build_nepsis_mvp_packet,
 )
 from .still import (
@@ -192,6 +193,7 @@ __all__ = [
     "build_iteration_packet",
     "MVP_PACKET_SCHEMA_ID",
     "MVP_PACKET_SCHEMA_VERSION",
+    "PUBLIC_MVP_CASE_IDS",
     "build_nepsis_mvp_packet",
     "StillReadiness",
     "build_still_pathway",

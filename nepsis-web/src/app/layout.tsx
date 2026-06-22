@@ -125,7 +125,8 @@ export default async function RootLayout({
             <div className="border-t border-nepsis-border/60 bg-black/20 px-4 py-2 text-xs text-nepsis-muted md:px-6">
               <div className="mx-auto flex w-full max-w-[1380px] flex-wrap items-center gap-x-4 gap-y-1">
                 <span>
-                  Demo mode: <strong className="text-nepsis-text">/mvp</strong> is deterministic and frozen.
+                  Demo mode: <strong className="text-nepsis-text">/mvp</strong> is the deterministic public v0.4
+                  packet proof.
                 </span>
                 <span>Live operator tools require sign-in, backend configuration, and server model configuration.</span>
                 <span>Model calls are disabled on the public site unless explicitly enabled.</span>

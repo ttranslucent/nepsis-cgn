@@ -31,7 +31,7 @@ scripts/mcp-local-verify.py --client codex --config "$CODEX_CONFIG" --server "$S
 
 Expected proof:
 
-- `/api/status` reports the frozen MVP as available and local MCP as stdio,
+- `/api/status` reports the public MVP v0.4 as available and local MCP as stdio,
   with no model provider keys required.
 - `initialize` and `tools/list` work through the configured stdio command.
 - `health` reports `model_provider_keys_required=false`.

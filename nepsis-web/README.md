@@ -5,16 +5,16 @@ Nepsis Web
 
 ## Local Development
 
-For the full frozen MVP demo, use the repo-root launcher after one-time
+For the full public MVP v0.4 demo, use the repo-root launcher after one-time
 dependency setup:
 
 ```bash
 scripts/mvp-local.sh
 ```
 
-Open [http://127.0.0.1:3000/mvp](http://127.0.0.1:3000/mvp), choose `Jailing`
-or `Clinical`, and click `Run Demo`. Use `Ctrl-C` in the launcher terminal to
-stop both the backend and web UI.
+Open [http://127.0.0.1:3000/mvp](http://127.0.0.1:3000/mvp), choose
+`JINGALL/JAILING`, `Revised SEA`, or `Wirecard`, and click `Run Demo`. Use
+`Ctrl-C` in the launcher terminal to stop both the backend and web UI.
 
 For web-only development, start the Nepsis backend API from the repo root:
 
@@ -42,7 +42,7 @@ Development defaults:
 
 - `/api/engine/*` proxies to `http://127.0.0.1:8787` when `NEPSIS_API_BASE_URL` is unset.
 - Login codes can fall back to on-screen preview when local preview-code mode is enabled.
-- `/api/engine/mvp` is the deterministic v0.3 demo path; session, engine, and LLM flows are experimental.
+- `/api/engine/mvp` is the deterministic public v0.4 demo path; session, engine, and LLM flows are experimental.
 - `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` forces public-mode navigation locally for QA.
 - Deployment env should start from `nepsis-web/.env.public.example` or
   `nepsis-web/.env.operator.example`; `.env.example` is for local development.
@@ -137,10 +137,10 @@ Production behavior is intentionally strict:
 
 - If `NEPSIS_API_BASE_URL` is missing, most `/api/engine/*` routes return `503`
   and affected pages link users to `/status`.
-- Exception: `POST /api/engine/mvp` serves bundled frozen v0.3 packets when the
+- Exception: `POST /api/engine/mvp` serves bundled public v0.4 packets when the
   backend URL is missing, so the public demo remains runnable while `/status`
   reports the backend gap.
-- `/api/status` checks the frozen MVP packet path in addition to backend health.
+- `/api/status` checks the public v0.4 MVP packet path in addition to backend health.
 - If `NEPSIS_AUTH_SECRET` is missing, login routes fail closed in production.
 - Operator login requires `NEPSIS_AUTH_ALLOWED_EMAILS`; unlisted addresses receive a generic response and no OTP.
 - If email delivery is not configured, `/login` shows a preview code only in non-public, non-operator local mode; otherwise it tells the operator which auth env vars are missing.
@@ -151,7 +151,7 @@ Production behavior is intentionally strict:
 
 ### Public site setup
 
-Use `nepsis-web/.env.public.example` for the frozen public `/mvp` site. It keeps
+Use `nepsis-web/.env.public.example` for the public deterministic `/mvp` site. It keeps
 `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`, operator mode disabled,
 `NEPSIS_MODEL_ROUTES_ENABLED=false`, local preview codes disabled, anonymous
 engine controls disabled, and provider keys unset. Public `/mvp` does not

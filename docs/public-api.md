@@ -5,8 +5,8 @@ visitors. Operator session APIs and model routes stay behind deployment auth.
 
 ## Public site setup
 
-Use `nepsis-web/.env.public.example` for the frozen public `/mvp` deployment.
-The public template belongs to the deterministic demo path: it enables
+Use `nepsis-web/.env.public.example` for the public deterministic `/mvp`
+deployment. The public template belongs to the deterministic demo path: it enables
 `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`, keeps `/operator` disabled, keeps
 `NEPSIS_MODEL_ROUTES_ENABLED=false`, leaves provider keys unset, and disables
 local-only preview codes and anonymous engine controls.
@@ -26,15 +26,15 @@ Content-Type: application/json
 {"case_id":"jailing"}
 ```
 
-Supported `case_id` values are `jailing` and `clinical`. The public page runs
-those fixed cases without a visitor query box. Direct proxy callers may include
-optional `input_text` for deterministic packet-builder compatibility; the
-response is the frozen v0.3 `nepsis.mvp_packet` shape and is not a live model
-response.
+Supported `case_id` values are `jailing`, `sea_ivdu`, and `wirecard`. The
+public page runs those fixed cases without a visitor query box. Direct proxy
+callers may include optional `input_text` for deterministic packet-builder
+compatibility; the response is the public v0.4 `nepsis.mvp_packet` shape and is
+not a live model response.
 
 If the backend is not configured, the web UI shows a public-safe status message
-and `POST /api/engine/mvp` serves bundled frozen v0.3 packets for the canonical
-`jailing` and `clinical` cases. The fallback packet includes
+and `POST /api/engine/mvp` serves bundled public v0.4 packets for the canonical
+`jailing`, `sea_ivdu`, and `wirecard` cases. The fallback packet includes
 `fallback_source` and `fallback_reason`; `backend_unconfigured` means the public
 site is intentionally using the bundled deterministic packet because
 `NEPSIS_API_BASE_URL` is absent, not because a model or hidden engine path ran
@@ -43,8 +43,8 @@ the FastAPI service remains to be deployed.
 
 ## MVP Packet Semantics
 
-The v0.1.7 MVP packet keeps legacy hypothesis `likelihood` fields for
-compatibility, but those values are support-only. RED/threshold standing lives
+The v0.2.0 MVP packet keeps hypothesis `likelihood` fields for compatibility,
+but those values are support-only. RED/threshold standing lives
 in `post_constraint_standing` and `action_priority`, while `evaluation_axes`
 keeps support separate from action priority.
 
@@ -63,6 +63,16 @@ authoritative source token, shows rejection of the fluent `JAILING`
 normalization, and records source-token verification as a next-cycle
 obligation. It does not demonstrate detection of the harder variant where the
 source token itself is corrupted and `JAILING` is true.
+
+The revised SEA case is a deterministic medical governance proof, not medical
+advice or diagnosis. It keeps spinal epidural abscess RED open from
+intravenous-use risk even without fever, neurologic deficit, labs, or imaging in
+the initial story. Public copy should say MRI-level evaluation is required to
+close RED, not that the diagnosis is SEA.
+
+The Wirecard case is a deterministic finance governance proof, not financial,
+accounting, or legal advice. It keeps reported cash RED-open until independently
+verifiable bank or custodian evidence closes the cash-verification gap.
 
 ## Direct FastAPI
 

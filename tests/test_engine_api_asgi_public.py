@@ -56,8 +56,16 @@ def test_asgi_failed_auth_consumes_rate_limit(monkeypatch) -> None:
     asgi._RATE_LIMIT_STATE.clear()
 
     client = TestClient(asgi.create_app())
-    first = client.post("/v1/mvp", json={"case_id": "jailing"}, headers={"Authorization": "Bearer wrong"})
-    second = client.post("/v1/mvp", json={"case_id": "jailing"}, headers={"Authorization": "Bearer wrong"})
+    first = client.post(
+        "/v1/mvp",
+        json={"case_id": "jailing"},
+        headers={"Authorization": "Bearer wrong"},
+    )
+    second = client.post(
+        "/v1/mvp",
+        json={"case_id": "jailing"},
+        headers={"Authorization": "Bearer wrong"},
+    )
 
     asgi._RATE_LIMIT_STATE.clear()
     assert first.status_code == 401
@@ -80,7 +88,7 @@ def test_asgi_mvp_cors_allows_configured_origin(monkeypatch) -> None:
     client = TestClient(asgi.create_app())
     response = client.post(
         "/v1/mvp",
-        json={"case_id": "clinical"},
+        json={"case_id": "sea_ivdu"},
         headers={
             "Authorization": "Bearer test-token",
             "Origin": "https://nepsis-cgn.vercel.app",
@@ -88,7 +96,25 @@ def test_asgi_mvp_cors_allows_configured_origin(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "https://nepsis-cgn.vercel.app"
+    assert (
+        response.headers["access-control-allow-origin"]
+        == "https://nepsis-cgn.vercel.app"
+    )
+    assert response.json()["case_id"] == "sea_ivdu"
+
+
+def test_asgi_mvp_rejects_retired_public_clinical_case_id(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
+
+    client = TestClient(asgi.create_app())
+    response = client.post("/v1/mvp", json={"case_id": "clinical"})
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "case_id must be one of: jailing, sea_ivdu, wirecard"
+    )
 
 
 def test_asgi_wildcard_cors_rejected_in_operator_mode(monkeypatch) -> None:
@@ -101,10 +127,14 @@ def test_asgi_wildcard_cors_rejected_in_operator_mode(monkeypatch) -> None:
         monkeypatch.delenv("NEPSIS_DEPLOYMENT_MODE", raising=False)
 
 
-def test_asgi_mvp_accepts_input_text_for_direct_packet_builder_callers(monkeypatch) -> None:
+def test_asgi_mvp_accepts_input_text_for_direct_packet_builder_callers(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
     monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
-    direct_input = "Direct caller compatibility: source says JINGALL, candidate says JAILING."
+    direct_input = (
+        "Direct caller compatibility: source says JINGALL, candidate says JAILING."
+    )
 
     client = TestClient(asgi.create_app())
     response = client.post(
@@ -175,13 +205,17 @@ def test_asgi_mcp_rejects_tool_call_without_capability_token(monkeypatch) -> Non
     assert "capability" in payload["error"]["message"].lower()
 
 
-def test_asgi_mcp_runs_stateless_tool_with_capability_token(monkeypatch, tmp_path) -> None:
+def test_asgi_mcp_runs_stateless_tool_with_capability_token(
+    monkeypatch, tmp_path
+) -> None:
     token = "capability-test-token"
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
     monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
     monkeypatch.setenv("NEPSIS_MCP_CAPABILITY_TOKEN_HASHES", f"test-token:{digest}")
-    monkeypatch.setenv("NEPSIS_API_STORE_PATH", str(tmp_path / "mcp-should-not-exist.json"))
+    monkeypatch.setenv(
+        "NEPSIS_API_STORE_PATH", str(tmp_path / "mcp-should-not-exist.json")
+    )
 
     client = TestClient(asgi.create_app())
     response = client.post(
@@ -216,7 +250,9 @@ def test_asgi_operator_routes_require_token(monkeypatch) -> None:
     assert packet_response.status_code == 401
 
 
-def test_asgi_owner_header_returns_generic_404_for_cross_owner_session(monkeypatch) -> None:
+def test_asgi_owner_header_returns_generic_404_for_cross_owner_session(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
     monkeypatch.delenv("NEPSIS_API_TOKEN", raising=False)
     monkeypatch.setattr(asgi, "API", EngineApiService())
@@ -259,7 +295,11 @@ def test_asgi_operator_packet_phase_rejection_maps_to_409(monkeypatch) -> None:
     payload = response.json()
     assert payload["schema_id"] == "nepsis.phase_rejection"
     assert payload["attempted_tool"] == "run_report"
-    assert payload["legal_next_tools"] == ["start_operator_packet", "lock_frame", "abandon_packet"]
+    assert payload["legal_next_tools"] == [
+        "start_operator_packet",
+        "lock_frame",
+        "abandon_packet",
+    ]
 
 
 def test_asgi_operator_phase_rejection_maps_to_409(monkeypatch) -> None:
@@ -281,7 +321,11 @@ def test_asgi_operator_phase_rejection_maps_to_409(monkeypatch) -> None:
     payload = response.json()
     assert payload["schema_id"] == "nepsis.phase_rejection"
     assert payload["attempted_tool"] == "run_report"
-    assert payload["legal_next_tools"] == ["get_session_state", "lock_frame", "abandon_session"]
+    assert payload["legal_next_tools"] == [
+        "get_session_state",
+        "lock_frame",
+        "abandon_session",
+    ]
 
 
 def test_asgi_operator_lock_report_preserves_passing_gate_state(monkeypatch) -> None:

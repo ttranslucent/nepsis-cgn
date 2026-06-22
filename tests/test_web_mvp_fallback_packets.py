@@ -17,8 +17,8 @@ def test_web_mvp_fallback_packets_match_canonical_builder() -> None:
     fallback_path = Path("nepsis-web/src/data/mvpPackets.json")
     fallback_packets = json.loads(fallback_path.read_text(encoding="utf-8"))
 
-    assert set(fallback_packets) == {"jailing", "clinical"}
-    for case_id in ("jailing", "clinical"):
+    assert set(fallback_packets) == {"jailing", "sea_ivdu", "wirecard"}
+    for case_id in ("jailing", "sea_ivdu", "wirecard"):
         fallback = dict(fallback_packets[case_id])
         canonical = build_nepsis_mvp_packet(case_id=case_id)
         assert _stable_packet(fallback) == _stable_packet(canonical)

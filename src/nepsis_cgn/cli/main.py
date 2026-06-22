@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from ..core import (
     GovernanceCosts,
     NavigationController,
+    PUBLIC_MVP_CASE_IDS,
     build_nepsis_mvp_packet,
 )
 from ..core.interpretant import WordPuzzleSign
@@ -90,7 +91,9 @@ def _emit(entry: Any, as_json: bool) -> None:
         return
     print(f"manifold={payload['manifold']} family={payload['family']}")
     print(f"decision={payload['decision']} cause={payload['cause']}")
-    print(f"tension={payload['tension']} velocity={payload['velocity']} accel={payload['accel']}")
+    print(
+        f"tension={payload['tension']} velocity={payload['velocity']} accel={payload['accel']}"
+    )
     print(f"posterior={payload['posterior']}")
     if payload["ruin_hits"]:
         print(f"ruin_hits={payload['ruin_hits']}")
@@ -177,13 +180,17 @@ def run_mvp(args: argparse.Namespace) -> int:
 
     print(f"case_id={packet['case_id']}")
     print(f"red_escalation_required={packet['red_channel']['escalation_required']}")
-    print(f"retessellation_required={packet['denominator_collapse']['retessellation_required']}")
+    print(
+        f"retessellation_required={packet['denominator_collapse']['retessellation_required']}"
+    )
     print(f"recommendation={packet['final_output']['concise_recommendation']}")
     return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="nepsiscgn", description="Nepsis Constraint Geometry Navigator")
+    parser = argparse.ArgumentParser(
+        prog="nepsiscgn", description="Nepsis Constraint Geometry Navigator"
+    )
     parser.add_argument(
         "--manifest",
         help="Path to manifest_definitions.yaml (defaults to repo data/manifests).",
@@ -234,32 +241,62 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    p_puzzle = subparsers.add_parser("puzzle", help="Run word puzzle manifold selection.")
-    p_puzzle.add_argument("--letters", required=True, help="Source letter multiset, e.g. JAIILUNG.")
+    p_puzzle = subparsers.add_parser(
+        "puzzle", help="Run word puzzle manifold selection."
+    )
+    p_puzzle.add_argument(
+        "--letters", required=True, help="Source letter multiset, e.g. JAIILUNG."
+    )
     p_puzzle.add_argument("--candidate", required=True, help="Candidate word.")
     p_puzzle.set_defaults(func=run_puzzle)
 
     p_clin = subparsers.add_parser("clinical", help="Run clinical manifold selection.")
-    p_clin.add_argument("--radicular-pain", action="store_true", dest="radicular_pain", help="Radicular pain present.")
-    p_clin.add_argument("--spasm-present", action="store_true", dest="spasm_present", help="Spasm present.")
-    p_clin.add_argument("--saddle-anesthesia", action="store_true", help="Saddle anesthesia present.")
-    p_clin.add_argument("--bladder-dysfunction", action="store_true", help="Bladder dysfunction present.")
-    p_clin.add_argument("--bilateral-weakness", action="store_true", help="Bilateral weakness present.")
-    p_clin.add_argument("--progression", action="store_true", help="Symptoms progressing.")
+    p_clin.add_argument(
+        "--radicular-pain",
+        action="store_true",
+        dest="radicular_pain",
+        help="Radicular pain present.",
+    )
+    p_clin.add_argument(
+        "--spasm-present",
+        action="store_true",
+        dest="spasm_present",
+        help="Spasm present.",
+    )
+    p_clin.add_argument(
+        "--saddle-anesthesia", action="store_true", help="Saddle anesthesia present."
+    )
+    p_clin.add_argument(
+        "--bladder-dysfunction",
+        action="store_true",
+        help="Bladder dysfunction present.",
+    )
+    p_clin.add_argument(
+        "--bilateral-weakness", action="store_true", help="Bilateral weakness present."
+    )
+    p_clin.add_argument(
+        "--progression", action="store_true", help="Symptoms progressing."
+    )
     p_clin.add_argument("--fever", action="store_true", help="Fever present.")
     p_clin.add_argument("--notes", help="Free-text clinical notes.", default=None)
     p_clin.set_defaults(func=run_clinical)
 
-    p_safety = subparsers.add_parser("safety", help="Run safety red/blue channel selection.")
-    p_safety.add_argument("--critical-signal", action="store_true", help="Critical signal detected.")
-    p_safety.add_argument("--policy-violation", action="store_true", help="Policy violation detected.")
+    p_safety = subparsers.add_parser(
+        "safety", help="Run safety red/blue channel selection."
+    )
+    p_safety.add_argument(
+        "--critical-signal", action="store_true", help="Critical signal detected."
+    )
+    p_safety.add_argument(
+        "--policy-violation", action="store_true", help="Policy violation detected."
+    )
     p_safety.add_argument("--notes", help="Context notes.", default=None)
     p_safety.set_defaults(func=run_safety)
 
     p_mvp = subparsers.add_parser("mvp", help="Emit canonical NepsisCGN MVP packet.")
     p_mvp.add_argument(
         "--case",
-        choices=["jailing", "clinical"],
+        choices=list(PUBLIC_MVP_CASE_IDS),
         default="jailing",
         help="Canonical demo case to run.",
     )
@@ -284,11 +321,15 @@ def _governance_costs_from_args(args: argparse.Namespace) -> Optional[Governance
     if c_fp is None and c_fn is None:
         return None
     if c_fp is None or c_fn is None:
-        raise ValueError("Both --c-fp and --c-fn must be provided to enable governance.")
+        raise ValueError(
+            "Both --c-fp and --c-fn must be provided to enable governance."
+        )
     return GovernanceCosts(c_fp=float(c_fp), c_fn=float(c_fn))
 
 
-def _user_decision_from_args(args: argparse.Namespace) -> tuple[Optional[str], Optional[str]]:
+def _user_decision_from_args(
+    args: argparse.Namespace,
+) -> tuple[Optional[str], Optional[str]]:
     continue_override = bool(getattr(args, "continue_override", False))
     stop = bool(getattr(args, "stop", False))
     override_reason = getattr(args, "override_reason", None)

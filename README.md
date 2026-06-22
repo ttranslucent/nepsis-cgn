@@ -1,14 +1,19 @@
-# NepsisCGN v0.3
+# NepsisCGN Public MVP v0.4
 
-Last verified: 2026-05-22
+Last verified: 2026-06-22
 
 NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces structured reasoning under uncertainty with distinct RED/BLUE decision spaces, STILL checkpoints, contradiction monitoring, denominator collapse detection, ZeroBack repair, consequence-weighted commitment, state feedback scaffolding, and audit packets.
 
-## v0.3 MVP
+## Public MVP v0.4
 
-Freeze baseline: `3d775d3` (`Polish MVP header flow`) on `main`.
+The public v0.4 MVP exposes deterministic proof packets through CLI, API, and
+the local Next UI. It replaces the prior public v0.3 two-case packet set with a
+three-case triad:
 
-The v0.3 MVP exposes a deterministic proof packet through CLI, API, and the local Next UI.
+- `jailing`: JINGALL/JAILING hard source-constraint preservation.
+- `sea_ivdu`: revised spinal epidural abscess RED preservation from
+  intravenous-use risk.
+- `wirecard`: authority-suppression and unverifiable-cash governance.
 
 Flow:
 
@@ -25,11 +30,15 @@ The MVP demonstrates:
 - Predicted next-state / State Feedback scaffolding.
 - Auditable reasoning trace.
 
-`state_feedback` in v0.3 is deterministic MVP scaffolding only, not a live runtime feedback engine.
+`state_feedback` in public v0.4 is deterministic MVP scaffolding only, not a
+live runtime feedback engine.
 
 ## What This Is Not
 
-The v0.3 MVP is not a medical diagnostic tool, not a live clinical decision support system, and not a replacement for clinician judgment. The demo packets are deterministic proof artifacts showing the governance architecture, not autonomous model conclusions.
+The public v0.4 MVP is not a medical diagnostic tool, not a live clinical
+decision support system, not financial advice, and not a replacement for
+qualified professional judgment. The demo packets are deterministic proof
+artifacts showing the governance architecture, not autonomous model conclusions.
 
 ## Supported Runtime Matrix
 
@@ -37,7 +46,7 @@ The v0.3 MVP is not a medical diagnostic tool, not a live clinical decision supp
 | --- | --- | --- |
 | Python package/API | CPython 3.11 | Use `.venv/bin/python`; install with `.[dev,api]`. |
 | Next UI | Node.js 20 LTS with npm lockfile | Use `npm ci` from `nepsis-web`. |
-| MVP demo | Python 3.11 backend plus local Next UI | Frozen deterministic v0.3 path. |
+| MVP demo | Python 3.11 backend plus local Next UI | Deterministic public v0.4 triad path. |
 | Engine/session/LLM flows | Experimental | Keep behind auth and do not treat as the MVP proof path. |
 
 See [docs/runtime-matrix.md](docs/runtime-matrix.md) for the smoke path and deployment notes.
@@ -84,7 +93,8 @@ Run the canonical MVP packet builder:
 
 ```bash
 .venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing
-.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case clinical
+.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case sea_ivdu
+.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case wirecard
 ```
 
 ## API Demo
@@ -109,13 +119,13 @@ The local Next API proxy used by the UI is `/api/engine/mvp`, which forwards to 
 
 The public site posture is intentionally narrow:
 
-- `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run the canonical cases or paste a short query into the selected MVP scaffold.
+- `/mvp` is public, deterministic, and does not require login or model keys. Visitors can run exactly the public v0.4 triad cases.
 - `/operator` is a separate live operator surface. Enable it only on an authenticated operator deployment with backend API auth, exact-email OTP allowlisting, and login email delivery; keep hosted model routes disabled unless separately reviewed and capped.
 - `/status` shows backend, auth, model-route, and MCP readiness.
 - `/engine`, `/playground`, and `/settings` are operator surfaces. Public production hides or gates model flows, and the web app does not collect browser/user provider API keys.
 - Public production must not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, `NEPSIS_AUTH_ALLOW_CODE_PREVIEW`, or `NEPSIS_MODEL_ROUTES_ENABLED=true`.
 - `POST /api/engine/mvp` uses the FastAPI backend when configured and falls back
-  to bundled frozen v0.3 packets when production has no backend URL, so the
+  to bundled public v0.4 packets when production has no backend URL, so the
   public demo remains usable while backend deployment is completed. Fallback
   responses include `fallback_source` and `fallback_reason` so operators can
   distinguish an intentional bundled packet from a proxied backend packet.
@@ -314,9 +324,9 @@ Open `http://localhost:3000/mvp`, choose `Jailing` or `Clinical`, then click `Ru
 
 Runtime architecture also includes the triage → projection → validation supervisor, reference manifolds, manifest loader, tension-aware manifold governor, and LLM provider registry. Runtime `nepsis.iteration_packet` output includes `still` as the finalization interlock for session/API runs.
 
-These broader engine/session/LLM flows are experimental in v0.3. Keep `/mvp`,
-`POST /v1/mvp`, and `POST /api/engine/mvp` as the frozen deterministic demo
-path.
+These broader engine/session/LLM flows are experimental outside the public
+MVP. Keep `/mvp`, `POST /v1/mvp`, and `POST /api/engine/mvp` as the
+deterministic public v0.4 demo path.
 
 ## Tests and Environment Notes
 
@@ -387,9 +397,7 @@ across MCP/Python process boundaries. See
 
 ## v0.4 Backlog Stub
 
-Do not expand the v0.3 architecture unless v0.4 development is explicitly opened.
-
-Candidate v0.4 work:
+The public v0.4 triad is intentionally narrow. Candidate later work:
 
 - Decide whether runtime State Feedback should become a live feedback engine.
 - Decide whether API session packets and MVP packets should converge.
@@ -398,7 +406,7 @@ Candidate v0.4 work:
 
 ## Additional CLI Examples
 
-The canonical v0.3 MVP command is `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing`. These older or broader runtime examples are useful for engine exploration, but they are not the primary MVP quickstart.
+The canonical public v0.4 MVP command is `.venv/bin/python -m nepsis_cgn.cli.main --json mvp --case jailing`. These older or broader runtime examples are useful for engine exploration, but they are not the primary MVP quickstart.
 
 - Puzzle: `nepsiscgn --json puzzle --letters JAIILUNG --candidate JAILING`
 - Safety red/blue: `nepsiscgn --json safety --critical-signal`

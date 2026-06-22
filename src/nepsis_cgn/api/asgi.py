@@ -8,7 +8,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from ..core.mvp import build_nepsis_mvp_packet
+from ..core.mvp import PUBLIC_MVP_CASE_IDS, build_nepsis_mvp_packet
 from ..core.runtime import default_manifest_path
 from ..mcp.handler import handle_mcp_request
 from ..provenance import record_packet_observation
@@ -38,11 +38,20 @@ def _default_store_path() -> str:
     configured = os.getenv("NEPSIS_API_STORE_PATH")
     if configured and configured.strip():
         return configured
-    return str((Path.cwd() / "ledger" / "sessions" / "engine_api_sessions.db").resolve())
+    return str(
+        (Path.cwd() / "ledger" / "sessions" / "engine_api_sessions.db").resolve()
+    )
 
 
 API = EngineApiService(store_path=_default_store_path())
-PUBLIC_PATHS = {"/v1/health", "/v1/routes", "/v1/openapi.json", "/docs", "/openapi.json", "/mcp"}
+PUBLIC_PATHS = {
+    "/v1/health",
+    "/v1/routes",
+    "/v1/openapi.json",
+    "/docs",
+    "/openapi.json",
+    "/mcp",
+}
 
 
 def _operator_family(value: Any) -> Family:
@@ -78,8 +87,13 @@ def create_app():
         return JSONResponse({"error": str(exc)}, status_code=400)
 
     @app.exception_handler(PermissionError)
-    async def permission_error_handler(request: Request, exc: PermissionError):  # noqa: ARG001
-        LOGGER.info("permission_denied", extra={"request_id": getattr(request.state, "request_id", None)})
+    async def permission_error_handler(
+        request: Request, exc: PermissionError
+    ):  # noqa: ARG001
+        LOGGER.info(
+            "permission_denied",
+            extra={"request_id": getattr(request.state, "request_id", None)},
+        )
         return JSONResponse({"error": "Not found"}, status_code=404)
 
     @app.middleware("http")
@@ -90,28 +104,44 @@ def create_app():
 
         origin = request.headers.get("origin")
         if origin and not _is_origin_allowed(origin):
-            return JSONResponse({"error": "CORS origin not allowed", "request_id": request_id}, status_code=403)
+            return JSONResponse(
+                {"error": "CORS origin not allowed", "request_id": request_id},
+                status_code=403,
+            )
 
         if request.method != "OPTIONS" and request.url.path not in PUBLIC_PATHS:
             if not _rate_limit_allow(_rate_limit_key(request)):
-                return JSONResponse({"error": "Rate limit exceeded", "request_id": request_id}, status_code=429)
+                return JSONResponse(
+                    {"error": "Rate limit exceeded", "request_id": request_id},
+                    status_code=429,
+                )
             expected = _configured_api_token()
             if _auth_required() and expected is None:
-                return JSONResponse({"error": "Server auth misconfigured", "request_id": request_id}, status_code=503)
+                return JSONResponse(
+                    {"error": "Server auth misconfigured", "request_id": request_id},
+                    status_code=503,
+                )
             if expected is not None:
                 token = _request_api_token(dict(request.headers))
                 if not _api_token_matches(token, expected):
-                    return JSONResponse({"error": "Unauthorized", "request_id": request_id}, status_code=401)
+                    return JSONResponse(
+                        {"error": "Unauthorized", "request_id": request_id},
+                        status_code=401,
+                    )
 
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         if origin and _is_origin_allowed(origin):
-            response.headers["Access-Control-Allow-Origin"] = origin if "*" not in _allowed_origins() else "*"
+            response.headers["Access-Control-Allow-Origin"] = (
+                origin if "*" not in _allowed_origins() else "*"
+            )
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Headers"] = (
                 "Content-Type, Authorization, X-API-Key, X-Request-ID, X-Nepsis-Capability-Token"
             )
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Methods"] = (
+                "GET, POST, DELETE, OPTIONS"
+            )
             response.headers["Access-Control-Max-Age"] = "600"
         LOGGER.info(
             json.dumps(
@@ -163,11 +193,16 @@ def create_app():
     async def run_mvp(request: Request):
         body = await _read_json_body(request)
         case_id = body.get("case_id", body.get("case", "jailing"))
-        if case_id not in {"jailing", "clinical"}:
-            raise HTTPException(status_code=400, detail="case_id must be one of: jailing, clinical")
+        if case_id not in PUBLIC_MVP_CASE_IDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"case_id must be one of: {', '.join(PUBLIC_MVP_CASE_IDS)}",
+            )
         input_text = body.get("input_text", body.get("inputText"))
         if input_text is not None and not isinstance(input_text, str):
-            raise HTTPException(status_code=400, detail="input_text must be a string when provided")
+            raise HTTPException(
+                status_code=400, detail="input_text must be a string when provided"
+            )
         packet = build_nepsis_mvp_packet(case_id=case_id, input_text=input_text)
         record_packet_observation(
             packet=packet,
@@ -188,7 +223,9 @@ def create_app():
                     "private_demo_runtime_misconfigured",
                     extra={"request_id": getattr(request.state, "request_id", None)},
                 )
-                raise HTTPException(status_code=503, detail=_PRIVATE_DEMO_MISCONFIGURATION_DETAIL) from exc
+                raise HTTPException(
+                    status_code=503, detail=_PRIVATE_DEMO_MISCONFIGURATION_DETAIL
+                ) from exc
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/operator-packet/start")
@@ -228,7 +265,9 @@ def create_app():
                 detail="operator packet payload requires object field 'packet' when provided",
             )
         try:
-            return _record_stateless_packet_result(inspect_operator_packet(packet), request)
+            return _record_stateless_packet_result(
+                inspect_operator_packet(packet), request
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -239,7 +278,9 @@ def create_app():
             packet = _required_operator_packet(body)
             frame = body.get("frame")
             if not isinstance(frame, dict):
-                raise ValueError("operator packet frame payload requires object field 'frame'")
+                raise ValueError(
+                    "operator packet frame payload requires object field 'frame'"
+                )
             family = body.get("family")
             governance = body.get("governance_costs", body.get("governance"))
             if governance is not None and not isinstance(governance, dict):
@@ -255,7 +296,9 @@ def create_app():
                         family=_operator_family(family) if family is not None else None,
                         governance_costs=governance,
                         governance_calibration=calibration,
-                        manifest_path=_validated_manifest_path(body.get("manifest_path")),
+                        manifest_path=_validated_manifest_path(
+                            body.get("manifest_path")
+                        ),
                         assist_acceptances=body.get("assist_acceptances"),
                     ),
                     request,
@@ -273,9 +316,13 @@ def create_app():
             sign = body.get("sign")
             interpretation = body.get("interpretation")
             if not isinstance(report_text, str):
-                raise ValueError("operator packet report payload requires string field 'report_text'")
+                raise ValueError(
+                    "operator packet report payload requires string field 'report_text'"
+                )
             if not isinstance(sign, dict):
-                raise ValueError("operator packet report payload requires object field 'sign'")
+                raise ValueError(
+                    "operator packet report payload requires object field 'sign'"
+                )
             if interpretation is not None and not isinstance(interpretation, dict):
                 raise ValueError("interpretation must be an object when provided")
             return _phase_json_response(
@@ -312,7 +359,9 @@ def create_app():
             decision = body.get("decision")
             hold_reason = body.get("hold_reason", body.get("holdReason", ""))
             if not isinstance(decision, str):
-                raise ValueError("operator packet threshold payload requires string field 'decision'")
+                raise ValueError(
+                    "operator packet threshold payload requires string field 'decision'"
+                )
             if not isinstance(hold_reason, str):
                 raise ValueError("hold_reason must be a string when provided")
             return _phase_json_response(
@@ -333,8 +382,12 @@ def create_app():
     async def commit_operator_packet_iteration_route(request: Request):
         body = await _read_json_body(request)
         try:
-            carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
-            if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
+            carry_forward_frame = body.get(
+                "carry_forward_frame", body.get("carryForwardFrame")
+            )
+            if carry_forward_frame is not None and not isinstance(
+                carry_forward_frame, dict
+            ):
                 raise ValueError("carry_forward_frame must be an object when provided")
             return _phase_json_response(
                 _record_stateless_packet_result(
@@ -372,16 +425,26 @@ def create_app():
         body = await _read_json_body(request)
         frame = body.get("frame")
         if not isinstance(frame, dict):
-            raise HTTPException(status_code=400, detail="operator frame payload requires object field 'frame'")
+            raise HTTPException(
+                status_code=400,
+                detail="operator frame payload requires object field 'frame'",
+            )
         family = body.get("family", "safety")
         if family not in {"puzzle", "clinical", "safety"}:
-            raise HTTPException(status_code=400, detail="family must be one of: puzzle, clinical, safety")
+            raise HTTPException(
+                status_code=400,
+                detail="family must be one of: puzzle, clinical, safety",
+            )
         governance = body.get("governance_costs", body.get("governance"))
         if governance is not None and not isinstance(governance, dict):
-            raise HTTPException(status_code=400, detail="governance must be an object when provided")
+            raise HTTPException(
+                status_code=400, detail="governance must be an object when provided"
+            )
         calibration = body.get("governance_calibration", body.get("calibration"))
         if calibration is not None and not isinstance(calibration, dict):
-            raise HTTPException(status_code=400, detail="calibration must be an object when provided")
+            raise HTTPException(
+                status_code=400, detail="calibration must be an object when provided"
+            )
         manifest_path = _validated_manifest_path(body.get("manifest_path"))
         try:
             return _phase_json_response(
@@ -403,11 +466,19 @@ def create_app():
         sign = body.get("sign")
         interpretation = body.get("interpretation")
         if not isinstance(report_text, str):
-            raise HTTPException(status_code=400, detail="operator report payload requires string field 'report_text'")
+            raise HTTPException(
+                status_code=400,
+                detail="operator report payload requires string field 'report_text'",
+            )
         if not isinstance(sign, dict):
-            raise HTTPException(status_code=400, detail="operator report payload requires object field 'sign'")
+            raise HTTPException(
+                status_code=400,
+                detail="operator report payload requires object field 'sign'",
+            )
         if interpretation is not None and not isinstance(interpretation, dict):
-            raise HTTPException(status_code=400, detail="interpretation must be an object when provided")
+            raise HTTPException(
+                status_code=400, detail="interpretation must be an object when provided"
+            )
         try:
             return _phase_json_response(
                 API.operator_run_report(
@@ -429,20 +500,36 @@ def create_app():
         decision = body.get("decision")
         hold_reason = body.get("hold_reason", body.get("holdReason", ""))
         if not isinstance(decision, str):
-            raise HTTPException(status_code=400, detail="threshold payload requires string field 'decision'")
+            raise HTTPException(
+                status_code=400,
+                detail="threshold payload requires string field 'decision'",
+            )
         if not isinstance(hold_reason, str):
-            raise HTTPException(status_code=400, detail="hold_reason must be a string when provided")
+            raise HTTPException(
+                status_code=400, detail="hold_reason must be a string when provided"
+            )
         try:
-            return _phase_json_response(API.operator_set_threshold_decision(decision=decision, hold_reason=hold_reason))
+            return _phase_json_response(
+                API.operator_set_threshold_decision(
+                    decision=decision, hold_reason=hold_reason
+                )
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/operator/commit")
     async def commit_operator_iteration(request: Request):
         body = await _read_json_body(request)
-        carry_forward_frame = body.get("carry_forward_frame", body.get("carryForwardFrame"))
-        if carry_forward_frame is not None and not isinstance(carry_forward_frame, dict):
-            raise HTTPException(status_code=400, detail="carry_forward_frame must be an object when provided")
+        carry_forward_frame = body.get(
+            "carry_forward_frame", body.get("carryForwardFrame")
+        )
+        if carry_forward_frame is not None and not isinstance(
+            carry_forward_frame, dict
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="carry_forward_frame must be an object when provided",
+            )
         try:
             return _phase_json_response(
                 API.operator_commit_iteration(
@@ -458,25 +545,40 @@ def create_app():
         body = await _read_json_body(request)
         reason = body.get("reason", "")
         if not isinstance(reason, str):
-            raise HTTPException(status_code=400, detail="reason must be a string when provided")
-        return API.operator_abandon_session(reason=reason, request_context=_request_context(request))
+            raise HTTPException(
+                status_code=400, detail="reason must be a string when provided"
+            )
+        return API.operator_abandon_session(
+            reason=reason, request_context=_request_context(request)
+        )
 
     @app.get("/v1/sessions")
     async def list_sessions(request: Request, limit: int = 50, offset: int = 0):
-        return API.list_sessions(limit=limit, offset=offset, owner_id=_request_owner_id(dict(request.headers)))
+        return API.list_sessions(
+            limit=limit,
+            offset=offset,
+            owner_id=_request_owner_id(dict(request.headers)),
+        )
 
     @app.post("/v1/sessions")
     async def create_session(request: Request):
         body = await _read_json_body(request)
         family = body.get("family")
         if family not in {"puzzle", "clinical", "safety"}:
-            raise HTTPException(status_code=400, detail="family must be one of: puzzle, clinical, safety")
+            raise HTTPException(
+                status_code=400,
+                detail="family must be one of: puzzle, clinical, safety",
+            )
         governance = body.get("governance")
         if governance is not None and not isinstance(governance, dict):
-            raise HTTPException(status_code=400, detail="governance must be an object when provided")
+            raise HTTPException(
+                status_code=400, detail="governance must be an object when provided"
+            )
         calibration = body.get("calibration")
         if calibration is not None and not isinstance(calibration, dict):
-            raise HTTPException(status_code=400, detail="calibration must be an object when provided")
+            raise HTTPException(
+                status_code=400, detail="calibration must be an object when provided"
+            )
         manifest_path = _validated_manifest_path(body.get("manifest_path"))
         return API.create_session(
             family=family,
@@ -491,7 +593,9 @@ def create_app():
     @app.get("/v1/sessions/{session_id}")
     async def get_session(session_id: str, request: Request):
         try:
-            return API.get_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
+            return API.get_session(
+                session_id, owner_id=_request_owner_id(dict(request.headers))
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
@@ -500,7 +604,9 @@ def create_app():
     @app.delete("/v1/sessions/{session_id}")
     async def delete_session(session_id: str, request: Request):
         try:
-            return API.delete_session(session_id, owner_id=_request_owner_id(dict(request.headers)))
+            return API.delete_session(
+                session_id, owner_id=_request_owner_id(dict(request.headers))
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Not found") from exc
         except PermissionError as exc:
@@ -511,7 +617,9 @@ def create_app():
         body = await _read_json_body(request)
         sign = body.get("sign")
         if not isinstance(sign, dict):
-            raise HTTPException(status_code=400, detail="step payload requires object field 'sign'")
+            raise HTTPException(
+                status_code=400, detail="step payload requires object field 'sign'"
+            )
         try:
             return API.step_session(
                 session_id,
@@ -535,19 +643,32 @@ def create_app():
         body = await _read_json_body(request)
         frame = body.get("frame")
         if not isinstance(frame, dict):
-            raise HTTPException(status_code=400, detail="reframe payload requires object field 'frame'")
+            raise HTTPException(
+                status_code=400, detail="reframe payload requires object field 'frame'"
+            )
         branch_id = body.get("branch_id")
-        if branch_id is not None and (not isinstance(branch_id, str) or not branch_id.strip()):
-            raise HTTPException(status_code=400, detail="branch_id must be a non-empty string when provided")
+        if branch_id is not None and (
+            not isinstance(branch_id, str) or not branch_id.strip()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="branch_id must be a non-empty string when provided",
+            )
         parent_frame_id = body.get("parent_frame_id")
         if parent_frame_id is not None and not isinstance(parent_frame_id, str):
-            raise HTTPException(status_code=400, detail="parent_frame_id must be a string when provided")
+            raise HTTPException(
+                status_code=400, detail="parent_frame_id must be a string when provided"
+            )
         try:
             return API.reframe_session(
                 session_id,
                 frame=frame,
                 branch_id=branch_id.strip() if isinstance(branch_id, str) else None,
-                parent_frame_id=parent_frame_id.strip() if isinstance(parent_frame_id, str) else None,
+                parent_frame_id=(
+                    parent_frame_id.strip()
+                    if isinstance(parent_frame_id, str)
+                    else None
+                ),
                 owner_id=_request_owner_id(dict(request.headers)),
             )
         except KeyError as exc:
@@ -562,7 +683,9 @@ def create_app():
         body = await _read_json_body(request)
         workspace_state = body.get("workspace_state", body.get("state", body))
         if not isinstance(workspace_state, dict):
-            raise HTTPException(status_code=400, detail="workspace_state must be an object")
+            raise HTTPException(
+                status_code=400, detail="workspace_state must be an object"
+            )
         try:
             return API.update_workspace_state(
                 session_id,
@@ -599,7 +722,10 @@ def create_app():
             context = None
         else:
             if not isinstance(raw_context, dict):
-                raise HTTPException(status_code=400, detail="stage-audit payload 'context' must be an object when provided")
+                raise HTTPException(
+                    status_code=400,
+                    detail="stage-audit payload 'context' must be an object when provided",
+                )
             context = raw_context
         try:
             return API.stage_audit_session(
@@ -617,7 +743,9 @@ def create_app():
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/v1/sessions/{session_id}/packets")
-    async def packets(session_id: str, request: Request, limit: int = 100, offset: int = 0):
+    async def packets(
+        session_id: str, request: Request, limit: int = 100, offset: int = 0
+    ):
         try:
             return API.get_packets(
                 session_id,
@@ -679,7 +807,9 @@ def create_app():
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.delete("/v1/sessions")
-    async def purge_sessions(request: Request, max_age_seconds: float, dry_run: bool = False):
+    async def purge_sessions(
+        request: Request, max_age_seconds: float, dry_run: bool = False
+    ):
         try:
             return API.purge_sessions(
                 max_age_seconds=max_age_seconds,
@@ -693,7 +823,13 @@ def create_app():
 
 
 def _auth_required() -> bool:
-    return os.getenv("NEPSIS_API_ALLOW_ANON", "false").strip().lower() not in {"1", "true", "yes", "y", "on"}
+    return os.getenv("NEPSIS_API_ALLOW_ANON", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
 
 
 def _configured_api_token() -> str | None:
@@ -725,7 +861,9 @@ def _api_token_matches(token: str | None, expected: str) -> bool:
 
 
 def _request_owner_id(headers: dict[str, Any]) -> str | None:
-    owner_id = headers.get("x-nepsis-session-owner") or headers.get("X-Nepsis-Session-Owner")
+    owner_id = headers.get("x-nepsis-session-owner") or headers.get(
+        "X-Nepsis-Session-Owner"
+    )
     if not isinstance(owner_id, str):
         return None
     normalized = owner_id.strip().lower()
@@ -754,7 +892,8 @@ def _wildcard_cors_forbidden() -> bool:
     return (
         os.getenv("NODE_ENV", "").strip().lower() == "production"
         or os.getenv("NEPSIS_DEPLOYMENT_MODE", "").strip().lower() == "operator"
-        or os.getenv("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE", "").strip().lower() in {"1", "true", "yes", "y", "on"}
+        or os.getenv("NEXT_PUBLIC_NEPSIS_OPERATOR_SITE", "").strip().lower()
+        in {"1", "true", "yes", "y", "on"}
     )
 
 
@@ -763,7 +902,9 @@ def _max_request_body_bytes() -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise ValueError("NEPSIS_API_MAX_REQUEST_BODY_BYTES must be an integer") from exc
+        raise ValueError(
+            "NEPSIS_API_MAX_REQUEST_BODY_BYTES must be an integer"
+        ) from exc
     if value <= 0:
         raise ValueError("NEPSIS_API_MAX_REQUEST_BODY_BYTES must be > 0")
     return value
@@ -777,7 +918,9 @@ async def _read_json_body(request):
         try:
             length = int(content_length)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid Content-Length header"
+            ) from exc
         if length > _max_request_body_bytes():
             raise HTTPException(status_code=413, detail="Request body too large")
 
@@ -804,7 +947,9 @@ def _phase_json_response(payload: dict[str, Any]):
     return JSONResponse(payload, status_code=status_code)
 
 
-def _record_stateless_packet_result(payload: dict[str, Any], request: Any) -> dict[str, Any]:
+def _record_stateless_packet_result(
+    payload: dict[str, Any], request: Any
+) -> dict[str, Any]:
     if payload.get("schema_id") in {
         "nepsis.operator_packet",
         "nepsis.operator_packet_state",
@@ -836,7 +981,9 @@ def _validated_manifest_path(manifest_path: Any) -> str | None:
     for root in _allowed_manifest_roots():
         if _is_path_within(resolved, root):
             return str(resolved)
-    allowed = ", ".join(str(root) for root in sorted(_allowed_manifest_roots(), key=str))
+    allowed = ", ".join(
+        str(root) for root in sorted(_allowed_manifest_roots(), key=str)
+    )
     raise ValueError(f"manifest_path is not allowed. Allowed roots: {allowed}")
 
 
@@ -863,7 +1010,9 @@ def _rate_limit_window_seconds() -> float:
     try:
         value = float(raw)
     except ValueError as exc:
-        raise ValueError("NEPSIS_API_RATE_LIMIT_WINDOW_SECONDS must be a number") from exc
+        raise ValueError(
+            "NEPSIS_API_RATE_LIMIT_WINDOW_SECONDS must be a number"
+        ) from exc
     if value <= 0:
         raise ValueError("NEPSIS_API_RATE_LIMIT_WINDOW_SECONDS must be > 0")
     return value
@@ -874,7 +1023,9 @@ def _rate_limit_max_requests() -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise ValueError("NEPSIS_API_RATE_LIMIT_MAX_REQUESTS must be an integer") from exc
+        raise ValueError(
+            "NEPSIS_API_RATE_LIMIT_MAX_REQUESTS must be an integer"
+        ) from exc
     if value <= 0:
         raise ValueError("NEPSIS_API_RATE_LIMIT_MAX_REQUESTS must be > 0")
     return value
@@ -889,7 +1040,13 @@ def _rate_limit_key(request: Any) -> str:
 
 
 def _trusted_forwarded_ip(headers: Any) -> str | None:
-    if os.getenv("NEPSIS_API_TRUST_FORWARDED_FOR", "").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+    if os.getenv("NEPSIS_API_TRUST_FORWARDED_FOR", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }:
         return None
     real_ip = headers.get("x-real-ip") or headers.get("X-Real-IP")
     if isinstance(real_ip, str) and real_ip.strip():
@@ -917,42 +1074,174 @@ def _rate_limit_allow(key: str) -> bool:
 
 def route_manifest() -> list[dict[str, str]]:
     return [
-        {"method": "POST", "path": "/mcp", "description": "Model Context Protocol JSON-RPC tool endpoint"},
+        {
+            "method": "POST",
+            "path": "/mcp",
+            "description": "Model Context Protocol JSON-RPC tool endpoint",
+        },
         {"method": "GET", "path": "/v1/health", "description": "Health check"},
         {"method": "GET", "path": "/v1/routes", "description": "API route manifest"},
-        {"method": "GET", "path": "/v1/openapi.json", "description": "OpenAPI specification"},
-        {"method": "POST", "path": "/v1/mvp", "description": "Run canonical MVP packet demo"},
-        {"method": "POST", "path": "/v1/private-demo", "description": "Run no-PHI private demo runtime packet"},
-        {"method": "POST", "path": "/v1/operator-packet/start", "description": "Start stateless operator packet"},
-        {"method": "POST", "path": "/v1/operator-packet/state", "description": "Inspect stateless operator packet state"},
-        {"method": "POST", "path": "/v1/operator-packet/frame", "description": "Lock frame into stateless operator packet"},
-        {"method": "POST", "path": "/v1/operator-packet/report", "description": "Run report through stateless operator packet"},
-        {"method": "POST", "path": "/v1/operator-packet/report/lock", "description": "Lock stateless operator packet report"},
-        {"method": "POST", "path": "/v1/operator-packet/threshold", "description": "Set stateless operator packet threshold decision"},
-        {"method": "POST", "path": "/v1/operator-packet/commit", "description": "Commit stateless operator packet iteration"},
-        {"method": "POST", "path": "/v1/operator-packet/abandon", "description": "Abandon stateless operator packet loop"},
-        {"method": "GET", "path": "/v1/operator/session", "description": "Get ambient operator session phase state"},
-        {"method": "POST", "path": "/v1/operator/frame", "description": "Lock ambient operator frame"},
-        {"method": "POST", "path": "/v1/operator/report", "description": "Run ambient operator report"},
-        {"method": "POST", "path": "/v1/operator/report/lock", "description": "Lock ambient operator report"},
-        {"method": "POST", "path": "/v1/operator/threshold", "description": "Set ambient operator threshold decision"},
-        {"method": "POST", "path": "/v1/operator/commit", "description": "Commit ambient operator iteration audit"},
-        {"method": "POST", "path": "/v1/operator/abandon", "description": "Abandon ambient operator session"},
-        {"method": "POST", "path": "/v1/sessions", "description": "Create engine session"},
+        {
+            "method": "GET",
+            "path": "/v1/openapi.json",
+            "description": "OpenAPI specification",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/mvp",
+            "description": "Run canonical MVP packet demo",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/private-demo",
+            "description": "Run no-PHI private demo runtime packet",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/start",
+            "description": "Start stateless operator packet",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/state",
+            "description": "Inspect stateless operator packet state",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/frame",
+            "description": "Lock frame into stateless operator packet",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/report",
+            "description": "Run report through stateless operator packet",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/report/lock",
+            "description": "Lock stateless operator packet report",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/threshold",
+            "description": "Set stateless operator packet threshold decision",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/commit",
+            "description": "Commit stateless operator packet iteration",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/abandon",
+            "description": "Abandon stateless operator packet loop",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/operator/session",
+            "description": "Get ambient operator session phase state",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator/frame",
+            "description": "Lock ambient operator frame",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator/report",
+            "description": "Run ambient operator report",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator/report/lock",
+            "description": "Lock ambient operator report",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator/threshold",
+            "description": "Set ambient operator threshold decision",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator/commit",
+            "description": "Commit ambient operator iteration audit",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator/abandon",
+            "description": "Abandon ambient operator session",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/sessions",
+            "description": "Create engine session",
+        },
         {"method": "GET", "path": "/v1/sessions", "description": "List sessions"},
-        {"method": "DELETE", "path": "/v1/sessions", "description": "Purge old sessions by TTL"},
-        {"method": "GET", "path": "/v1/sessions/{session_id}", "description": "Get session summary"},
-        {"method": "DELETE", "path": "/v1/sessions/{session_id}", "description": "Delete session"},
-        {"method": "POST", "path": "/v1/sessions/{session_id}/step", "description": "Run one step"},
-        {"method": "POST", "path": "/v1/sessions/{session_id}/reframe", "description": "Update frame version"},
-        {"method": "POST", "path": "/v1/sessions/{session_id}/workspace", "description": "Persist UI workspace state"},
-        {"method": "GET", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness"},
-        {"method": "POST", "path": "/v1/sessions/{session_id}/stage-audit", "description": "Audit stage gate readiness with context"},
-        {"method": "GET", "path": "/v1/sessions/{session_id}/packets", "description": "Get replay packets"},
-        {"method": "GET", "path": "/v1/sessions/{session_id}/provenance", "description": "Get packet provenance graph"},
-        {"method": "GET", "path": "/v1/sessions/{session_id}/audit-export", "description": "Export session audit trail"},
-        {"method": "GET", "path": "/v1/provenance/requests/{request_id}", "description": "Reconstruct packet flow by request"},
-        {"method": "GET", "path": "/v1/provenance/packets/{packet_id}/lineage", "description": "Get packet lineage graph"},
+        {
+            "method": "DELETE",
+            "path": "/v1/sessions",
+            "description": "Purge old sessions by TTL",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/sessions/{session_id}",
+            "description": "Get session summary",
+        },
+        {
+            "method": "DELETE",
+            "path": "/v1/sessions/{session_id}",
+            "description": "Delete session",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/sessions/{session_id}/step",
+            "description": "Run one step",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/sessions/{session_id}/reframe",
+            "description": "Update frame version",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/sessions/{session_id}/workspace",
+            "description": "Persist UI workspace state",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/sessions/{session_id}/stage-audit",
+            "description": "Audit stage gate readiness",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/sessions/{session_id}/stage-audit",
+            "description": "Audit stage gate readiness with context",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/sessions/{session_id}/packets",
+            "description": "Get replay packets",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/sessions/{session_id}/provenance",
+            "description": "Get packet provenance graph",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/sessions/{session_id}/audit-export",
+            "description": "Export session audit trail",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/provenance/requests/{request_id}",
+            "description": "Reconstruct packet flow by request",
+        },
+        {
+            "method": "GET",
+            "path": "/v1/provenance/packets/{packet_id}/lineage",
+            "description": "Get packet lineage graph",
+        },
     ]
 
 
@@ -986,6 +1275,7 @@ def openapi_spec() -> dict[str, Any]:
         "paths": paths,
     }
 
+
 def entrypoint(argv: list[str] | None = None) -> None:  # pragma: no cover
     del argv
     if _auth_required() and _configured_api_token() is None:
@@ -996,7 +1286,9 @@ def entrypoint(argv: list[str] | None = None) -> None:  # pragma: no cover
     try:
         import uvicorn
     except ImportError as exc:
-        raise SystemExit("uvicorn is required. Install optional deps: pip install 'nepsis-cgn[api]'") from exc
+        raise SystemExit(
+            "uvicorn is required. Install optional deps: pip install 'nepsis-cgn[api]'"
+        ) from exc
 
     logging.basicConfig(level=os.getenv("NEPSIS_API_LOG_LEVEL", "INFO"))
     host = os.getenv("NEPSIS_API_HOST", "127.0.0.1")

@@ -1,7 +1,7 @@
 # Supported Runtime Matrix
 
-NepsisCGN v0.3 is supported as a deterministic MVP demo with a local Python
-backend and a local Next.js UI.
+NepsisCGN public MVP v0.4 is supported as a deterministic MVP demo with a local
+Python backend and a local Next.js UI.
 
 | Component | Supported Runtime | Install Command | Required For |
 | --- | --- | --- | --- |
@@ -40,14 +40,14 @@ The script defaults to `python3.11`. If that executable is unavailable, it uses
 ## Deployment Notes
 
 - Use `.venv/bin/python`; do not rely on system `python3`.
-- Keep `/mvp` as the frozen deterministic demo path.
+- Keep `/mvp` as the public deterministic v0.4 demo path.
 - Public production should set `NEPSIS_API_BASE_URL`, matching
   `NEPSIS_API_TOKEN`, `NEPSIS_AUTH_SECRET`, `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true`,
   and `NEPSIS_MODEL_ROUTES_ENABLED=false`. Operator deployments additionally
   require `NEPSIS_AUTH_ALLOWED_EMAILS` for exact-email OTP login.
 - Public backend deployment should keep `NEPSIS_API_ALLOW_ANON=false`; public
-  visitors reach the frozen MVP through the web proxy, not direct anonymous API
-  access.
+  visitors reach the deterministic v0.4 MVP through the web proxy, not direct
+  anonymous API access.
 - Public production should not set server OpenAI keys unless model routes have
   auth and rate-limit review in a non-public operator deployment. Public-site
   mode disables model routes even when `NEPSIS_MODEL_ROUTES_ENABLED=true`.

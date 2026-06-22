@@ -1,375 +1,24 @@
 {
-  "clinical": {
-    "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.7",
-    "packet_id": "__RUNTIME_PACKET_ID__",
-    "created_at": "__RUNTIME_CREATED_AT__",
-    "case_id": "clinical",
-    "input_text": "Clinical demo: back pain with radicular spasm plus saddle anesthesia and new bladder dysfunction.",
-    "observations": [
-      "radicular pain/spasm narrative present",
-      "red_flag=saddle_anesthesia",
-      "red_flag=bladder_dysfunction"
-    ],
-    "constraints": [
-      "Hard constraint: cauda equina red flags cannot be set aside as benign spasm.",
-      "Must-not-miss hazard: neurologic compromise with bladder/saddle symptoms.",
-      "Blue optimization may only run after red flags are escalated or explicitly ruled out."
-    ],
-    "red_channel": {
-      "active_hazards": [
-        {
-          "id": "cauda_equina_must_not_miss",
-          "severity": "red",
-          "hazard": "Potential cauda equina syndrome.",
-          "features": [
-            "saddle_anesthesia",
-            "bladder_dysfunction"
-          ]
-        }
-      ],
-      "ruled_out_hazards": [],
-      "missing_discriminators": [
-        "post-void residual",
-        "focused saddle sensory exam",
-        "lower-extremity motor/reflex exam",
-        "urgent imaging pathway availability"
-      ],
-      "escalation_required": true,
-      "rationale": "RED runs first because neurologic red flags dominate action threshold under uncertainty."
-    },
-    "still": {
-      "name": "STILL",
-      "definition": "Strategic Time-in-Loop for Learning",
-      "checkpoints": [
-        {
-          "name": "STILL Checkpoint 1",
-          "position": "after_red_before_blue",
-          "trigger_status": "escalation_preserved",
-          "reason": "High-consequence RED hazard remains active; BLUE cannot downgrade escalation.",
-          "required_before_commitment": [
-            "red flags explicitly escalated or ruled out",
-            "RED hazard status preserved through BLUE reasoning"
-          ]
-        },
-        {
-          "name": "STILL Checkpoint 2",
-          "position": "after_blue_before_commitment",
-          "trigger_status": "retessellate",
-          "reason": "Red-flag contradiction and denominator collapse require retessellation.",
-          "required_before_commitment": [
-            "post-void residual reviewed",
-            "focused neurologic exam reviewed",
-            "compressive neurologic emergency represented in hypothesis set"
-          ]
-        }
-      ],
-      "commitment_readiness": {
-        "status": "retessellate",
-        "zeroback_triggered": true,
-        "effective_action": "zeroback",
-        "co_trigger_statuses": [
-          "retessellate",
-          "zeroback",
-          "hold"
-        ],
-        "rationale": "Hypothesis space is undercomplete; rebuild before commitment."
-      },
-      "learning_notes": [
-        "Benign narrative cannot close while red-flag discriminators remain unresolved.",
-        "High-consequence uncertainty keeps RED authority active through BLUE reasoning."
-      ],
-      "audit_events": [
-        {
-          "order": 1,
-          "stage": "still_checkpoint_1",
-          "summary": "Checked permission to enter BLUE without clearing RED."
-        },
-        {
-          "order": 2,
-          "stage": "still_checkpoint_2",
-          "summary": "Set commitment readiness to retessellate."
-        }
-      ]
-    },
-    "blue_channel": {
-      "hypotheses": [
-        {
-          "id": "benign_radicular_spasm",
-          "label": "Mechanical/radicular spasm",
-          "likelihood": "medium_support",
-          "post_constraint_standing": "plausible_but_red_bounded",
-          "action_priority": "bounded_until_red_flags_resolved",
-          "supporting_features": [
-            "radicular pain",
-            "spasm narrative"
-          ],
-          "contradicting_features": [
-            "saddle_anesthesia",
-            "bladder_dysfunction"
-          ],
-          "needed_discriminators": [
-            "neuro exam",
-            "post-void residual"
-          ],
-          "action_threshold": "treat only after red flags addressed"
-        },
-        {
-          "id": "cauda_equina",
-          "label": "Cauda equina / compressive neurologic emergency",
-          "likelihood": "uncertain_support",
-          "post_constraint_standing": "action_dominant_by_consequence",
-          "action_priority": "red-action-dominant",
-          "supporting_features": [
-            "saddle_anesthesia",
-            "bladder_dysfunction"
-          ],
-          "contradicting_features": [],
-          "needed_discriminators": [
-            "urgent MRI / specialist pathway"
-          ],
-          "action_threshold": "escalate before benign closure"
-        }
-      ],
-      "evaluation_axes": {
-        "support": {
-          "description": "Evidence or plausibility support only; not action priority.",
-          "by_hypothesis": {
-            "benign_radicular_spasm": "medium",
-            "cauda_equina": "uncertain"
-          }
-        },
-        "action_priority": {
-          "description": "RED/threshold action class only; not a likelihood magnitude.",
-          "by_hypothesis": {
-            "benign_radicular_spasm": "bounded_until_red_flags_resolved",
-            "cauda_equina": "red-action-dominant"
-          }
-        }
-      },
-      "supporting_features": [
-        "radicular pain",
-        "spasm"
-      ],
-      "contradicting_features": [
-        "saddle_anesthesia",
-        "bladder_dysfunction"
-      ],
-      "needed_discriminators": [
-        "post-void residual",
-        "focused neurologic exam"
-      ]
-    },
-    "contradiction_monitor": {
-      "contradictions": [
-        {
-          "id": "benign_closure_vs_red_flags",
-          "type": "action-threshold contradiction",
-          "level": "action_threshold",
-          "status": "open_pending_discriminators",
-          "observation": "benign spasm narrative competes with red flags",
-          "conflicts_with": "RED escalation threshold crossed by consequence",
-          "introduced_at_order": 5,
-          "resolution_event_order": null
-        }
-      ],
-      "contradiction_density": 0.5,
-      "density_basis": {
-        "model": "saturating_count_v1",
-        "formula": "contradiction_count / (contradiction_count + 1)",
-        "contradiction_count": 1,
-        "aggregate_role": "demo_only_scalar_summary",
-        "runtime_gate_input": false,
-        "runtime_gate_note": "Frozen MVP demo score only; runtime governance derives contradiction_density from evaluated constraint violations.",
-        "channel_note": "Typed density channels preserve object/meta/action-threshold distinctions."
-      },
-      "density_channels": {
-        "action_threshold": {
-          "contradiction_count": 1,
-          "open_count": 1,
-          "resolved_count": 0,
-          "contradiction_density": 0.5,
-          "runtime_gate_input": false
-        }
-      },
-      "stability_status": "hold_for_discriminator"
-    },
-    "denominator_collapse": {
-      "detected": true,
-      "missing_hypothesis_classes": [
-        "compressive neurologic emergency"
-      ],
-      "retessellation_required": true
-    },
-    "retessellation_state": {
-      "status": "completed_in_packet",
-      "required": true,
-      "completed_in_packet": true,
-      "trigger_event_order": 8,
-      "completed_event_order": 9,
-      "remaining_obligation": "next-cycle clinical discriminator verification remains pending in the MVP packet"
-    },
-    "voronoi_commitment": {
-      "recommended_action": "Escalate red-flag pathway; do not finalize as benign spasm yet.",
-      "threshold_basis": "Consequence-weighted threshold, not most-likely diagnosis.",
-      "consequence_weighting": "Missed neurologic emergency dominates unnecessary escalation cost."
-    },
-    "non_quiescence": {
-      "wrong_manifold_possible": true,
-      "reason": "Benign spasm manifold cannot absorb bladder/saddle red flags without contradiction.",
-      "next_required_move": "Gather discriminators or escalate; do not calmly finalize."
-    },
-    "zeroback": {
-      "triggered": true,
-      "reason": "Reset from benign-pain manifold to must-not-miss neurologic emergency frame.",
-      "reset_scope": "Keep symptoms and red flags; reset priors and rebuild hypotheses."
-    },
-    "state_feedback": {
-      "current_state": {
-        "timestamp_or_phase": "mvp_post_commitment_packet",
-        "active_frame": "high-consequence red-flag clinical uncertainty",
-        "active_constraints": [
-          "red flags cannot be set aside as benign spasm",
-          "BLUE optimization cannot downgrade unresolved RED hazard"
-        ],
-        "active_hazards": [
-          "cauda_equina_must_not_miss"
-        ],
-        "current_commitment": "Escalate red-flag pathway; do not finalize as benign spasm yet.",
-        "uncertainty_level": "high_consequence_unresolved"
-      },
-      "predicted_next_state": {
-        "expected_time_window": "next discriminator collection step",
-        "expected_changes": [
-          "discriminating data stabilizes benign frame only if red flags are resolved",
-          "RED remains active while bladder/saddle findings are unresolved"
-        ],
-        "expected_discriminators": [
-          "post-void residual",
-          "focused saddle sensory exam",
-          "lower-extremity motor/reflex exam",
-          "urgent imaging or specialist decision"
-        ],
-        "expected_resolution_signs": [
-          "red-flag discriminators documented",
-          "benign closure occurs only after RED hazard is ruled out"
-        ],
-        "failure_conditions": [
-          "worsening vitals or neurologic state",
-          "unresolved red flags",
-          "missing discriminator",
-          "benign closure despite active RED hazard"
-        ]
-      },
-      "observed_next_state": {
-        "status": "not_observed_in_mvp",
-        "placeholder_reason": "The MVP packet declares the expected next-state check but does not run a live feedback loop."
-      },
-      "delta_analysis": {
-        "matches_prediction": "pending",
-        "contradiction_delta": "pending",
-        "confidence_delta": "pending",
-        "reason": "No observed next state is available in the MVP; the next clinical state must be checked against unresolved RED hazards."
-      },
-      "loop_decision": {
-        "status": "pending_observation",
-        "rationale": "Retessellation completed inside the MVP packet; the remaining obligation is next-cycle discriminator verification.",
-        "next_observation_required": "Obtain and compare red-flag discriminators against the expected trajectory."
-      },
-      "audit_events": [
-        "Declared expected next-state trajectory for high-consequence red-flag uncertainty.",
-        "Defined failure conditions that would force hold, retessellation, or ZeroBack."
-      ]
-    },
-    "audit_trace": [
-      {
-        "order": 1,
-        "stage": "signal_intake",
-        "summary": "Parsed pain narrative and red-flag observations."
-      },
-      {
-        "order": 2,
-        "stage": "red_channel",
-        "summary": "Screened must-not-miss neurologic hazards before BLUE."
-      },
-      {
-        "order": 3,
-        "stage": "still_checkpoint_1",
-        "summary": "Preserved RED escalation before bounded BLUE analysis."
-      },
-      {
-        "order": 4,
-        "stage": "blue_channel",
-        "summary": "Compared benign and catastrophic hypotheses inside RED boundary."
-      },
-      {
-        "order": 5,
-        "stage": "contradiction_monitor",
-        "summary": "Classified benign closure vs red flags as action-threshold contradiction."
-      },
-      {
-        "order": 6,
-        "stage": "denominator_collapse",
-        "summary": "Detected omitted emergency class if only benign spasm is considered."
-      },
-      {
-        "order": 7,
-        "stage": "non_quiescence",
-        "summary": "Marked wrong-manifold risk from benign closure."
-      },
-      {
-        "order": 8,
-        "stage": "still_checkpoint_2",
-        "summary": "Set commitment readiness to retessellate."
-      },
-      {
-        "order": 9,
-        "stage": "retessellation",
-        "summary": "Rebuilt hypothesis space to include compressive neurologic emergency."
-      },
-      {
-        "order": 10,
-        "stage": "zeroback",
-        "summary": "Reset from benign-pain manifold to must-not-miss emergency frame."
-      },
-      {
-        "order": 11,
-        "stage": "voronoi_commitment",
-        "summary": "Committed to escalation/hold based on consequence-weighted threshold."
-      },
-      {
-        "order": 12,
-        "stage": "state_feedback",
-        "summary": "Declared next-state observations and failure conditions for the active frame."
-      }
-    ],
-    "final_output": {
-      "concise_recommendation": "Do not close as benign spasm. Escalate or obtain the red-flag discriminators now.",
-      "caveats": [
-        "Deterministic MVP scaffold; not medical advice or a diagnosis."
-      ],
-      "required_next_discriminators": [
-        "post-void residual",
-        "focused saddle sensory exam",
-        "motor/reflex exam",
-        "urgent imaging/specialist decision"
-      ]
-    },
-    "demo_limitations": [
-      {
-        "id": "deterministic_red_flag_scaffold",
-        "limitation": "The clinical MVP packet is a deterministic red-flag governance scaffold, not a clinical diagnostic runtime.",
-        "implication": "It demonstrates escalation preservation and pending discriminator obligations without observing a live clinical next state."
-      }
-    ]
-  },
   "jailing": {
     "schema_id": "nepsis.mvp_packet",
-    "schema_version": "0.1.7",
-    "packet_id": "__RUNTIME_PACKET_ID__",
-    "created_at": "__RUNTIME_CREATED_AT__",
+    "schema_version": "0.2.0",
+    "packet_id": "72424517-04d8-42a4-a1a5-4329a6e38712",
+    "created_at": "2026-06-22T17:59:21.508+00:00",
     "case_id": "jailing",
     "input_text": "Canonical Jailing/Jingall case: source constraint says the required name is JINGALL, but the candidate answer collapses to the familiar word JAILING.",
+    "public_release": {
+      "release_id": "public_mvp_v0.4",
+      "label": "Public MVP v0.4",
+      "mode": "deterministic_packet_proof",
+      "model_free": true,
+      "login_required": false,
+      "api_key_required": false,
+      "supported_cases": [
+        "jailing",
+        "sea_ivdu",
+        "wirecard"
+      ]
+    },
     "observations": [
       "source_token=JINGALL",
       "candidate_token=JAILING",
@@ -734,6 +383,766 @@
         "id": "source_token_corruption_not_detected",
         "limitation": "The MVP assumes JINGALL is the authoritative source token; it does not demonstrate detection of the harder variant where the source token itself is corrupted and JAILING is true.",
         "implication": "Source-token verification remains an explicit next-cycle obligation rather than a completed runtime observation."
+      }
+    ]
+  },
+  "sea_ivdu": {
+    "schema_id": "nepsis.mvp_packet",
+    "schema_version": "0.2.0",
+    "packet_id": "278f50ed-05db-46b3-8e63-8a7c27b41c73",
+    "created_at": "2026-06-22T17:59:21.509+00:00",
+    "case_id": "sea_ivdu",
+    "input_text": "Public MVP v0.4 SEA case: 40s male with non-radicular back pain and history of drug use disorder including intravenous use. No fever, neurologic deficit, labs, or imaging are supplied in the initial story.",
+    "public_release": {
+      "release_id": "public_mvp_v0.4",
+      "label": "Public MVP v0.4",
+      "mode": "deterministic_packet_proof",
+      "model_free": true,
+      "login_required": false,
+      "api_key_required": false,
+      "supported_cases": [
+        "jailing",
+        "sea_ivdu",
+        "wirecard"
+      ]
+    },
+    "observations": [
+      "patient=40s_male",
+      "pain_pattern=non_radicular_back_pain",
+      "risk_feature=history_of_drug_use_disorder_including_intravenous_use",
+      "not_supplied=fever",
+      "not_supplied=neurologic_deficit",
+      "not_supplied=labs",
+      "not_supplied=imaging"
+    ],
+    "constraints": [
+      "Hard constraint: intravenous-use history keeps spinal epidural abscess RED open.",
+      "Hard constraint: absence of radicular pain does not close SEA risk.",
+      "Closure requires MRI-level evaluation or a definitive alternative explanation.",
+      "BLUE optimization may only run inside the active SEA RED boundary."
+    ],
+    "red_channel": {
+      "active_hazards": [
+        {
+          "id": "spinal_epidural_abscess_must_not_miss",
+          "severity": "red",
+          "hazard": "Potential spinal epidural abscess or occult spinal infection.",
+          "features": [
+            "intravenous_use_history"
+          ],
+          "closure_requirement": "MRI-level evaluation or definitive alternative explanation"
+        }
+      ],
+      "ruled_out_hazards": [],
+      "missing_discriminators": [
+        "MRI-level evaluation",
+        "definitive alternative explanation for intravenous-use risk",
+        "inflammatory markers and blood-culture context",
+        "focused neurologic reassessment"
+      ],
+      "escalation_required": true,
+      "rationale": "RED runs first because intravenous use is a decisive SEA risk feature; the benign non-radicular story cannot close the hazard without the required discriminators."
+    },
+    "still": {
+      "name": "STILL",
+      "definition": "Strategic Time-in-Loop for Learning",
+      "checkpoints": [
+        {
+          "name": "STILL Checkpoint 1",
+          "position": "after_red_before_blue",
+          "trigger_status": "escalation_preserved",
+          "reason": "Intravenous-use SEA risk remains active; BLUE cannot downgrade the RED hold.",
+          "required_before_commitment": [
+            "intravenous-use risk feature preserved",
+            "SEA hazard status preserved through BLUE reasoning"
+          ]
+        },
+        {
+          "name": "STILL Checkpoint 2",
+          "position": "after_blue_before_commitment",
+          "trigger_status": "retessellate",
+          "reason": "Benign closure and missing SEA discriminators require retessellation.",
+          "required_before_commitment": [
+            "MRI-level evaluation reviewed or explicitly obtained",
+            "definitive alternative explanation represented",
+            "SEA remains in the hypothesis set until closure threshold is met"
+          ]
+        }
+      ],
+      "commitment_readiness": {
+        "status": "retessellate",
+        "zeroback_triggered": true,
+        "effective_action": "zeroback",
+        "co_trigger_statuses": [
+          "retessellate",
+          "zeroback",
+          "hold"
+        ],
+        "rationale": "Hypothesis space is undercomplete; rebuild before commitment."
+      },
+      "learning_notes": [
+        "One decisive risk feature can preserve RED even without fever or neurologic deficit in the story.",
+        "Non-radicular pain is not a closure discriminator for SEA when intravenous-use risk is present."
+      ],
+      "audit_events": [
+        {
+          "order": 1,
+          "stage": "still_checkpoint_1",
+          "summary": "Checked permission to enter BLUE without clearing RED."
+        },
+        {
+          "order": 2,
+          "stage": "still_checkpoint_2",
+          "summary": "Set commitment readiness to retessellate."
+        }
+      ]
+    },
+    "blue_channel": {
+      "hypotheses": [
+        {
+          "id": "benign_non_radicular_back_pain",
+          "label": "Benign non-radicular back pain",
+          "likelihood": "surface_plausible",
+          "post_constraint_standing": "red_bounded",
+          "action_priority": "blocked_until_sea_closed",
+          "supporting_features": [
+            "non-radicular pain",
+            "no fever supplied",
+            "no neurologic deficit supplied"
+          ],
+          "contradicting_features": [
+            "intravenous_use_history"
+          ],
+          "needed_discriminators": [
+            "MRI-level evaluation",
+            "definitive alternative explanation"
+          ],
+          "action_threshold": "cannot close while SEA RED remains open"
+        },
+        {
+          "id": "spinal_epidural_abscess",
+          "label": "Spinal epidural abscess / occult spinal infection",
+          "likelihood": "uncertain_support",
+          "post_constraint_standing": "action_dominant_by_risk_feature",
+          "action_priority": "red-action-dominant",
+          "supporting_features": [
+            "intravenous_use_history"
+          ],
+          "contradicting_features": [
+            "no fever supplied",
+            "no neurologic deficit supplied"
+          ],
+          "needed_discriminators": [
+            "MRI-level evaluation"
+          ],
+          "action_threshold": "hold benign closure until RED closure threshold is met"
+        }
+      ],
+      "evaluation_axes": {
+        "support": {
+          "description": "Evidence or plausibility support only; not action priority.",
+          "by_hypothesis": {
+            "benign_non_radicular_back_pain": "surface_plausible",
+            "spinal_epidural_abscess": "uncertain"
+          }
+        },
+        "action_priority": {
+          "description": "RED/threshold action class only; not a likelihood magnitude.",
+          "by_hypothesis": {
+            "benign_non_radicular_back_pain": "blocked_until_sea_closed",
+            "spinal_epidural_abscess": "red-action-dominant"
+          }
+        }
+      },
+      "supporting_features": [
+        "non-radicular pain narrative"
+      ],
+      "contradicting_features": [
+        "intravenous_use_history"
+      ],
+      "needed_discriminators": [
+        "MRI-level evaluation",
+        "definitive alternative explanation"
+      ]
+    },
+    "contradiction_monitor": {
+      "contradictions": [
+        {
+          "id": "benign_back_pain_closure_vs_ivdu_sea_risk",
+          "type": "action-threshold contradiction",
+          "level": "action_threshold",
+          "status": "open_pending_discriminators",
+          "observation": "non-radicular benign back-pain narrative competes with intravenous-use SEA risk",
+          "conflicts_with": "RED closure requires MRI-level evaluation or a definitive alternative explanation",
+          "introduced_at_order": 5,
+          "resolution_event_order": null
+        }
+      ],
+      "contradiction_density": 0.5,
+      "density_basis": {
+        "model": "saturating_count_v1",
+        "formula": "contradiction_count / (contradiction_count + 1)",
+        "contradiction_count": 1,
+        "aggregate_role": "demo_only_scalar_summary",
+        "runtime_gate_input": false,
+        "runtime_gate_note": "Frozen MVP demo score only; runtime governance derives contradiction_density from evaluated constraint violations.",
+        "channel_note": "Typed density channels preserve object/meta/action-threshold distinctions."
+      },
+      "density_channels": {
+        "action_threshold": {
+          "contradiction_count": 1,
+          "open_count": 1,
+          "resolved_count": 0,
+          "contradiction_density": 0.5,
+          "runtime_gate_input": false
+        }
+      },
+      "stability_status": "hold_for_mri_level_evaluation"
+    },
+    "denominator_collapse": {
+      "detected": true,
+      "missing_hypothesis_classes": [
+        "spinal epidural abscess / occult spinal infection"
+      ],
+      "retessellation_required": true
+    },
+    "retessellation_state": {
+      "status": "completed_in_packet",
+      "required": true,
+      "completed_in_packet": true,
+      "trigger_event_order": 8,
+      "completed_event_order": 9,
+      "remaining_obligation": "next-cycle SEA closure discriminator verification remains pending in the MVP packet"
+    },
+    "voronoi_commitment": {
+      "recommended_action": "Hold benign closure; MRI-level evaluation is required to close RED or a definitive alternative must explain the intravenous-use risk.",
+      "threshold_basis": "Consequence-weighted RED threshold from decisive risk feature, not most-likely pain story.",
+      "consequence_weighting": "Missed SEA dominates the cost of evaluation in this public proof case."
+    },
+    "non_quiescence": {
+      "wrong_manifold_possible": true,
+      "reason": "Benign back-pain manifold cannot absorb intravenous-use SEA risk without a closure discriminator.",
+      "next_required_move": "Retessellate around SEA hazard and obtain closure discriminators before commitment."
+    },
+    "zeroback": {
+      "triggered": true,
+      "reason": "Reset from benign back-pain closure to must-not-miss SEA frame.",
+      "reset_scope": "Keep pain pattern and risk feature; rebuild hypotheses around SEA closure threshold."
+    },
+    "state_feedback": {
+      "current_state": {
+        "timestamp_or_phase": "mvp_post_commitment_packet",
+        "active_frame": "SEA red-channel risk from intravenous use",
+        "active_constraints": [
+          "intravenous-use history keeps SEA RED open",
+          "absence of radicular pain does not close SEA risk",
+          "BLUE optimization cannot downgrade unresolved SEA hazard"
+        ],
+        "active_hazards": [
+          "spinal_epidural_abscess_must_not_miss"
+        ],
+        "current_commitment": "Hold benign closure; MRI-level evaluation is required to close RED.",
+        "uncertainty_level": "high_consequence_unresolved"
+      },
+      "predicted_next_state": {
+        "expected_time_window": "next SEA closure discriminator collection step",
+        "expected_changes": [
+          "SEA hazard closes only after MRI-level evaluation or definitive alternative explanation",
+          "RED remains active while closure discriminators are missing"
+        ],
+        "expected_discriminators": [
+          "MRI-level evaluation",
+          "definitive alternative explanation",
+          "inflammatory markers and blood-culture context"
+        ],
+        "expected_resolution_signs": [
+          "MRI-level evaluation addresses SEA hazard",
+          "definitive alternative explains the intravenous-use risk without silent benign closure"
+        ],
+        "failure_conditions": [
+          "benign closure despite intravenous-use risk",
+          "MRI-level evaluation missing",
+          "risk feature omitted from final action threshold",
+          "public packet presented as medical advice"
+        ]
+      },
+      "observed_next_state": {
+        "status": "not_observed_in_mvp",
+        "placeholder_reason": "The MVP packet declares the expected next-state check but does not run a live feedback loop."
+      },
+      "delta_analysis": {
+        "matches_prediction": "pending",
+        "contradiction_delta": "pending",
+        "confidence_delta": "pending",
+        "reason": "No observed next state is available in the MVP; the next clinical state must be checked against the unresolved SEA RED hazard."
+      },
+      "loop_decision": {
+        "status": "pending_observation",
+        "rationale": "Retessellation completed inside the MVP packet; the remaining obligation is next-cycle SEA closure discriminator verification.",
+        "next_observation_required": "Verify whether MRI-level evaluation or a definitive alternative closes SEA RED."
+      },
+      "audit_events": [
+        "Declared expected next-state trajectory for SEA risk from intravenous use.",
+        "Defined failure conditions that would force hold, retessellation, or ZeroBack."
+      ]
+    },
+    "audit_trace": [
+      {
+        "order": 1,
+        "stage": "signal_intake",
+        "summary": "Parsed non-radicular back pain and intravenous-use history."
+      },
+      {
+        "order": 2,
+        "stage": "red_channel",
+        "summary": "Preserved SEA must-not-miss hazard before BLUE."
+      },
+      {
+        "order": 3,
+        "stage": "still_checkpoint_1",
+        "summary": "Held benign closure while RED SEA risk remained active."
+      },
+      {
+        "order": 4,
+        "stage": "blue_channel",
+        "summary": "Compared benign back pain and SEA hypotheses inside RED boundary."
+      },
+      {
+        "order": 5,
+        "stage": "contradiction_monitor",
+        "summary": "Classified benign closure vs IVDU SEA risk as action-threshold contradiction."
+      },
+      {
+        "order": 6,
+        "stage": "denominator_collapse",
+        "summary": "Detected omitted occult spinal infection class if only benign pain is considered."
+      },
+      {
+        "order": 7,
+        "stage": "non_quiescence",
+        "summary": "Marked wrong-manifold risk from benign closure."
+      },
+      {
+        "order": 8,
+        "stage": "still_checkpoint_2",
+        "summary": "Set commitment readiness to retessellate."
+      },
+      {
+        "order": 9,
+        "stage": "retessellation",
+        "summary": "Rebuilt hypothesis space to include SEA closure threshold."
+      },
+      {
+        "order": 10,
+        "stage": "zeroback",
+        "summary": "Reset from benign pain manifold to SEA red-channel frame."
+      },
+      {
+        "order": 11,
+        "stage": "voronoi_commitment",
+        "summary": "Committed to RED hold based on consequence-weighted threshold."
+      },
+      {
+        "order": 12,
+        "stage": "state_feedback",
+        "summary": "Declared next-state observations and failure conditions for the active frame."
+      }
+    ],
+    "final_output": {
+      "concise_recommendation": "Do not close as benign back pain. MRI-level evaluation is required to close RED, unless a definitive alternative explanation safely accounts for the intravenous-use risk.",
+      "caveats": [
+        "Deterministic public MVP scaffold; not medical advice or a diagnosis."
+      ],
+      "required_next_discriminators": [
+        "MRI-level evaluation",
+        "definitive alternative explanation",
+        "infection-marker and culture context"
+      ]
+    },
+    "demo_limitations": [
+      {
+        "id": "deterministic_sea_red_scaffold",
+        "limitation": "The SEA packet is a deterministic public governance scaffold, not a diagnostic runtime or clinical recommendation.",
+        "implication": "It demonstrates RED preservation from a decisive risk feature without observing a live patient state or test result."
+      }
+    ]
+  },
+  "wirecard": {
+    "schema_id": "nepsis.mvp_packet",
+    "schema_version": "0.2.0",
+    "packet_id": "07a80063-1715-47bb-97e0-c0a82c9b8b4a",
+    "created_at": "2026-06-22T17:59:21.509+00:00",
+    "case_id": "wirecard",
+    "input_text": "Public MVP v0.4 Wirecard case: reported cash balances are supported by auditor language, market confidence, and management assurance, but the cash is not independently verified through bank or custodian evidence.",
+    "public_release": {
+      "release_id": "public_mvp_v0.4",
+      "label": "Public MVP v0.4",
+      "mode": "deterministic_packet_proof",
+      "model_free": true,
+      "login_required": false,
+      "api_key_required": false,
+      "supported_cases": [
+        "jailing",
+        "sea_ivdu",
+        "wirecard"
+      ]
+    },
+    "observations": [
+      "reported_cash_balance=large",
+      "authority_signal=auditor_language",
+      "authority_signal=management_assurance",
+      "authority_signal=market_confidence",
+      "missing=independent_bank_or_custodian_evidence"
+    ],
+    "constraints": [
+      "Hard constraint: authority language cannot verify cash.",
+      "Hard constraint: reported balances remain RED-open until independently verified.",
+      "Closure requires independent bank or custodian confirmation or a definitive alternative explanation.",
+      "BLUE optimization may only run inside the unverifiable-cash RED boundary."
+    ],
+    "red_channel": {
+      "active_hazards": [
+        {
+          "id": "unverifiable_cash_must_not_miss",
+          "severity": "red",
+          "hazard": "Material reported cash may be unverifiable.",
+          "features": [
+            "missing_independent_bank_or_custodian_evidence"
+          ],
+          "closure_requirement": "independently verifiable bank or custodian evidence"
+        }
+      ],
+      "ruled_out_hazards": [],
+      "missing_discriminators": [
+        "independent bank or custodian confirmation",
+        "direct cash balance evidence from controlled account source",
+        "reconciled third-party statement trail",
+        "definitive alternative explanation for the verification gap"
+      ],
+      "escalation_required": true,
+      "rationale": "RED runs first because reported cash without independent bank or custodian evidence is a governing verification hazard; authority signals cannot close it."
+    },
+    "still": {
+      "name": "STILL",
+      "definition": "Strategic Time-in-Loop for Learning",
+      "checkpoints": [
+        {
+          "name": "STILL Checkpoint 1",
+          "position": "after_red_before_blue",
+          "trigger_status": "escalation_preserved",
+          "reason": "Unverifiable-cash RED hazard remains active; BLUE cannot treat authority as proof.",
+          "required_before_commitment": [
+            "cash verification gap preserved",
+            "authority assurances kept separate from independent evidence"
+          ]
+        },
+        {
+          "name": "STILL Checkpoint 2",
+          "position": "after_blue_before_commitment",
+          "trigger_status": "retessellate",
+          "reason": "Authority-based closure and missing cash evidence require retessellation.",
+          "required_before_commitment": [
+            "independent bank or custodian confirmation reviewed",
+            "verification source lineage represented",
+            "unverifiable-cash gap remains in the hypothesis set until closed"
+          ]
+        }
+      ],
+      "commitment_readiness": {
+        "status": "retessellate",
+        "zeroback_triggered": true,
+        "effective_action": "zeroback",
+        "co_trigger_statuses": [
+          "retessellate",
+          "zeroback",
+          "hold"
+        ],
+        "rationale": "Hypothesis space is undercomplete; rebuild before commitment."
+      },
+      "learning_notes": [
+        "Authority, market confidence, and fluent audit language are not cash evidence.",
+        "The governed denominator must include the missing-verification hypothesis class."
+      ],
+      "audit_events": [
+        {
+          "order": 1,
+          "stage": "still_checkpoint_1",
+          "summary": "Checked permission to enter BLUE without clearing RED."
+        },
+        {
+          "order": 2,
+          "stage": "still_checkpoint_2",
+          "summary": "Set commitment readiness to retessellate."
+        }
+      ]
+    },
+    "blue_channel": {
+      "hypotheses": [
+        {
+          "id": "reported_cash_valid",
+          "label": "Reported cash balance is valid",
+          "likelihood": "reported_support",
+          "post_constraint_standing": "blocked_until_independently_verified",
+          "action_priority": "blocked_by_red_boundary",
+          "supporting_features": [
+            "reported balance",
+            "auditor language",
+            "management assurance"
+          ],
+          "contradicting_features": [
+            "missing independent bank or custodian evidence"
+          ],
+          "needed_discriminators": [
+            "independent bank or custodian confirmation"
+          ],
+          "action_threshold": "cannot close while cash verification gap remains"
+        },
+        {
+          "id": "unverifiable_cash_gap",
+          "label": "Reported cash is unverifiable",
+          "likelihood": "uncertain_support",
+          "post_constraint_standing": "action_dominant_by_evidence_gap",
+          "action_priority": "red-action-dominant",
+          "supporting_features": [
+            "missing independent bank or custodian evidence"
+          ],
+          "contradicting_features": [
+            "authority assurances",
+            "market confidence"
+          ],
+          "needed_discriminators": [
+            "independently verifiable bank or custodian evidence"
+          ],
+          "action_threshold": "hold acceptance until independent evidence closes RED"
+        }
+      ],
+      "evaluation_axes": {
+        "support": {
+          "description": "Evidence or plausibility support only; not action priority.",
+          "by_hypothesis": {
+            "reported_cash_valid": "reported_support",
+            "unverifiable_cash_gap": "uncertain"
+          }
+        },
+        "action_priority": {
+          "description": "RED/threshold action class only; not a likelihood magnitude.",
+          "by_hypothesis": {
+            "reported_cash_valid": "blocked_by_red_boundary",
+            "unverifiable_cash_gap": "red-action-dominant"
+          }
+        }
+      },
+      "supporting_features": [
+        "reported balance",
+        "authority language",
+        "market confidence"
+      ],
+      "contradicting_features": [
+        "missing independent bank or custodian evidence"
+      ],
+      "needed_discriminators": [
+        "independent bank or custodian confirmation"
+      ]
+    },
+    "contradiction_monitor": {
+      "contradictions": [
+        {
+          "id": "authority_assurance_vs_unverified_cash",
+          "type": "action-threshold contradiction",
+          "level": "action_threshold",
+          "status": "open_pending_discriminators",
+          "observation": "authority assurances and reported balances compete with missing independent cash evidence",
+          "conflicts_with": "RED closure requires independently verifiable bank or custodian evidence",
+          "introduced_at_order": 5,
+          "resolution_event_order": null
+        }
+      ],
+      "contradiction_density": 0.5,
+      "density_basis": {
+        "model": "saturating_count_v1",
+        "formula": "contradiction_count / (contradiction_count + 1)",
+        "contradiction_count": 1,
+        "aggregate_role": "demo_only_scalar_summary",
+        "runtime_gate_input": false,
+        "runtime_gate_note": "Frozen MVP demo score only; runtime governance derives contradiction_density from evaluated constraint violations.",
+        "channel_note": "Typed density channels preserve object/meta/action-threshold distinctions."
+      },
+      "density_channels": {
+        "action_threshold": {
+          "contradiction_count": 1,
+          "open_count": 1,
+          "resolved_count": 0,
+          "contradiction_density": 0.5,
+          "runtime_gate_input": false
+        }
+      },
+      "stability_status": "hold_for_independent_cash_verification"
+    },
+    "denominator_collapse": {
+      "detected": true,
+      "missing_hypothesis_classes": [
+        "unverifiable reported cash / verification gap"
+      ],
+      "retessellation_required": true
+    },
+    "retessellation_state": {
+      "status": "completed_in_packet",
+      "required": true,
+      "completed_in_packet": true,
+      "trigger_event_order": 8,
+      "completed_event_order": 9,
+      "remaining_obligation": "next-cycle independent cash verification remains pending in the MVP packet"
+    },
+    "voronoi_commitment": {
+      "recommended_action": "Hold acceptance of reported cash until independently verifiable bank or custodian evidence closes RED.",
+      "threshold_basis": "Verification threshold, not authority confidence or narrative fluency.",
+      "consequence_weighting": "False acceptance of unverifiable cash dominates reputational or market-comfort costs."
+    },
+    "non_quiescence": {
+      "wrong_manifold_possible": true,
+      "reason": "Authority-trust manifold cannot absorb a missing-cash-evidence gap without contradiction.",
+      "next_required_move": "Retessellate around independent verification before accepting the reported balance."
+    },
+    "zeroback": {
+      "triggered": true,
+      "reason": "Reset from authority-assurance closure to independent-cash-verification frame.",
+      "reset_scope": "Keep reported balances and authority signals; rebuild hypotheses around evidence custody."
+    },
+    "state_feedback": {
+      "current_state": {
+        "timestamp_or_phase": "mvp_post_commitment_packet",
+        "active_frame": "unverifiable cash red-channel governance",
+        "active_constraints": [
+          "authority language cannot verify cash",
+          "reported balances remain RED-open without independent evidence",
+          "BLUE optimization cannot downgrade unresolved verification hazard"
+        ],
+        "active_hazards": [
+          "unverifiable_cash_must_not_miss"
+        ],
+        "current_commitment": "Hold acceptance of reported cash until independently verifiable bank or custodian evidence closes RED.",
+        "uncertainty_level": "material_verification_gap_unresolved"
+      },
+      "predicted_next_state": {
+        "expected_time_window": "next independent verification step",
+        "expected_changes": [
+          "cash hazard closes only after independent source evidence",
+          "authority-only assurances remain blocked by RED"
+        ],
+        "expected_discriminators": [
+          "independent bank or custodian confirmation",
+          "controlled account source statement",
+          "reconciled third-party evidence trail"
+        ],
+        "expected_resolution_signs": [
+          "bank or custodian evidence is independently verifiable",
+          "reported balance can be reconciled to a controlled source"
+        ],
+        "failure_conditions": [
+          "authority assurance accepted as proof",
+          "cash balance accepted without independent evidence",
+          "verification source lineage missing",
+          "public packet presented as financial advice"
+        ]
+      },
+      "observed_next_state": {
+        "status": "not_observed_in_mvp",
+        "placeholder_reason": "The MVP packet declares the expected next-state check but does not run a live feedback loop."
+      },
+      "delta_analysis": {
+        "matches_prediction": "pending",
+        "contradiction_delta": "pending",
+        "confidence_delta": "pending",
+        "reason": "No observed next state is available in the MVP; the next financial governance state must be checked against the unresolved cash-verification hazard."
+      },
+      "loop_decision": {
+        "status": "pending_observation",
+        "rationale": "Retessellation completed inside the MVP packet; the remaining obligation is next-cycle independent cash verification.",
+        "next_observation_required": "Verify whether independent bank or custodian evidence closes the cash RED."
+      },
+      "audit_events": [
+        "Declared expected next-state trajectory for unverifiable cash.",
+        "Defined failure conditions that would force hold, retessellation, or ZeroBack."
+      ]
+    },
+    "audit_trace": [
+      {
+        "order": 1,
+        "stage": "signal_intake",
+        "summary": "Parsed reported cash, authority signals, and missing independent evidence."
+      },
+      {
+        "order": 2,
+        "stage": "red_channel",
+        "summary": "Preserved unverifiable-cash hazard before BLUE."
+      },
+      {
+        "order": 3,
+        "stage": "still_checkpoint_1",
+        "summary": "Held authority-based closure while cash RED remained active."
+      },
+      {
+        "order": 4,
+        "stage": "blue_channel",
+        "summary": "Compared reported-valid and unverifiable-cash hypotheses inside RED boundary."
+      },
+      {
+        "order": 5,
+        "stage": "contradiction_monitor",
+        "summary": "Classified authority assurance vs missing cash evidence as action-threshold contradiction."
+      },
+      {
+        "order": 6,
+        "stage": "denominator_collapse",
+        "summary": "Detected omitted verification-gap hypothesis class."
+      },
+      {
+        "order": 7,
+        "stage": "non_quiescence",
+        "summary": "Marked wrong-manifold risk from authority-trust closure."
+      },
+      {
+        "order": 8,
+        "stage": "still_checkpoint_2",
+        "summary": "Set commitment readiness to retessellate."
+      },
+      {
+        "order": 9,
+        "stage": "retessellation",
+        "summary": "Rebuilt hypothesis space around independent cash evidence."
+      },
+      {
+        "order": 10,
+        "stage": "zeroback",
+        "summary": "Reset from authority assurance to cash-verification frame."
+      },
+      {
+        "order": 11,
+        "stage": "voronoi_commitment",
+        "summary": "Committed to RED hold based on independent verification threshold."
+      },
+      {
+        "order": 12,
+        "stage": "state_feedback",
+        "summary": "Declared next-state observations and failure conditions for the active frame."
+      }
+    ],
+    "final_output": {
+      "concise_recommendation": "Do not accept the reported cash as verified. RED stays open until independently verifiable bank or custodian evidence closes the cash gap.",
+      "caveats": [
+        "Deterministic public MVP scaffold; not financial, accounting, or legal advice."
+      ],
+      "required_next_discriminators": [
+        "independent bank or custodian confirmation",
+        "controlled account source evidence",
+        "reconciled third-party evidence trail"
+      ]
+    },
+    "demo_limitations": [
+      {
+        "id": "deterministic_financial_red_scaffold",
+        "limitation": "The Wirecard packet is a deterministic public governance scaffold, not a financial, accounting, or legal analysis.",
+        "implication": "It demonstrates authority-suppression and evidence-custody preservation without adjudicating a live company or account record."
       }
     ]
   }

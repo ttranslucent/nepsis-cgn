@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 
 import fallbackPackets from "@/data/mvpPackets.json";
 
-type MvpCaseId = "jailing" | "clinical";
+type MvpCaseId = "jailing" | "sea_ivdu" | "wirecard";
 type FallbackPacket = Record<string, unknown>;
 export type MvpFallbackReason = "backend_unconfigured" | "upstream_non_ok" | "public_fallback_after_proxy_error";
 
@@ -21,10 +21,10 @@ function parseBody(body: string): Record<string, unknown> {
 
 function readCaseId(body: Record<string, unknown>): MvpCaseId {
   const raw = body.case_id ?? body.case ?? "jailing";
-  if (raw === "jailing" || raw === "clinical") {
+  if (raw === "jailing" || raw === "sea_ivdu" || raw === "wirecard") {
     return raw;
   }
-  throw new Error("case_id must be one of: jailing, clinical");
+  throw new Error("case_id must be one of: jailing, sea_ivdu, wirecard");
 }
 
 function readInputText(body: Record<string, unknown>): string | null {
@@ -73,7 +73,7 @@ export function buildBundledMvpFallbackResponse(
   const packet = JSON.parse(JSON.stringify(PACKETS[caseId])) as FallbackPacket;
   packet.packet_id = randomUUID();
   packet.created_at = new Date().toISOString();
-  packet.fallback_source = "nepsis-web bundled frozen v0.3 packet";
+  packet.fallback_source = "nepsis-web bundled frozen v0.4 packet";
   packet.fallback_reason = fallbackReason;
   if (inputText) {
     packet.input_text = inputText;
@@ -81,7 +81,7 @@ export function buildBundledMvpFallbackResponse(
     if (finalOutput && Array.isArray(finalOutput.caveats)) {
       finalOutput.caveats = [
         ...finalOutput.caveats,
-        "Public query mode uses the selected deterministic MVP scaffold; it is not a live model response.",
+        "Public query mode uses the selected deterministic v0.4 MVP scaffold; it is not a live model response.",
       ];
     }
   }

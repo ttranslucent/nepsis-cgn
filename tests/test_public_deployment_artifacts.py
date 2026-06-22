@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 OPERATOR_PACKET_PROXY_ROUTES = [
     "start",
@@ -96,6 +95,25 @@ def test_web_env_examples_are_linked_from_docs() -> None:
     assert "Private operator deployment" in combined
 
 
+def test_public_mvp_page_declares_v04_deterministic_triad() -> None:
+    page = (ROOT / "nepsis-web" / "src" / "app" / "mvp" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
+    fallback = (ROOT / "nepsis-web" / "src" / "lib" / "mvpFallback.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Public MVP v0.4" in page
+    assert "Deterministic packet proof" in page
+    assert "Model-free deterministic run; no login or API key required." in page
+    assert 'id: "jailing"' in page
+    assert 'id: "sea_ivdu"' in page
+    assert 'id: "wirecard"' in page
+    assert 'id: "clinical"' not in page
+    assert "live model" not in page.lower()
+    assert "bundled frozen v0.4 packet" in fallback
+
+
 def test_status_api_exposes_public_and_operator_readiness_paths() -> None:
     route = ROOT / "nepsis-web" / "src" / "app" / "api" / "status" / "route.ts"
     text = route.read_text(encoding="utf-8")
@@ -146,8 +164,12 @@ def test_browser_provider_key_storage_is_removed_from_web_runtime() -> None:
     assert "OPENAI_KEY_STORAGE_KEY" not in combined
     assert "nepsis_openai_key" in combined
     assert "clearLegacyOpenAiKey" in combined
-    assert "apiKey:" not in (src / "app" / "playground" / "page.tsx").read_text(encoding="utf-8")
-    assert "apiKey:" not in (src / "app" / "engine" / "page.tsx").read_text(encoding="utf-8")
+    assert "apiKey:" not in (src / "app" / "playground" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "apiKey:" not in (src / "app" / "engine" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_model_sandbox_routes_require_server_side_provider_key_only() -> None:
@@ -170,14 +192,33 @@ def test_model_sandbox_routes_require_server_side_provider_key_only() -> None:
 
 @pytest.mark.parametrize("route", OPERATOR_PACKET_PROXY_ROUTES)
 def test_operator_packet_proxy_routes_require_auth_and_csrf(route: str) -> None:
-    path = ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "operator-packet" / route / "route.ts"
+    path = (
+        ROOT
+        / "nepsis-web"
+        / "src"
+        / "app"
+        / "api"
+        / "engine"
+        / "operator-packet"
+        / route
+        / "route.ts"
+    )
     text = path.read_text(encoding="utf-8")
     assert "requireEngineControlAuth" in text
     assert "requireCsrfToken" in text
 
 
 def test_private_demo_proxy_requires_operator_auth_and_csrf() -> None:
-    route = ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "private-demo" / "route.ts"
+    route = (
+        ROOT
+        / "nepsis-web"
+        / "src"
+        / "app"
+        / "api"
+        / "engine"
+        / "private-demo"
+        / "route.ts"
+    )
     assert route.exists()
     text = route.read_text(encoding="utf-8")
 
@@ -191,13 +232,18 @@ def test_private_demo_proxy_requires_operator_auth_and_csrf() -> None:
 
 
 def test_private_demo_client_contract_is_explicit() -> None:
-    client = (ROOT / "nepsis-web" / "src" / "lib" / "engineClient.ts").read_text(encoding="utf-8")
+    client = (ROOT / "nepsis-web" / "src" / "lib" / "engineClient.ts").read_text(
+        encoding="utf-8"
+    )
 
     assert "export type NepsisPrivateDemoPayload" in client
     assert "export type NepsisPrivateDemoRuntimePacket" in client
     assert 'schema_id: "nepsis.private_demo_runtime_packet"' in client
     assert 'schema_id: "nepsis.case_reasoning_compiler"' in client
-    assert "runPrivateDemo(payload: NepsisPrivateDemoPayload): Promise<NepsisPrivateDemoRuntimePacket>" in client
+    assert (
+        "runPrivateDemo(payload: NepsisPrivateDemoPayload): Promise<NepsisPrivateDemoRuntimePacket>"
+        in client
+    )
     assert '"/private-demo"' in client
 
 
@@ -233,7 +279,9 @@ def test_operator_frontend_uses_packet_proxy_routes() -> None:
     client = (root / "lib" / "engineClient.ts").read_text(encoding="utf-8")
     hook = (root / "lib" / "useEngineSession.ts").read_text(encoding="utf-8")
     page = (root / "app" / "engine" / "page.tsx").read_text(encoding="utf-8")
-    operator_assist = (root / "app" / "engine" / "operatorAssist.ts").read_text(encoding="utf-8")
+    operator_assist = (root / "app" / "engine" / "operatorAssist.ts").read_text(
+        encoding="utf-8"
+    )
     assert "/operator-packet/start" in client
     assert "/operator-packet/frame" in client
     assert "/operator/frame" not in client
@@ -252,7 +300,10 @@ def test_operator_packet_state_contract_is_explicit() -> None:
 
     assert "export type EngineOperatorPacketState" in client
     assert 'schema_id: "nepsis.operator_packet_state"' in client
-    assert "getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacketState>" in client
+    assert (
+        "getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacketState>"
+        in client
+    )
     assert "type EngineOperatorPacketState" in hook
     assert "isOperatorPacketState" in hook
     assert "operatorPacketStateToResponse" in hook
@@ -276,8 +327,12 @@ def test_operator_model_route_signs_packet_bound_proposal_receipts() -> None:
     route = (
         ROOT / "nepsis-web" / "src" / "app" / "api" / "operator" / "model" / "route.ts"
     ).read_text(encoding="utf-8")
-    helper = (ROOT / "nepsis-web" / "src" / "lib" / "operatorProposalReceipt.ts").read_text(encoding="utf-8")
-    client = (ROOT / "nepsis-web" / "src" / "lib" / "operatorModelClient.ts").read_text(encoding="utf-8")
+    helper = (
+        ROOT / "nepsis-web" / "src" / "lib" / "operatorProposalReceipt.ts"
+    ).read_text(encoding="utf-8")
+    client = (ROOT / "nepsis-web" / "src" / "lib" / "operatorModelClient.ts").read_text(
+        encoding="utf-8"
+    )
 
     assert "operator_loop_id" in route
     assert "operator_loop_id is required" in route
@@ -303,10 +358,12 @@ def test_guided_operator_completion_does_not_touch_public_mvp() -> None:
 
 
 def test_public_mvp_fallback_discloses_reason() -> None:
-    helper = (ROOT / "nepsis-web" / "src" / "lib" / "mvpFallback.ts").read_text(encoding="utf-8")
-    route = (ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "mvp" / "route.ts").read_text(
+    helper = (ROOT / "nepsis-web" / "src" / "lib" / "mvpFallback.ts").read_text(
         encoding="utf-8"
     )
+    route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "engine" / "mvp" / "route.ts"
+    ).read_text(encoding="utf-8")
 
     assert "fallback_source" in helper
     assert "fallback_reason" in helper
@@ -335,7 +392,9 @@ def test_render_blueprint_deploys_existing_asgi_entrypoint() -> None:
 def test_site_smoke_script_is_stdlib_python_and_has_expected_routes() -> None:
     script = ROOT / "scripts" / "site-smoke.sh"
     text = script.read_text(encoding="utf-8")
-    syntax = subprocess.run(["bash", "-n", str(script)], cwd=ROOT, capture_output=True, text=True)
+    syntax = subprocess.run(
+        ["bash", "-n", str(script)], cwd=ROOT, capture_output=True, text=True
+    )
 
     assert syntax.returncode == 0, syntax.stderr
     assert "urllib.request" in text
@@ -403,7 +462,11 @@ def test_site_smoke_script_checks_hosted_mcp_boundary() -> None:
                         },
                         "mcp": {
                             "discoverableMethods": ["initialize", "tools/list"],
-                            "protectedTools": ["run_mvp", "get_routes", "start_operator_packet"],
+                            "protectedTools": [
+                                "run_mvp",
+                                "get_routes",
+                                "start_operator_packet",
+                            ],
                             "hosted": {
                                 "available": True,
                                 "endpoint": endpoint,
@@ -416,10 +479,14 @@ def test_site_smoke_script_checks_hosted_mcp_boundary() -> None:
                 )
                 return
             if self.path == "/api/auth/session":
-                self._send_json(200, {"authenticated": False, "engineControlAllowed": False})
+                self._send_json(
+                    200, {"authenticated": False, "engineControlAllowed": False}
+                )
                 return
             if self.path == "/api/playground-nepsis":
-                self._send_json(200, {"modelRoutesEnabled": False, "hasServerKey": False})
+                self._send_json(
+                    200, {"modelRoutesEnabled": False, "hasServerKey": False}
+                )
                 return
             if self.path == "/api/engine/health":
                 self._send_json(200, {"ok": True})
@@ -442,7 +509,11 @@ def test_site_smoke_script_checks_hosted_mcp_boundary() -> None:
             if self.path == "/api/engine/mvp":
                 self._send_json(200, {"schema_id": "nepsis.mvp_packet"})
                 return
-            if self.path in {"/api/playground-nepsis", "/api/run-with-nepsis", "/api/operator/model"}:
+            if self.path in {
+                "/api/playground-nepsis",
+                "/api/run-with-nepsis",
+                "/api/operator/model",
+            }:
                 self._send_json(403, {"error": "forbidden"})
                 return
             if self.path == "/mcp":

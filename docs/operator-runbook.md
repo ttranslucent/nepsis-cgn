@@ -2,8 +2,8 @@
 
 ## Deterministic MVP Demo
 
-Use `/mvp` for the v0.3 demo. It calls the canonical packet builder and does
-not require an LLM.
+Use `/mvp` for the public v0.4 deterministic demo. It calls the canonical packet
+builder and does not require an LLM.
 
 1. From the repo root, start the local MVP launcher:
 
@@ -12,7 +12,7 @@ scripts/mvp-local.sh
 ```
 
 2. Open `http://127.0.0.1:3000/mvp`.
-3. Run `Jailing`, then `Clinical`.
+3. Run `JINGALL/JAILING`, `Revised SEA`, and `Wirecard`.
 4. Show RED before BLUE, STILL checkpoints, denominator collapse, ZeroBack,
    state feedback, and the audit trace.
 5. Use `Ctrl-C` in the launcher terminal to stop both the backend and web UI.
@@ -31,17 +31,17 @@ npm run dev
 
 ## Boundaries
 
-- `/mvp` is the frozen deterministic demo path.
+- `/mvp` is the public deterministic v0.4 demo path.
 - `/mvp` is a case-run demo. The public page does not expose a visitor query
   box and should not be described as a chatbot or prompt surface.
 - `/status` is the first stop for deployment health, auth, model-route, and MCP
   readiness.
 - `POST /api/engine/mvp` should prefer the FastAPI backend. If the public web
-  deployment has no backend URL, it serves bundled frozen v0.3 packets as a
+  deployment has no backend URL, it serves bundled public v0.4 packets as a
   public-demo safety net and `/status` still reports the backend gap. Fallback
   packets include `fallback_source` and `fallback_reason`; `backend_unconfigured`
   means the public demo is intentionally using the bundled deterministic packet.
-- The v0.1.7 raw packet keeps hypothesis `likelihood` support-only and puts
+- The v0.2.0 raw packet keeps hypothesis `likelihood` support-only and puts
   RED/threshold standing in `post_constraint_standing` and `action_priority`.
   STILL commitment readiness preserves the compatibility `status` field and
   makes ZeroBack/effective action explicit. Use contradiction `level`/`status`
@@ -61,8 +61,9 @@ npm run dev
   target. It requires `no_phi_acknowledged: true` and returns a
   `nepsis.private_demo_runtime_packet` with a nested operator packet audit. It
   must not be confused with public `POST /v1/mvp`.
-- Clinical demo packets are not medical advice, not diagnosis, and not clinical
-  decision support.
+- The revised SEA public packet is not medical advice, not diagnosis, and not
+  clinical decision support. The Wirecard public packet is not financial,
+  accounting, or legal advice.
 - Browser-stored OpenAI keys are no longer supported. `/settings` only reports
   provider-access posture and clears legacy browser key storage.
 - The local launcher is model-free. MCP harness work should use supported host
@@ -233,7 +234,7 @@ NEPSIS_MODEL_ROUTES_ENABLED=true
 OPENAI_API_KEY=<server-side-openai-key>
 ```
 
-For the frozen public `/mvp` deployment, use
+For the public deterministic `/mvp` deployment, use
 `nepsis-web/.env.public.example` instead and keep model routes and live operator
 mode disabled. Do not use `NEPSIS_API_ALLOWED_ORIGINS=*` in public or operator
 runtime environments.

@@ -6,7 +6,12 @@ import logging
 
 import pytest
 
-from nepsis_cgn.api.operator_packet import lock_frame, lock_report, run_report, start_operator_packet
+from nepsis_cgn.api.operator_packet import (
+    lock_frame,
+    lock_report,
+    run_report,
+    start_operator_packet,
+)
 from nepsis_cgn.mcp.handler import handle_mcp_request
 from nepsis_cgn.provenance import PacketProvenanceStore
 
@@ -57,8 +62,14 @@ def _report_interpretation() -> dict[str, object]:
     }
 
 
-def _v3_field(state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed.") -> dict[str, object]:
-    return {"status": state, "items": items if items is not None else ["captured"], "rationale": rationale}
+def _v3_field(
+    state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed."
+) -> dict[str, object]:
+    return {
+        "status": state,
+        "items": items if items is not None else ["captured"],
+        "rationale": rationale,
+    }
 
 
 def _v3_intake_artifact() -> dict[str, object]:
@@ -67,11 +78,17 @@ def _v3_intake_artifact() -> dict[str, object]:
         "summary": "intake layer artifact.",
         "goal_scope": _v3_field(items=["goal", "scope"]),
         "red_triggers": _v3_field("unknown", [], "Not assessed until red layer."),
-        "blue_opportunity_space": _v3_field("unknown", [], "Not assessed until blue layer."),
+        "blue_opportunity_space": _v3_field(
+            "unknown", [], "Not assessed until blue layer."
+        ),
         "constraints": _v3_field(items=["No hidden memory."]),
-        "manifold_match_mismatch": _v3_field("not_applicable", [], "Not assessed until manifold layer."),
+        "manifold_match_mismatch": _v3_field(
+            "not_applicable", [], "Not assessed until manifold layer."
+        ),
         "still_blockers": _v3_field("unknown", [], "Not assessed until STILL layer."),
-        "unresolved_questions": _v3_field("none_found", [], "No unresolved intake question."),
+        "unresolved_questions": _v3_field(
+            "none_found", [], "No unresolved intake question."
+        ),
         "audit_notes": _v3_field(items=["packet visible"]),
         "proposed_status": _v3_field(items=["ready"]),
         "lock_eligibility": _v3_field(items=["eligible"]),
@@ -154,7 +171,19 @@ def test_tools_list_advertises_auth_requirement_and_run_mvp_aliases() -> None:
         assert tool["_meta"]["nepsis.requiresCapabilityToken"] is True
 
     run_mvp = next(tool for tool in tools if tool["name"] == "run_mvp")
-    assert {"case_id", "case", "input_text", "inputText"} <= set(run_mvp["inputSchema"]["properties"])
+    assert {"case_id", "case", "input_text", "inputText"} <= set(
+        run_mvp["inputSchema"]["properties"]
+    )
+    assert run_mvp["inputSchema"]["properties"]["case_id"]["enum"] == [
+        "jailing",
+        "sea_ivdu",
+        "wirecard",
+    ]
+    assert run_mvp["inputSchema"]["properties"]["case"]["enum"] == [
+        "jailing",
+        "sea_ivdu",
+        "wirecard",
+    ]
     tool_names = {tool["name"] for tool in tools}
     assert {
         "start_v3_orchestration",
@@ -192,7 +221,9 @@ def test_capability_token_logs_metadata_without_raw_token(monkeypatch, caplog) -
     assert '"packet_hash": "' in caplog.text
 
 
-def test_mcp_tool_call_records_hash_only_provenance_without_raw_token(tmp_path, monkeypatch) -> None:
+def test_mcp_tool_call_records_hash_only_provenance_without_raw_token(
+    tmp_path, monkeypatch
+) -> None:
     token = "capability-test-token-for-provenance-check"
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     ledger_path = tmp_path / "packet_provenance.jsonl"
@@ -228,7 +259,10 @@ def test_get_session_state_rejects_non_object_packet_argument() -> None:
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": {"name": "get_session_state", "arguments": {"packet": "not-a-packet"}},
+            "params": {
+                "name": "get_session_state",
+                "arguments": {"packet": "not-a-packet"},
+            },
         },
         require_capability_token=False,
         server_name="nepsis-cgn-local",
@@ -240,7 +274,9 @@ def test_get_session_state_rejects_non_object_packet_argument() -> None:
 
 
 def test_get_session_state_rejects_tampered_operator_packet(monkeypatch) -> None:
-    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret")
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret"
+    )
     packet = start_operator_packet()
     packet["phase"] = "threshold_set"
 
@@ -294,7 +330,10 @@ def test_v3_mcp_tools_execute_packet_in_packet_out() -> None:
             "method": "tools/call",
             "params": {
                 "name": "start_v3_orchestration",
-                "arguments": {"goal": "Build V3 packet kernel.", "scope": "MCP stateless orchestration."},
+                "arguments": {
+                    "goal": "Build V3 packet kernel.",
+                    "scope": "MCP stateless orchestration.",
+                },
             },
         },
         require_capability_token=False,
@@ -364,7 +403,10 @@ def test_v3_mcp_rejects_raw_token_like_draft_metadata() -> None:
             "method": "tools/call",
             "params": {
                 "name": "start_v3_orchestration",
-                "arguments": {"goal": "Build V3 packet kernel.", "scope": "MCP stateless orchestration."},
+                "arguments": {
+                    "goal": "Build V3 packet kernel.",
+                    "scope": "MCP stateless orchestration.",
+                },
             },
         },
         require_capability_token=False,

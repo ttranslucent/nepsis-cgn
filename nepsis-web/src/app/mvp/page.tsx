@@ -18,13 +18,18 @@ import { adaptMvpPacketToProvenance } from "@/lib/provenance/adapter";
 const CASES: Array<{ id: NepsisMvpCaseId; label: string; description: string }> = [
   {
     id: "jailing",
-    label: "Jailing",
-    description: "Constraint preservation, contradiction, retessellation, and audit packet.",
+    label: "JINGALL/JAILING",
+    description: "Toy proof of hard source-constraint preservation.",
   },
   {
-    id: "clinical",
-    label: "Clinical",
-    description: "RED hazard gating before BLUE optimization under uncertainty.",
+    id: "sea_ivdu",
+    label: "Revised SEA",
+    description: "Medical RED preservation from intravenous-use risk.",
+  },
+  {
+    id: "wirecard",
+    label: "Wirecard",
+    description: "Authority suppression for unverifiable cash.",
   },
 ];
 
@@ -73,17 +78,17 @@ export default function MvpDemoPage() {
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-nepsis-muted">
-              NepsisCGN MVP Demo
+              Public MVP v0.4
             </div>
             <h1 className="mt-2 text-2xl font-semibold md:text-4xl">
-              Detect constraint violations before an AI answer commits.
+              Deterministic packet proof
             </h1>
             <p className="mt-3 font-mono text-xs uppercase tracking-[0.12em] text-nepsis-accentSoft md:text-sm">
               RED &rarr; STILL &rarr; BLUE &rarr; STILL &rarr; commitment &rarr; state feedback &rarr; audit
             </p>
             <p className="mt-3 text-sm text-nepsis-muted md:text-base">
-              Run a deterministic case through the MVP scaffold and inspect the structured result. Clinical packets
-              are governance demos only, not medical advice or clinical decision support.
+              Run one of three fixed public cases through the model-free MVP scaffold and inspect the structured
+              packet. The medical and financial cases are governance demos only, not advice.
             </p>
           </div>
 
@@ -92,7 +97,7 @@ export default function MvpDemoPage() {
               <legend className="text-xs font-semibold uppercase tracking-[0.14em] text-nepsis-muted">
                 Demo case
               </legend>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 {CASES.map((item) => {
                   const selected = item.id === caseId;
                   return (
@@ -114,7 +119,7 @@ export default function MvpDemoPage() {
               </div>
             </fieldset>
             <p className="mt-4 text-xs leading-relaxed text-nepsis-muted">
-              Model-free deterministic run; no API key required.
+              Model-free deterministic run; no login or API key required.
             </p>
             <button
               type="button"

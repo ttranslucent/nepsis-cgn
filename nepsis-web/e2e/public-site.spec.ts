@@ -1,5 +1,23 @@
 import { expect, test } from "@playwright/test";
 
+const PUBLIC_MVP_CASES = [
+  {
+    buttonName: /JINGALL\/JAILING/i,
+    caseId: "jailing",
+    expectedText: "Do not accept JAILING.",
+  },
+  {
+    buttonName: /Revised SEA/i,
+    caseId: "sea_ivdu",
+    expectedText: "MRI-level evaluation is required to close RED",
+  },
+  {
+    buttonName: /Wirecard/i,
+    caseId: "wirecard",
+    expectedText: "independently verifiable bank or custodian evidence",
+  },
+] as const;
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
@@ -22,25 +40,28 @@ test("public responses include baseline browser security headers", async ({ requ
 
 test("public MVP can run without login or model key", async ({ page }) => {
   await page.goto("/mvp");
-  await expect(
-    page.getByRole("heading", { name: "Detect constraint violations before an AI answer commits." }),
-  ).toBeVisible();
+  await expect(page.getByText("Public MVP v0.4")).toBeVisible();
+  await expect(page.getByText("Deterministic packet proof")).toBeVisible();
   await expect(
     page.getByText("RED \u2192 STILL \u2192 BLUE \u2192 STILL \u2192 commitment \u2192 state feedback \u2192 audit"),
   ).toBeVisible();
   await expect(page.getByLabel(/Visitor query/i)).toHaveCount(0);
-  await page.getByRole("button", { name: "Run Demo" }).click();
+  await expect(page.getByText("Model-free deterministic run; no login or API key required.")).toBeVisible();
 
-  await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
-  await page.getByRole("button", { name: "Audit", exact: true }).focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByText("nepsis.mvp_packet", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
-  await expect(page.locator("main")).toContainText("action_priority");
-  await expect(
-    page.locator("p").filter({ hasText: "Canonical Jailing/Jingall case" }),
-  ).toBeVisible();
-  await expect(page.locator("p").filter({ hasText: "Do not accept JAILING." })).toBeVisible();
+  for (const publicCase of PUBLIC_MVP_CASES) {
+    await page.getByRole("button", { name: publicCase.buttonName }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Run Demo" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("region", { name: "Provenance topology" })).toBeVisible();
+    await page.getByRole("button", { name: "Audit", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("nepsis.mvp_packet", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Evaluation axes", { exact: true })).toBeVisible();
+    await expect(page.locator("main")).toContainText("action_priority");
+    await expect(page.getByText(publicCase.caseId, { exact: true }).first()).toBeVisible();
+    await expect(page.locator("main")).toContainText(publicCase.expectedText);
+  }
   await expect(page.getByText("Engine backend request failed", { exact: false })).toHaveCount(0);
 });
 
