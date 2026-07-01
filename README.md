@@ -130,17 +130,20 @@ The public site posture is intentionally narrow:
   responses include `fallback_source` and `fallback_reason` so operators can
   distinguish an intentional bundled packet from a proxied backend packet.
 
-Deploy the existing FastAPI backend as the API service. `render.yaml` defines a
-Render web service that installs `.[api]`, starts `nepsiscgn-api-asgi`, binds to
-`0.0.0.0:$PORT`, keeps anonymous backend access disabled, sets
-`NEPSIS_API_TOKEN`, configures CORS origins, and stores engine sessions under
-`/var/data` when sessions are enabled.
+Deploy the existing FastAPI backend as the API service. The current hosted API
+is the Vercel project `nepsis-cgn-api`, exposed at
+`https://nepsis-cgn-api.vercel.app`. It deploys the repo root, uses
+`api/index.py` to create the ASGI app, and relies on `vercel.json` to route
+requests to that function. Keep anonymous backend access disabled, set
+`NEPSIS_API_TOKEN`, configure allowed origins for the web/front-door callers,
+and set the packet seal secrets required by private-demo and operator packet
+routes.
 
 Configure the Vercel web app with:
 
 ```bash
-NEPSIS_API_BASE_URL=https://<render-service>
-NEPSIS_API_TOKEN=<same-token-as-render>
+NEPSIS_API_BASE_URL=https://nepsis-cgn-api.vercel.app
+NEPSIS_API_TOKEN=<same-token-as-vercel-api>
 NEPSIS_AUTH_SECRET=<long-random-secret>
 NEPSIS_AUTH_ALLOWED_EMAILS=<operator-email-list>
 NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true
@@ -189,12 +192,17 @@ the public template. That path requires a reachable backend, `NEPSIS_API_TOKEN`,
 After deployment, run:
 
 ```bash
+NEPSIS_API_BASE_URL=https://nepsis-cgn-api.vercel.app scripts/api-smoke.sh
 NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
 ```
 
-The script uses Python stdlib HTTP calls and checks `/`, `/mvp`, `/api/status`,
-`/api/engine/health`, `POST /api/engine/mvp`, unauthenticated auth session
-state, disabled public model routes, and the playground config endpoint.
+`scripts/api-smoke.sh` checks the live backend boundary: public health/routes,
+protected direct `POST /v1/mvp`, protected `POST /v1/private-demo`, public MCP
+discovery, and capability-token rejection for unauthenticated MCP tool calls.
+`scripts/site-smoke.sh` uses Python stdlib HTTP calls and checks `/`, `/mvp`,
+`/api/status`, `/api/engine/health`, `POST /api/engine/mvp`, unauthenticated
+auth session state, disabled public model routes, and the playground config
+endpoint.
 
 Before committing deployment env files or public-site config changes, run:
 
@@ -220,7 +228,7 @@ nested sealed operator packet audit.
 Example:
 
 ```bash
-curl -sS -X POST https://<private-backend>/v1/private-demo \
+curl -sS -X POST https://nepsis-cgn-api.vercel.app/v1/private-demo \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <backend-token>" \
   -d '{

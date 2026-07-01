@@ -50,6 +50,7 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
 
     assert public["NEXT_PUBLIC_NEPSIS_PUBLIC_SITE"] == "true"
     assert public["NEPSIS_MODEL_ROUTES_ENABLED"] == "false"
+    assert public["NEPSIS_API_BASE_URL"] == "https://nepsis-cgn-api.vercel.app"
     assert public["NEPSIS_ENGINE_ALLOW_ANON"] == "false"
     assert public["NEPSIS_AUTH_ALLOW_CODE_PREVIEW"] == "false"
     assert public.get("NEPSIS_AUTH_ALLOWED_EMAILS", "") == ""
@@ -66,6 +67,7 @@ def test_web_env_examples_separate_public_site_and_operator_mode() -> None:
     assert operator["NEXT_PUBLIC_NEPSIS_OPERATOR_SITE"] == "true"
     assert operator["NEPSIS_LIVE_OPERATOR_ENABLED"] == "true"
     assert operator["NEPSIS_MODEL_ROUTES_ENABLED"] == "true"
+    assert operator["NEPSIS_API_BASE_URL"] == "https://nepsis-cgn-api.vercel.app"
     assert operator["NEPSIS_ENGINE_ALLOW_ANON"] == "false"
     assert operator["NEPSIS_AUTH_ALLOW_CODE_PREVIEW"] == "false"
     assert operator["NEPSIS_AUTH_ALLOWED_EMAILS"]
@@ -91,6 +93,8 @@ def test_web_env_examples_are_linked_from_docs() -> None:
 
     assert public_example in combined
     assert operator_example in combined
+    assert "https://nepsis-cgn-api.vercel.app" in combined
+    assert "scripts/api-smoke.sh" in combined
     assert "Public site setup" in combined
     assert "Private operator deployment" in combined
 
@@ -387,6 +391,32 @@ def test_render_blueprint_deploys_existing_asgi_entrypoint() -> None:
     assert "NEPSIS_API_ALLOWED_ORIGINS" in text
     assert "OPENAI_API_KEY" not in text
     assert "NEPSIS_OPENAI_API_KEY" not in text
+
+
+def test_api_smoke_script_checks_vercel_backend_boundary() -> None:
+    script = ROOT / "scripts" / "api-smoke.sh"
+    text = script.read_text(encoding="utf-8")
+    syntax = subprocess.run(
+        ["bash", "-n", str(script)], cwd=ROOT, capture_output=True, text=True
+    )
+
+    assert syntax.returncode == 0, syntax.stderr
+    assert "urllib.request" in text
+    assert "curl" not in text
+    assert "https://nepsis-cgn-api.vercel.app" in text
+    assert "/v1/health" in text
+    assert "/v1/routes" in text
+    assert "/v1/mvp" in text
+    assert "/v1/private-demo" in text
+    assert "/mcp" in text
+    assert "expected={401}" in text
+    assert "nepsis.private_demo_runtime_packet" in text
+    assert "Private demo runtime is not configured." in text
+    assert "LOCK_FRAME" in text
+    assert "RUN_REPORT" in text
+    assert "LOCK_REPORT" in text
+    assert "SET_THRESHOLD_DECISION" in text
+    assert "-32001" in text
 
 
 def test_site_smoke_script_is_stdlib_python_and_has_expected_routes() -> None:

@@ -159,15 +159,19 @@ require login or model credentials.
 
 Recommended public deployment sequence:
 
-1. Deploy the FastAPI backend from the repo-root `render.yaml`.
-2. Set Vercel `NEPSIS_API_BASE_URL` to the Render service origin.
-3. Set matching `NEPSIS_API_TOKEN` on Render and Vercel.
+1. Deploy the FastAPI backend as the Vercel API project `nepsis-cgn-api` from
+   the repo root. The production alias is
+   `https://nepsis-cgn-api.vercel.app`.
+2. Set web `NEPSIS_API_BASE_URL` to `https://nepsis-cgn-api.vercel.app`.
+3. Set matching `NEPSIS_API_TOKEN` on the API project and the web/front-door
+   deployments.
 4. Set `NEPSIS_AUTH_SECRET` to a long random secret.
 5. Set `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and `NEPSIS_MODEL_ROUTES_ENABLED=false` for public production.
 6. Do not set `OPENAI_API_KEY`, `NEPSIS_OPENAI_API_KEY`, `NEPSIS_ENGINE_ALLOW_ANON`, or `NEPSIS_AUTH_ALLOW_CODE_PREVIEW` for public production.
 7. Set `NEPSIS_AUTH_ALLOWED_EMAILS`, `RESEND_API_KEY`, and `NEPSIS_AUTH_FROM_EMAIL` if operators should receive emailed login codes.
 8. Verify `/mvp`, `/status`, `/login`, and gated `/engine` after the deployment is live.
-9. Run `NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh` from the repo root.
+9. Run `NEPSIS_API_BASE_URL=https://nepsis-cgn-api.vercel.app scripts/api-smoke.sh` from the repo root.
+10. Run `NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh` from the repo root.
 
 ### Private operator deployment
 

@@ -72,20 +72,21 @@ npm run dev
 
 ## Shared Deployment Checklist
 
-- Render backend uses the existing `render.yaml` service:
-  `python -m pip install -e '.[api]'` and `nepsiscgn-api-asgi`.
-- Backend has `NEPSIS_API_HOST=0.0.0.0`, `NEPSIS_API_PORT=$PORT`,
-  `NEPSIS_API_TOKEN`, `NEPSIS_API_ALLOWED_ORIGINS`, and, if sessions stay
-  enabled, persistent `NEPSIS_API_STORE_PATH`.
+- Current hosted backend is the Vercel API project `nepsis-cgn-api` at
+  `https://nepsis-cgn-api.vercel.app`. It deploys the repo root through
+  `api/index.py` and the `vercel.json` rewrite to the FastAPI ASGI app.
+- Backend has `NEPSIS_API_TOKEN`, `NEPSIS_API_ALLOWED_ORIGINS`, and, if
+  sessions stay enabled, a deliberate persistent `NEPSIS_API_STORE_PATH`.
 - Backend sets `NEPSIS_V3_PACKET_SEAL_SECRET` for V3 MCP packets and
   `NEPSIS_OPERATOR_PACKET_SEAL_SECRET` so `/v1/private-demo` can return a
   sealed nested operator packet audit.
 - Backend explicitly sets `NEPSIS_API_ALLOW_ANON=false`.
-- Web has `NEPSIS_API_BASE_URL=https://<render-service>` and matching
+- Web has `NEPSIS_API_BASE_URL=https://nepsis-cgn-api.vercel.app` and matching
   `NEPSIS_API_TOKEN`.
 - The NepsisAI front door must set `NEPSIS_PRIVATE_DEMO_URL` to the external
-  backend `https://<render-service>/v1/private-demo`, not `/v1/mvp`, and must
-  pass its private backend smoke check before outside testers use the page.
+  backend `https://nepsis-cgn-api.vercel.app/v1/private-demo`, not `/v1/mvp`,
+  and must pass its private backend smoke check before outside testers use the
+  page.
 - Web has a long random `NEPSIS_AUTH_SECRET`.
 - Web sets `NEPSIS_AUTH_ALLOWED_EMAILS` to the exact operator email addresses
   permitted to request OTP login.
@@ -115,7 +116,7 @@ confirm the backend has `NEPSIS_API_TOKEN` and
 `NEPSIS_OPERATOR_PACKET_SEAL_SECRET` set first.
 
 ```bash
-curl -sS -X POST https://<private-backend>/v1/private-demo \
+curl -sS -X POST https://nepsis-cgn-api.vercel.app/v1/private-demo \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <backend-token>" \
   -d '{
@@ -219,7 +220,7 @@ NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=false
 NEPSIS_DEPLOYMENT_MODE=operator
 NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true
 NEPSIS_LIVE_OPERATOR_ENABLED=true
-NEPSIS_API_BASE_URL=https://<private-render-service>
+NEPSIS_API_BASE_URL=https://nepsis-cgn-api.vercel.app
 NEPSIS_API_TOKEN=<private-backend-token>
 NEPSIS_V3_PACKET_SEAL_SECRET=<long-random-v3-packet-seal-secret>
 NEPSIS_OPERATOR_PACKET_SEAL_SECRET=<long-random-operator-packet-seal-secret>
@@ -295,9 +296,10 @@ and commit opens the carry-forward frame for the next loop.
 
 ## Public Site Smoke
 
-After Vercel and Render are connected:
+After the Vercel API backend and Vercel web deployment are connected:
 
 ```bash
+NEPSIS_API_BASE_URL=https://nepsis-cgn-api.vercel.app scripts/api-smoke.sh
 NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
 ```
 
@@ -305,7 +307,7 @@ The smoke checks the landing page, `/mvp`, `/api/status`, backend health through
 the web proxy, the deterministic MVP POST, unauthenticated auth session shape,
 disabled model routes, and the playground config endpoint. A failing
 `/api/engine/mvp` usually means `NEPSIS_API_BASE_URL`, `NEPSIS_API_TOKEN`,
-Render service health, or CORS origins are misconfigured.
+Vercel API health, or CORS origins are misconfigured.
 
 ## Key Safety
 
