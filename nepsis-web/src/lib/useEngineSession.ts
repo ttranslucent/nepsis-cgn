@@ -609,6 +609,109 @@ export function useEngineSession() {
     [applyOperatorResult, run, state.operatorPacket],
   );
 
+  const startOperatorV3LayerLoop = useCallback(
+    async (payload: {
+      goal: string;
+      scope: string;
+      initial_context?: string;
+    }): Promise<EngineOperatorResult | undefined> => {
+      const packet = state.operatorPacket;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No operator packet is active." }));
+        return undefined;
+      }
+      const result = await run(() => engineClient.startOperatorV3LayerLoop({ ...payload, packet }));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
+  const setOperatorV3LayerField = useCallback(
+    async (payload: {
+      layer: string;
+      field: string;
+      value: unknown;
+      assist_acceptances?: EngineAssistDisposition[];
+    }): Promise<EngineOperatorResult | undefined> => {
+      const packet = state.operatorPacket;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No operator packet is active." }));
+        return undefined;
+      }
+      const result = await run(() => engineClient.setOperatorV3LayerField({ ...payload, packet }));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
+  const setOperatorV3LayerArtifact = useCallback(
+    async (payload: {
+      layer: string;
+      artifact: Record<string, unknown>;
+    }): Promise<EngineOperatorResult | undefined> => {
+      const packet = state.operatorPacket;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No operator packet is active." }));
+        return undefined;
+      }
+      let currentPacket = packet;
+      let lastResult: EngineOperatorPacketResult | undefined;
+      for (const [field, value] of Object.entries(payload.artifact)) {
+        const result = await run(() =>
+          engineClient.setOperatorV3LayerField({
+            packet: currentPacket,
+            layer: payload.layer,
+            field,
+            value,
+          }),
+        );
+        if (!result) {
+          return undefined;
+        }
+        lastResult = result;
+        const applied = applyOperatorResult(result);
+        if (isPhaseRejection(applied)) {
+          return applied;
+        }
+        if (!isOperatorPacket(result)) {
+          return applied;
+        }
+        currentPacket = result;
+      }
+      return applyOperatorResult(lastResult);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
+  const proposeOperatorV3Layer = useCallback(
+    async (payload: { layer: string }): Promise<EngineOperatorResult | undefined> => {
+      const packet = state.operatorPacket;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No operator packet is active." }));
+        return undefined;
+      }
+      const result = await run(() => engineClient.proposeOperatorV3Layer({ ...payload, packet }));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
+  const lockOperatorV3Layer = useCallback(
+    async (payload: {
+      layer: string;
+      lock_assertion: Record<string, unknown>;
+    }): Promise<EngineOperatorResult | undefined> => {
+      const packet = state.operatorPacket;
+      if (!packet) {
+        setState((prev) => ({ ...prev, error: "No operator packet is active." }));
+        return undefined;
+      }
+      const result = await run(() => engineClient.lockOperatorV3Layer({ ...payload, packet }));
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
   const commitOperatorIteration = useCallback(
     async (payload: {
       carry_forward_frame?: Record<string, unknown>;
@@ -663,6 +766,11 @@ export function useEngineSession() {
     runOperatorReport,
     lockOperatorReport,
     setOperatorThresholdDecision,
+    startOperatorV3LayerLoop,
+    setOperatorV3LayerField,
+    setOperatorV3LayerArtifact,
+    proposeOperatorV3Layer,
+    lockOperatorV3Layer,
     commitOperatorIteration,
     abandonOperatorSession,
   };

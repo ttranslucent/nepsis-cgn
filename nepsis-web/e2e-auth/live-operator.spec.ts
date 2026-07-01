@@ -78,6 +78,86 @@ function packetStub(
   };
 }
 
+function v3Field(
+  state = "present",
+  items: string[] = ["captured"],
+  rationale = "Reviewed.",
+) {
+  return { status: state, items, rationale };
+}
+
+function v3IntakeArtifact() {
+  return {
+    layer: "intake",
+    summary: "intake layer artifact.",
+    goal_scope: v3Field("present", ["goal", "scope"]),
+    red_triggers: v3Field(),
+    blue_opportunity_space: v3Field(),
+    constraints: v3Field(),
+    manifold_match_mismatch: v3Field(),
+    still_blockers: v3Field("none_found", [], "No blocker found at this layer."),
+    unresolved_questions: v3Field("none_found", [], "No unresolved question found at this layer."),
+    audit_notes: v3Field("present", ["packet visible"]),
+    proposed_status: v3Field("present", ["ready"]),
+    lock_eligibility: v3Field("present", ["eligible"]),
+    layer_findings: { risk: [], ruin: [], win: [], recommendations: [] },
+    intake: {
+      goal: "Prototype V3 layer locks.",
+      scope: "Operator packet layer loop.",
+      assumptions: ["Frame is locked."],
+      unresolved_questions: ["None for the prototype slice."],
+    },
+  };
+}
+
+function withV3LayerLoop(
+  packet: ReturnType<typeof packetStub>,
+  currentLayer: string,
+  draftLayers: Record<string, Record<string, unknown>> = {},
+  event = "START_V3_LAYER_LOOP",
+) {
+  return {
+    ...packet,
+    audit_trace: [...packet.audit_trace, { event, arguments: { layer: currentLayer } }],
+    legal_next_tools: ["set_v3_layer_field", "propose_v3_operator_layer", "lock_v3_operator_layer", "run_report"],
+    v3_layer_loop: {
+      schema_id: "nepsis.operator_v3_layer_loop",
+      schema_version: "0.1.0",
+      packet: {
+        schema: "nepsis.v3_orchestration_packet@0.1.0",
+        run_id: "v3-run-1",
+        packet_seq: Object.keys(draftLayers).length,
+        created_at: "2026-06-22T00:00:00.000Z",
+        expires_at: "2026-06-22T06:00:00.000Z",
+        status: "active",
+        goal: "Prototype V3 layer locks.",
+        scope: "Operator packet layer loop.",
+        initial_context: "Use the locked frame.",
+        current_layer: currentLayer,
+        layer_order: ["intake", "red", "manifold", "blue", "still", "synthesis", "audit"],
+        locked_layers: currentLayer === "red" ? { intake: { artifact_hash: "sha256:intake", artifact: v3IntakeArtifact() } } : {},
+        current_proposal:
+          event === "PROPOSE_V3_LAYER_LOCK"
+            ? {
+                layer: "intake",
+                artifact: draftLayers.intake ?? v3IntakeArtifact(),
+                artifact_hash: "sha256:intake",
+                validation: { schema_valid: true, lock_eligible: true, errors: [], warnings: [] },
+              }
+            : null,
+        final_response_packet: null,
+        abandon_reason: "",
+        lineage: [{ event: "start", at: "2026-06-22T00:00:00.000Z", layer: null }],
+      },
+      draft_layers: draftLayers,
+      navigation_shortcuts: {
+        next_layer: "Meta+ArrowRight",
+        previous_layer: "Meta+ArrowLeft",
+      },
+    },
+  };
+}
+
 const CASE_REASONING_COMPILER = {
   schema_id: "nepsis.case_reasoning_compiler",
   schema_version: "0.1.0",
@@ -359,6 +439,126 @@ test("field assist requires explicit acceptance, supports editing, and sends ver
       }),
     ]),
   );
+});
+
+test("operator V3 layer loop advances with shortcuts and visible audit state", async ({ page }) => {
+  await useIsolatedRateLimitBucket(page, "v3-layer-loop");
+  let currentPacket = packetStub("frame_draft", "START");
+  let draftLayers: Record<string, Record<string, unknown>> = {};
+  const seenFields: string[] = [];
+
+  await page.route("**/api/engine/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.route("**/api/engine/sessions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sessions: [] }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/start", async (route) => {
+    currentPacket = packetStub("frame_draft", "START");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/frame", async (route) => {
+    const payload = await route.request().postDataJSON();
+    currentPacket = packetStub("frame_locked", "LOCK_FRAME", payload.frame);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/v3/start", async (route) => {
+    const payload = await route.request().postDataJSON();
+    expect(payload.goal).toBe("Prototype V3 layer locks.");
+    currentPacket = withV3LayerLoop(currentPacket, "intake");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/v3/field", async (route) => {
+    const payload = await route.request().postDataJSON();
+    seenFields.push(payload.field);
+    draftLayers = {
+      ...draftLayers,
+      [payload.layer]: {
+        ...(draftLayers[payload.layer] ?? {}),
+        [payload.field]: payload.value,
+      },
+    };
+    currentPacket = withV3LayerLoop(currentPacket, "intake", draftLayers, "SET_V3_LAYER_FIELD");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/v3/propose", async (route) => {
+    const payload = await route.request().postDataJSON();
+    expect(payload.layer).toBe("intake");
+    currentPacket = withV3LayerLoop(currentPacket, "intake", draftLayers, "PROPOSE_V3_LAYER_LOCK");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/v3/lock", async (route) => {
+    const payload = await route.request().postDataJSON();
+    expect(payload.layer).toBe("intake");
+    expect(payload.lock_assertion.proposal_hash).toBe("sha256:intake");
+    currentPacket = withV3LayerLoop(currentPacket, "red", draftLayers, "LOCK_V3_LAYER");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+
+  await login(page);
+  await page.goto("/operator");
+
+  await page.getByRole("textbox", { name: /Frame question/i }).fill("Decide whether to escalate a safety incident.");
+  await page
+    .getByRole("textbox", { name: /Key uncertainty/i })
+    .fill("Whether the first report reflects a real critical signal.");
+  await page.getByRole("textbox", { name: /Hard constraints/i }).fill("Preserve RED before BLUE sequencing.");
+  await page.getByRole("textbox", { name: /Soft constraints/i }).fill("Keep operator review concise.");
+  await page.getByRole("textbox", { name: /Red channel definition/i }).fill("Missing a catastrophic incident.");
+  await page.getByRole("textbox", { name: /Blue channel goals/i }).fill("Avoid unnecessary escalation after RED is closed.");
+  await page.getByRole("button", { name: /Lock Frame/i }).click();
+
+  await page.getByRole("button", { name: /Start V3 Layer Loop/i }).click();
+  const v3Panel = page.getByRole("region", { name: /V3 operator layer loop/i });
+  await expect(v3Panel).toContainText("Current layer: intake");
+  await expect(v3Panel).toContainText("Meta+ArrowRight");
+  await expect(v3Panel).toContainText("set_v3_layer_field");
+  await expect(v3Panel).toContainText("START_V3_LAYER_LOOP");
+
+  await page.getByRole("textbox", { name: /V3 intake artifact JSON/i }).fill(
+    JSON.stringify(v3IntakeArtifact(), null, 2),
+  );
+  await page.getByRole("button", { name: /Save Draft Layer/i }).click();
+  await expect.poll(() => seenFields).toContain("intake");
+  await expect(v3Panel).toContainText("SET_V3_LAYER_FIELD");
+
+  await page.getByRole("button", { name: /Propose Layer Lock/i }).click();
+  await expect(v3Panel).toContainText("proposal hash");
+  await page.getByRole("button", { name: /Lock Current Layer/i }).click();
+  await expect(v3Panel).toContainText("Current layer: red");
+  await expect(v3Panel).toContainText("LOCK_V3_LAYER");
 });
 
 test("operator report exposes the Case Reasoning Compiler packet summary", async ({ page }) => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
@@ -437,6 +437,82 @@ function readRecordArray(value: unknown): Record<string, unknown>[] {
     return [];
   }
   return value.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)));
+}
+
+function v3LayerField(
+  state = "present",
+  items: string[] = ["captured"],
+  rationale = "Reviewed.",
+): Record<string, unknown> {
+  return { status: state, items, rationale };
+}
+
+function v3LayerArtifactTemplate(layer: string): Record<string, unknown> {
+  const artifact: Record<string, unknown> = {
+    layer,
+    summary: `${layer} layer artifact.`,
+    goal_scope: v3LayerField("present", ["goal", "scope"]),
+    red_triggers: v3LayerField(),
+    blue_opportunity_space: v3LayerField(),
+    constraints: v3LayerField(),
+    manifold_match_mismatch: v3LayerField(),
+    still_blockers: v3LayerField("none_found", [], "No blocker found at this layer."),
+    unresolved_questions: v3LayerField("none_found", [], "No unresolved question found at this layer."),
+    audit_notes: v3LayerField("present", ["packet visible"]),
+    proposed_status: v3LayerField("present", ["ready"]),
+    lock_eligibility: v3LayerField("present", ["eligible"]),
+    layer_findings: { risk: [], ruin: [], win: [], recommendations: [] },
+  };
+  if (layer === "intake") {
+    artifact.intake = {
+      goal: "Prototype V3 layer locks.",
+      scope: "Operator packet layer loop.",
+      assumptions: ["Frame is locked."],
+      unresolved_questions: ["None for the prototype slice."],
+    };
+  } else if (layer === "red") {
+    artifact.red = {
+      triggers: ["RED must precede BLUE"],
+      ruin_paths: ["BLUE optimization masks an unresolved must-not-miss condition"],
+      constraints: ["Do not advance to BLUE before RED is locked."],
+      safety_blockers: ["Unresolved RED artifact"],
+    };
+  } else if (layer === "manifold") {
+    artifact.manifold = {
+      matches: ["stateless operator packet"],
+      mismatches: ["not an ambient server session"],
+      false_analogies: ["hidden shared memory"],
+    };
+  } else if (layer === "blue") {
+    artifact.blue = {
+      wins: ["Faster iteration inside locked RED constraints"],
+      bounded_by_red: ["No BLUE field can precede RED lock"],
+    };
+  } else if (layer === "still") {
+    artifact.still = {
+      blockers: [],
+      go_no_go: "go_with_packet_bound_locks",
+      restraint_conditions: ["Do not commit while a layer has unresolved blockers."],
+    };
+  } else if (layer === "synthesis") {
+    artifact.synthesis = {
+      recommendations: [
+        {
+          text: "Proceed only inside locked layer constraints.",
+          supports_win: ["transparent governance"],
+          mitigates_risk: ["hash-bound locks"],
+          unresolved_ruin: [],
+        },
+      ],
+    };
+  } else if (layer === "audit") {
+    artifact.audit = {
+      lineage_checked: true,
+      unresolved_uncertainty: ["Pure stateless rollback remains fork-permitted until TTL."],
+      risk_ruin_win_consistent: true,
+    };
+  }
+  return artifact;
 }
 
 function firstString(...values: unknown[]): string | null {
@@ -1228,6 +1304,10 @@ export default function EnginePage() {
     runOperatorReport,
     lockOperatorReport,
     setOperatorThresholdDecision,
+    startOperatorV3LayerLoop,
+    setOperatorV3LayerArtifact,
+    proposeOperatorV3Layer,
+    lockOperatorV3Layer,
     commitOperatorIteration,
     abandonOperatorSession,
     lastAudit,
@@ -1286,6 +1366,11 @@ export default function EnginePage() {
   const [activeAssistTarget, setActiveAssistTarget] = useState<OperatorAssistTarget | null>(null);
   const [assistReviews, setAssistReviews] = useState<AssistReview[]>([]);
   const [editingAssistId, setEditingAssistId] = useState<string | null>(null);
+  const [v3ArtifactJson, setV3ArtifactJson] = useState(() =>
+    JSON.stringify(v3LayerArtifactTemplate("intake"), null, 2),
+  );
+  const [v3LockNonce, setV3LockNonce] = useState("operator-intake-nonce");
+  const v3ArtifactLayerRef = useRef<string | null>(null);
 
   const snapshotStorageKey = useMemo(
     () => `${MODEL_SNAPSHOT_STORAGE_PREFIX}:${activeSession?.session_id ?? "workspace"}`,
@@ -1486,6 +1571,31 @@ export default function EnginePage() {
   const userMode = !developerToolsEnabled;
   const showOperatorControls = developerToolsEnabled;
   const panelHeightClass = userMode ? "min-h-[640px]" : "min-h-[760px]";
+  const v3LayerLoop = operatorPacket?.v3_layer_loop;
+  const v3LoopPacket = asRecord(v3LayerLoop?.packet);
+  const v3CurrentLayer = readString(v3LoopPacket?.current_layer) ?? "intake";
+  const v3CurrentProposal = asRecord(v3LoopPacket?.current_proposal);
+  const v3ProposalHash = readString(v3CurrentProposal?.artifact_hash);
+  const v3LockedLayers = asRecord(v3LoopPacket?.locked_layers);
+  const v3LockedLayerNames = v3LockedLayers ? Object.keys(v3LockedLayers) : [];
+  const v3Shortcuts = v3LayerLoop?.navigation_shortcuts ?? {};
+  const v3LegalTools = operatorPacket?.legal_next_tools ?? [];
+  const v3AuditEvents = (operatorPacket?.audit_trace ?? [])
+    .map((entry) => readString(asRecord(entry)?.event))
+    .filter((event): event is string => Boolean(event && event.includes("V3")));
+
+  useEffect(() => {
+    if (!v3LayerLoop) {
+      v3ArtifactLayerRef.current = null;
+      return;
+    }
+    if (v3ArtifactLayerRef.current === v3CurrentLayer) {
+      return;
+    }
+    v3ArtifactLayerRef.current = v3CurrentLayer;
+    setV3ArtifactJson(JSON.stringify(v3LayerArtifactTemplate(v3CurrentLayer), null, 2));
+    setV3LockNonce(`operator-${v3CurrentLayer}-nonce`);
+  }, [v3CurrentLayer, v3LayerLoop]);
   const frameHardConstraints = useMemo(
     () => parseLineList(frameDraft.constraints_hard_text),
     [frameDraft.constraints_hard_text],
@@ -2613,6 +2723,117 @@ export default function EnginePage() {
     });
   }
 
+  async function handleStartV3LayerLoop() {
+    clearAllErrors();
+    if (!frameLocked) {
+      setLocalError("Lock Frame before starting the V3 layer loop.");
+      return;
+    }
+    const result = await startOperatorV3LayerLoop({
+      goal: "Prototype V3 layer locks.",
+      scope: "Operator packet layer loop.",
+      initial_context: "Use the locked operator frame.",
+    });
+    if (!result) {
+      return;
+    }
+    if (isPhaseRejection(result)) {
+      setLocalError(phaseRejectionMessage(result) ?? "V3 layer loop start refused by service phase gate.");
+      return;
+    }
+    setV3ArtifactJson(JSON.stringify(v3LayerArtifactTemplate("intake"), null, 2));
+    setV3LockNonce("operator-intake-nonce");
+    pushFrameMessage("nepsis", "V3 layer loop started. Intake is the active layer.");
+  }
+
+  function parsedV3Artifact(): Record<string, unknown> | null {
+    try {
+      const parsed: unknown = JSON.parse(v3ArtifactJson);
+      if (!asRecord(parsed) || Array.isArray(parsed)) {
+        setLocalError("V3 layer artifact JSON must be an object.");
+        return null;
+      }
+      return parsed as Record<string, unknown>;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid JSON";
+      setLocalError(`V3 layer artifact JSON is invalid: ${message}`);
+      return null;
+    }
+  }
+
+  async function handleSaveV3LayerArtifact() {
+    clearAllErrors();
+    if (!v3LayerLoop) {
+      setLocalError("Start the V3 layer loop before saving a layer artifact.");
+      return;
+    }
+    const artifact = parsedV3Artifact();
+    if (!artifact) {
+      return;
+    }
+    const result = await setOperatorV3LayerArtifact({ layer: v3CurrentLayer, artifact });
+    if (!result) {
+      return;
+    }
+    if (isPhaseRejection(result)) {
+      setLocalError(phaseRejectionMessage(result) ?? "V3 layer artifact save refused by service phase gate.");
+      return;
+    }
+    pushFrameMessage("nepsis", `V3 ${v3CurrentLayer} layer artifact saved into packet audit state.`);
+  }
+
+  async function handleProposeV3Layer() {
+    clearAllErrors();
+    if (!v3LayerLoop) {
+      setLocalError("Start the V3 layer loop before proposing a layer lock.");
+      return;
+    }
+    const result = await proposeOperatorV3Layer({ layer: v3CurrentLayer });
+    if (!result) {
+      return;
+    }
+    if (isPhaseRejection(result)) {
+      setLocalError(phaseRejectionMessage(result) ?? "V3 layer proposal refused by service phase gate.");
+      return;
+    }
+    pushFrameMessage("nepsis", `V3 ${v3CurrentLayer} layer proposed for hash-bound lock.`);
+  }
+
+  async function handleLockV3Layer() {
+    clearAllErrors();
+    if (!v3LayerLoop) {
+      setLocalError("Start the V3 layer loop before locking a layer.");
+      return;
+    }
+    if (!v3ProposalHash) {
+      setLocalError("Propose the current V3 layer before locking it.");
+      return;
+    }
+    const layer = v3CurrentLayer;
+    const result = await lockOperatorV3Layer({
+      layer,
+      lock_assertion: {
+        asserted: true,
+        assertion_text: `I explicitly lock the ${layer} layer.`,
+        proposal_hash: v3ProposalHash,
+        lock_nonce: optionalText(v3LockNonce) ?? `operator-${layer}-nonce`,
+      },
+    });
+    if (!result) {
+      return;
+    }
+    if (isPhaseRejection(result)) {
+      setLocalError(phaseRejectionMessage(result) ?? "V3 layer lock refused by service phase gate.");
+      return;
+    }
+    const nextPacket = asRecord(result.packet);
+    const nextLoop = asRecord(nextPacket?.v3_layer_loop);
+    const nextLayer = readString(asRecord(nextLoop?.packet)?.current_layer) ?? "red";
+    setV3ArtifactJson(JSON.stringify(v3LayerArtifactTemplate(nextLayer), null, 2));
+    setV3LockNonce(`operator-${nextLayer}-nonce`);
+    pushFrameMessage("nepsis", `V3 ${layer} layer locked. Current layer: ${nextLayer}.`);
+  }
+
   async function handleRunReport() {
     clearAllErrors();
     if (reportLocked) {
@@ -3432,6 +3653,112 @@ export default function EnginePage() {
                 ))}
               </div>
             </div>
+
+            {liveOperatorSurface && frameLocked && (
+              <section
+                aria-label="V3 operator layer loop"
+                className="mt-3 space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-amber-100">V3 operator layer loop</h2>
+                    <div className="mt-1 text-nepsis-muted">
+                      Current layer: <span className="font-mono text-nepsis-text">{v3LayerLoop ? v3CurrentLayer : "not started"}</span>
+                    </div>
+                    <div className="mt-1 text-nepsis-muted">
+                      Shortcuts: next {v3Shortcuts.next_layer ?? "Meta+ArrowRight"} · previous{" "}
+                      {v3Shortcuts.previous_layer ?? "Meta+ArrowLeft"}
+                    </div>
+                  </div>
+                  {!v3LayerLoop ? (
+                    <button
+                      onClick={() => void handleStartV3LayerLoop()}
+                      disabled={loading}
+                      className="rounded-full bg-amber-300 px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+                    >
+                      Start V3 Layer Loop
+                    </button>
+                  ) : (
+                    <div className="rounded border border-amber-400/40 bg-black/20 px-2 py-1 font-mono text-[11px] text-amber-100">
+                      proposal hash: {v3ProposalHash ?? "none"}
+                    </div>
+                  )}
+                </div>
+
+                {v3LayerLoop && (
+                  <>
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <div className="rounded border border-nepsis-border bg-black/20 p-2">
+                        <div className="text-nepsis-muted">legal tools</div>
+                        <div className="mt-1 flex flex-wrap gap-1 font-mono text-[11px] text-nepsis-text">
+                          {v3LegalTools.map((tool) => (
+                            <span key={tool} className="rounded border border-nepsis-border px-1.5 py-0.5">
+                              {tool}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded border border-nepsis-border bg-black/20 p-2">
+                        <div className="text-nepsis-muted">locked layers</div>
+                        <div className="mt-1 font-mono text-[11px] text-nepsis-text">
+                          {v3LockedLayerNames.length > 0 ? v3LockedLayerNames.join(", ") : "none"}
+                        </div>
+                      </div>
+                      <div className="rounded border border-nepsis-border bg-black/20 p-2">
+                        <div className="text-nepsis-muted">audit events</div>
+                        <div className="mt-1 font-mono text-[11px] text-nepsis-text">
+                          {v3AuditEvents.length > 0 ? v3AuditEvents.join(" -> ") : "none"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <label className="block text-xs text-nepsis-muted">
+                      V3 {v3CurrentLayer} artifact JSON
+                      <textarea
+                        value={v3ArtifactJson}
+                        onChange={(event) => setV3ArtifactJson(event.target.value)}
+                        rows={10}
+                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 font-mono text-[11px] text-nepsis-text"
+                      />
+                    </label>
+
+                    <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                      <label className="block text-xs text-nepsis-muted">
+                        Lock nonce
+                        <input
+                          value={v3LockNonce}
+                          onChange={(event) => setV3LockNonce(event.target.value)}
+                          className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 font-mono text-xs text-nepsis-text"
+                        />
+                      </label>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <button
+                          onClick={() => void handleSaveV3LayerArtifact()}
+                          disabled={loading}
+                          className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
+                        >
+                          Save Draft Layer
+                        </button>
+                        <button
+                          onClick={() => void handleProposeV3Layer()}
+                          disabled={loading}
+                          className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
+                        >
+                          Propose Layer Lock
+                        </button>
+                        <button
+                          onClick={() => void handleLockV3Layer()}
+                          disabled={loading || !v3ProposalHash}
+                          className="rounded-full bg-amber-300 px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-60"
+                        >
+                          Lock Current Layer
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
           </>
         )}
       </section>

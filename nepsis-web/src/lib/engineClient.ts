@@ -253,6 +253,7 @@ export type EngineOperatorPacket = {
   previous_trace: Array<Record<string, unknown>>;
   policy?: Record<string, unknown>;
   integrity?: Record<string, unknown>;
+  v3_layer_loop?: EngineOperatorV3LayerLoop;
 };
 
 export type NepsisCaseReasoningCompilerPacket = Record<string, unknown> & {
@@ -303,9 +304,26 @@ export type EngineOperatorPacketState = {
   audit_trace: Array<Record<string, unknown>>;
   latest_audit: EngineStageAuditResponse | Record<string, unknown>;
   packet_hash: string | null;
+  v3_layer_loop?: EngineOperatorV3LayerLoop;
 };
 
 export type EngineOperatorPacketResult = EngineOperatorPacket | EnginePhaseRejection;
+
+export type EngineOperatorV3LayerLoop = {
+  schema_id: "nepsis.operator_v3_layer_loop";
+  schema_version: string;
+  packet: Record<string, unknown> & {
+    current_layer?: string | null;
+    current_proposal?: Record<string, unknown> | null;
+    locked_layers?: Record<string, unknown>;
+    layer_order?: string[];
+  };
+  draft_layers?: Record<string, Record<string, unknown>>;
+  navigation_shortcuts?: {
+    next_layer?: string;
+    previous_layer?: string;
+  };
+};
 
 export type EngineOperatorFramePayload = {
   family?: EngineFamily;
@@ -850,6 +868,52 @@ export const engineClient = {
   }): Promise<EngineOperatorPacketResult> {
     return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
       "/operator-packet/threshold",
+      jsonRequest("POST", payload),
+    );
+  },
+
+  startOperatorV3LayerLoop(payload: {
+    packet: EngineOperatorPacket;
+    goal: string;
+    scope: string;
+    initial_context?: string;
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/v3/start",
+      jsonRequest("POST", payload),
+    );
+  },
+
+  setOperatorV3LayerField(payload: {
+    packet: EngineOperatorPacket;
+    layer: string;
+    field: string;
+    value: unknown;
+    assist_acceptances?: EngineAssistDisposition[];
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/v3/field",
+      jsonRequest("POST", payload),
+    );
+  },
+
+  proposeOperatorV3Layer(payload: {
+    packet: EngineOperatorPacket;
+    layer: string;
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/v3/propose",
+      jsonRequest("POST", payload),
+    );
+  },
+
+  lockOperatorV3Layer(payload: {
+    packet: EngineOperatorPacket;
+    layer: string;
+    lock_assertion: Record<string, unknown>;
+  }): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/v3/lock",
       jsonRequest("POST", payload),
     );
   },

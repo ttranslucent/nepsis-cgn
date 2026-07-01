@@ -25,6 +25,44 @@ def _operator_frame() -> dict[str, object]:
     }
 
 
+def _v3_field(
+    state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed."
+) -> dict[str, object]:
+    return {
+        "status": state,
+        "items": items if items is not None else ["captured"],
+        "rationale": rationale,
+    }
+
+
+def _v3_intake_artifact() -> dict[str, object]:
+    return {
+        "layer": "intake",
+        "summary": "intake layer artifact.",
+        "goal_scope": _v3_field(items=["goal", "scope"]),
+        "red_triggers": _v3_field(),
+        "blue_opportunity_space": _v3_field(),
+        "constraints": _v3_field(),
+        "manifold_match_mismatch": _v3_field(),
+        "still_blockers": _v3_field(
+            "none_found", [], "No blocker found at this layer."
+        ),
+        "unresolved_questions": _v3_field(
+            "none_found", [], "No unresolved question found at this layer."
+        ),
+        "audit_notes": _v3_field(items=["packet visible"]),
+        "proposed_status": _v3_field(items=["ready"]),
+        "lock_eligibility": _v3_field(items=["eligible"]),
+        "layer_findings": {"risk": [], "ruin": [], "win": [], "recommendations": []},
+        "intake": {
+            "goal": "Prototype V3 layer locks.",
+            "scope": "Operator packet layer loop.",
+            "assumptions": ["Frame is locked."],
+            "unresolved_questions": ["None for the prototype slice."],
+        },
+    }
+
+
 def test_asgi_mvp_requires_token_in_production_mode(monkeypatch) -> None:
     monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
     monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
@@ -300,6 +338,111 @@ def test_asgi_operator_packet_phase_rejection_maps_to_409(monkeypatch) -> None:
         "lock_frame",
         "abandon_packet",
     ]
+
+
+def test_asgi_operator_packet_v3_layer_loop_routes_expose_audit_and_shortcuts(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("NEPSIS_API_ALLOW_ANON", raising=False)
+    monkeypatch.setenv("NEPSIS_API_TOKEN", "test-token")
+    monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", "unit-test-v3-layer-secret")
+    headers = {"Authorization": "Bearer test-token"}
+
+    client = TestClient(asgi.create_app())
+    started = client.post("/v1/operator-packet/start", headers=headers, json={})
+    locked = client.post(
+        "/v1/operator-packet/frame",
+        headers=headers,
+        json={"packet": started.json(), "family": "safety", "frame": _operator_frame()},
+    )
+    looped = client.post(
+        "/v1/operator-packet/v3/start",
+        headers=headers,
+        json={
+            "packet": locked.json(),
+            "goal": "Prototype V3 layer locks.",
+            "scope": "Operator packet layer loop.",
+            "initial_context": "Use the locked frame.",
+        },
+    )
+    blue_too_early = client.post(
+        "/v1/operator-packet/v3/field",
+        headers=headers,
+        json={
+            "packet": looped.json(),
+            "layer": "blue",
+            "field": "blue",
+            "value": {"wins": ["Too early"]},
+        },
+    )
+    intake_packet = looped.json()
+    intake_field = None
+    for field, value in _v3_intake_artifact().items():
+        intake_field = client.post(
+            "/v1/operator-packet/v3/field",
+            headers=headers,
+            json={
+                "packet": intake_packet,
+                "layer": "intake",
+                "field": field,
+                "value": value,
+            },
+        )
+        assert intake_field.status_code == 200
+        intake_packet = intake_field.json()
+    assert intake_field is not None
+    proposed = client.post(
+        "/v1/operator-packet/v3/propose",
+        headers=headers,
+        json={"packet": intake_field.json(), "layer": "intake"},
+    )
+    proposal = proposed.json()["v3_layer_loop"]["packet"]["current_proposal"]
+    advanced = client.post(
+        "/v1/operator-packet/v3/lock",
+        headers=headers,
+        json={
+            "packet": proposed.json(),
+            "layer": "intake",
+            "lock_assertion": {
+                "asserted": True,
+                "assertion_text": "I explicitly lock the intake layer.",
+                "proposal_hash": proposal["artifact_hash"],
+                "lock_nonce": "operator-intake-nonce",
+            },
+        },
+    )
+    inspected = client.post(
+        "/v1/operator-packet/state",
+        headers=headers,
+        json={"packet": advanced.json()},
+    )
+
+    assert started.status_code == 200
+    assert locked.status_code == 200
+    assert looped.status_code == 200
+    assert blue_too_early.status_code == 409
+    assert intake_field.status_code == 200
+    assert proposed.status_code == 200
+    assert advanced.status_code == 200
+    assert inspected.status_code == 200
+    assert blue_too_early.json()["failed_precondition"] == "v3_layer_order_required"
+    assert blue_too_early.json()["current_layer"] == "intake"
+    packet = advanced.json()
+    assert packet["v3_layer_loop"]["packet"]["current_layer"] == "red"
+    assert packet["v3_layer_loop"]["navigation_shortcuts"] == {
+        "next_layer": "Meta+ArrowRight",
+        "previous_layer": "Meta+ArrowLeft",
+    }
+    assert {
+        "set_v3_layer_field",
+        "propose_v3_operator_layer",
+        "lock_v3_operator_layer",
+    } <= set(inspected.json()["legal_next_tools"])
+    events = [entry["event"] for entry in packet["audit_trace"]]
+    assert events[:2] == ["LOCK_FRAME", "START_V3_LAYER_LOOP"]
+    assert events.count("SET_V3_LAYER_FIELD") == len(_v3_intake_artifact())
+    assert events[-2:] == ["PROPOSE_V3_LAYER_LOCK", "LOCK_V3_LAYER"]
+    assert inspected.json()["v3_layer_loop"]["packet"]["current_layer"] == "red"
 
 
 def test_asgi_operator_phase_rejection_maps_to_409(monkeypatch) -> None:

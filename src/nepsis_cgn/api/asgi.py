@@ -19,8 +19,12 @@ from .operator_packet import (
     inspect_operator_packet,
     lock_frame as lock_operator_packet_frame,
     lock_report as lock_operator_packet_report,
+    lock_v3_operator_layer,
+    propose_v3_operator_layer,
     run_report as run_operator_packet_report,
     set_threshold_decision as set_operator_packet_threshold_decision,
+    set_v3_layer_field,
+    start_v3_layer_loop,
     start_operator_packet,
 )
 from .service import EngineApiService, Family
@@ -371,6 +375,103 @@ def create_app():
                         decision=decision,
                         hold_reason=hold_reason,
                         assist_acceptances=body.get("assist_acceptances"),
+                    ),
+                    request,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/v3/start")
+    async def start_operator_packet_v3_layer_loop_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            goal = body.get("goal")
+            scope = body.get("scope")
+            initial_context = body.get("initial_context", body.get("initialContext"))
+            if not isinstance(goal, str):
+                raise ValueError("v3 layer loop payload requires string field 'goal'")
+            if not isinstance(scope, str):
+                raise ValueError("v3 layer loop payload requires string field 'scope'")
+            if initial_context is not None and not isinstance(initial_context, str):
+                raise ValueError("initial_context must be a string when provided")
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    start_v3_layer_loop(
+                        packet=_required_operator_packet(body),
+                        goal=goal,
+                        scope=scope,
+                        initial_context=initial_context,
+                    ),
+                    request,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/v3/field")
+    async def set_operator_packet_v3_layer_field_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            layer = body.get("layer")
+            field = body.get("field")
+            if not isinstance(layer, str):
+                raise ValueError("v3 layer field payload requires string field 'layer'")
+            if not isinstance(field, str):
+                raise ValueError("v3 layer field payload requires string field 'field'")
+            if "value" not in body:
+                raise ValueError("v3 layer field payload requires field 'value'")
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    set_v3_layer_field(
+                        packet=_required_operator_packet(body),
+                        layer=layer,
+                        field=field,
+                        value=body.get("value"),
+                        assist_acceptances=body.get("assist_acceptances"),
+                    ),
+                    request,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/v3/propose")
+    async def propose_operator_packet_v3_layer_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            layer = body.get("layer")
+            if not isinstance(layer, str):
+                raise ValueError("v3 layer proposal payload requires string field 'layer'")
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    propose_v3_operator_layer(
+                        packet=_required_operator_packet(body), layer=layer
+                    ),
+                    request,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/v3/lock")
+    async def lock_operator_packet_v3_layer_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            layer = body.get("layer")
+            lock_assertion = body.get("lock_assertion", body.get("lockAssertion"))
+            if not isinstance(layer, str):
+                raise ValueError("v3 layer lock payload requires string field 'layer'")
+            if not isinstance(lock_assertion, dict):
+                raise ValueError(
+                    "v3 layer lock payload requires object field 'lock_assertion'"
+                )
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    lock_v3_operator_layer(
+                        packet=_required_operator_packet(body),
+                        layer=layer,
+                        lock_assertion=lock_assertion,
                     ),
                     request,
                 )
@@ -1125,6 +1226,26 @@ def route_manifest() -> list[dict[str, str]]:
             "method": "POST",
             "path": "/v1/operator-packet/threshold",
             "description": "Set stateless operator packet threshold decision",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/v3/start",
+            "description": "Start stateless operator packet V3 layer loop",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/v3/field",
+            "description": "Set a stateless V3 operator layer field",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/v3/propose",
+            "description": "Propose a stateless V3 operator layer lock",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/v3/lock",
+            "description": "Lock a stateless V3 operator layer",
         },
         {
             "method": "POST",

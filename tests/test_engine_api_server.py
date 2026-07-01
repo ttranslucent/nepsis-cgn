@@ -55,6 +55,60 @@ def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _operator_frame() -> dict[str, object]:
+    return {
+        "text": "Decide whether to escalate response.",
+        "objective_type": "decide",
+        "domain": "safety",
+        "time_horizon": "short",
+        "rationale_for_change": (
+            "Red channel: avoid missing a catastrophic incident | "
+            "Blue channel: protect users while minimizing disruption | "
+            "Uncertainty: signal quality from the first report"
+        ),
+        "constraints_hard": ["No policy breach"],
+        "constraints_soft": ["Minimize disruption"],
+    }
+
+
+def _v3_field(
+    state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed."
+) -> dict[str, object]:
+    return {
+        "status": state,
+        "items": items if items is not None else ["captured"],
+        "rationale": rationale,
+    }
+
+
+def _v3_intake_artifact() -> dict[str, object]:
+    return {
+        "layer": "intake",
+        "summary": "intake layer artifact.",
+        "goal_scope": _v3_field(items=["goal", "scope"]),
+        "red_triggers": _v3_field(),
+        "blue_opportunity_space": _v3_field(),
+        "constraints": _v3_field(),
+        "manifold_match_mismatch": _v3_field(),
+        "still_blockers": _v3_field(
+            "none_found", [], "No blocker found at this layer."
+        ),
+        "unresolved_questions": _v3_field(
+            "none_found", [], "No unresolved question found at this layer."
+        ),
+        "audit_notes": _v3_field(items=["packet visible"]),
+        "proposed_status": _v3_field(items=["ready"]),
+        "lock_eligibility": _v3_field(items=["eligible"]),
+        "layer_findings": {"risk": [], "ruin": [], "win": [], "recommendations": []},
+        "intake": {
+            "goal": "Prototype V3 layer locks.",
+            "scope": "Operator packet layer loop.",
+            "assumptions": ["Frame is locked."],
+            "unresolved_questions": ["None for the prototype slice."],
+        },
+    }
+
+
 _PROPOSAL_SECRET = "unit-test-proposal-receipt-secret"
 
 
@@ -118,6 +172,10 @@ def test_route_manifest_contains_routes_endpoint() -> None:
     assert any(r["path"] == "/v1/operator-packet/start" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/report" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/commit" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator-packet/v3/start" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator-packet/v3/field" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator-packet/v3/propose" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator-packet/v3/lock" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator/session" and r["method"] == "GET" for r in routes)
     assert any(r["path"] == "/v1/operator/report" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/sessions/{session_id}/step" and r["method"] == "POST" for r in routes)
@@ -668,6 +726,100 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
     assert committed["audit_trace"] == []
     assert committed["previous_trace"][-1]["event"] == "COMMIT_ITERATION"
     assert committed["last_commit_packet"]["schema_id"] == "nepsis.operator_audit_packet"
+
+
+def test_http_operator_packet_v3_layer_loop_is_stateless_and_inspectable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", "unit-test-v3-layer-secret")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, packet = _post_json(
+            port,
+            "/v1/operator-packet/frame",
+            {"packet": packet, "family": "safety", "frame": _operator_frame()},
+        )
+        assert status == 200
+        status, packet = _post_json(
+            port,
+            "/v1/operator-packet/v3/start",
+            {
+                "packet": packet,
+                "goal": "Prototype V3 layer locks.",
+                "scope": "Operator packet layer loop.",
+                "initial_context": "Use the locked frame.",
+            },
+        )
+        assert status == 200
+        status, rejection = _post_json(
+            port,
+            "/v1/operator-packet/v3/field",
+            {
+                "packet": packet,
+                "layer": "blue",
+                "field": "blue",
+                "value": {"wins": ["Too early"]},
+            },
+        )
+        assert status == 409
+        assert rejection["failed_precondition"] == "v3_layer_order_required"
+        assert rejection["current_layer"] == "intake"
+
+        restored = json.loads(json.dumps(packet))
+        packet = restored
+        for field, value in _v3_intake_artifact().items():
+            status, packet = _post_json(
+                port,
+                "/v1/operator-packet/v3/field",
+                {
+                    "packet": packet,
+                    "layer": "intake",
+                    "field": field,
+                    "value": value,
+                },
+            )
+            assert status == 200
+        status, packet = _post_json(
+            port,
+            "/v1/operator-packet/v3/propose",
+            {"packet": packet, "layer": "intake"},
+        )
+        assert status == 200
+        proposal = packet["v3_layer_loop"]["packet"]["current_proposal"]
+        status, packet = _post_json(
+            port,
+            "/v1/operator-packet/v3/lock",
+            {
+                "packet": packet,
+                "layer": "intake",
+                "lock_assertion": {
+                    "asserted": True,
+                    "assertion_text": "I explicitly lock the intake layer.",
+                    "proposal_hash": proposal["artifact_hash"],
+                    "lock_nonce": "operator-intake-nonce",
+                },
+            },
+        )
+        assert status == 200
+        status, inspected = _post_json(
+            port, "/v1/operator-packet/state", {"packet": packet}
+        )
+        assert status == 200
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert packet["v3_layer_loop"]["packet"]["current_layer"] == "red"
+    assert packet["v3_layer_loop"]["navigation_shortcuts"]["next_layer"] == "Meta+ArrowRight"
+    assert "set_v3_layer_field" in inspected["legal_next_tools"]
+    events = [entry["event"] for entry in packet["audit_trace"]]
+    assert events[:2] == ["LOCK_FRAME", "START_V3_LAYER_LOOP"]
+    assert events.count("SET_V3_LAYER_FIELD") == len(_v3_intake_artifact())
+    assert events[-2:] == ["PROPOSE_V3_LAYER_LOCK", "LOCK_V3_LAYER"]
 
 
 def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) -> None:
