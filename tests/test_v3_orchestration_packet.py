@@ -32,6 +32,16 @@ def _configured_v3_packet_seal_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", TEST_V3_SEAL_SECRET)
 
 
+def _browser_json_roundtrip(value: object) -> object:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_browser_json_roundtrip(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _browser_json_roundtrip(item) for key, item in value.items()}
+    return value
+
+
 def _field(state: str = "present", items: list[str] | None = None, rationale: str = "Reviewed.") -> dict[str, object]:
     return {"status": state, "items": items if items is not None else ["captured"], "rationale": rationale}
 
@@ -255,6 +265,26 @@ def test_tampered_packet_rejected_by_hmac() -> None:
 
     with pytest.raises(ValueError, match="integrity seal verification failed"):
         inspect_v3_orchestration(packet, now=NOW)
+
+
+def test_v3_packet_seal_survives_browser_integral_float_roundtrip() -> None:
+    packet = start_v3_orchestration(goal="Goal", scope="Scope", now=NOW)
+    artifact = _artifact_for("intake")
+    intake = artifact["intake"]
+    assert isinstance(intake, dict)
+    intake["priority"] = 1.0
+    proposed = propose_v3_layer(packet, layer="intake", artifact=artifact, now=NOW)
+    browser_packet = _browser_json_roundtrip(proposed)
+
+    locked = lock_v3_layer(
+        browser_packet,  # type: ignore[arg-type]
+        layer="intake",
+        lock_assertion=_lock_assertion(proposed),
+        now=NOW,
+    )
+
+    assert locked["current_layer"] == "red"
+    assert "intake" in locked["locked_layers"]
 
 
 def test_expired_packet_rejected_but_older_valid_packet_can_fork_before_expiry() -> None:
