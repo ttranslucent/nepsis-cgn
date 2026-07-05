@@ -325,6 +325,26 @@ export type EngineOperatorV3LayerLoop = {
   };
 };
 
+export type EngineOperatorV3Capability = {
+  schema_id: "nepsis.operator_v3_backend_capability";
+  schema_version: string;
+  available: boolean;
+  source: "backend_route_manifest";
+  required_routes: string[];
+  present_routes: string[];
+  missing_routes: string[];
+  unreachable_routes?: string[];
+  route_probes?: Array<{
+    path: string;
+    status: number | null;
+    reachable: boolean;
+    detail?: string;
+  }>;
+  checked_at: string;
+  route_manifest_status?: number | null;
+  detail?: string;
+};
+
 export type EngineOperatorFramePayload = {
   family?: EngineFamily;
   frame: EngineCreateSessionPayload["frame"];
@@ -832,6 +852,12 @@ export const engineClient = {
 
   getOperatorSessionState(payload: { packet?: EngineOperatorPacket } = {}): Promise<EngineOperatorPacketState> {
     return requestEngine<EngineOperatorPacketState>("/operator-packet/state", jsonRequest("POST", payload));
+  },
+
+  getOperatorV3Capability(): Promise<EngineOperatorV3Capability> {
+    return requestEngine<EngineOperatorV3Capability>("/operator-packet/v3/capability", {
+      method: "GET",
+    });
   },
 
   lockOperatorFrame(payload: EngineOperatorFramePayload & {

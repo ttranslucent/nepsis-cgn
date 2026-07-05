@@ -9,6 +9,7 @@ import {
   type EngineDeleteSessionResponse,
   type EngineFrame,
   type EngineOperatorFramePayload,
+  type EngineOperatorV3Capability,
   type EngineOperatorPacket,
   type EngineOperatorPacketState,
   type EngineOperatorPacketResult,
@@ -40,6 +41,7 @@ type EngineState = {
   packets: Record<string, unknown>[];
   operatorPacket: EngineOperatorPacket | null;
   operatorPacketState: EngineOperatorPacketState | null;
+  operatorV3Capability: EngineOperatorV3Capability | null;
   provenance: PacketProvenanceResponse | null;
   auditExport: SessionAuditExport | null;
   lastStep: EngineStepResponse | null;
@@ -164,6 +166,7 @@ export function useEngineSession() {
     packets: [],
     operatorPacket: null,
     operatorPacketState: null,
+    operatorV3Capability: null,
     provenance: null,
     auditExport: null,
     lastStep: null,
@@ -301,6 +304,7 @@ export function useEngineSession() {
         packets: [],
         operatorPacket: null,
         operatorPacketState: null,
+        operatorV3Capability: null,
         provenance: null,
         auditExport: null,
         lastStep: null,
@@ -331,6 +335,7 @@ export function useEngineSession() {
         packets: loaded.packetResponse.packets,
         operatorPacket: null,
         operatorPacketState: null,
+        operatorV3Capability: prev.operatorV3Capability,
         provenance: loaded.provenance,
         auditExport: null,
         lastAudit: null,
@@ -500,6 +505,7 @@ export function useEngineSession() {
           packets: activeSession ? prev.packets : [],
           operatorPacket: activeSession ? prev.operatorPacket : null,
           operatorPacketState: activeSession ? prev.operatorPacketState : null,
+          operatorV3Capability: prev.operatorV3Capability,
           provenance: activeSession ? prev.provenance : null,
           auditExport: activeSession ? prev.auditExport : null,
           lastStep: activeSession ? prev.lastStep : null,
@@ -549,6 +555,29 @@ export function useEngineSession() {
     const applied = applyOperatorResult(result);
     return isPhaseRejection(applied) ? undefined : applied;
   }, [applyOperatorPacketState, applyOperatorResult, run, state.operatorPacket]);
+
+  const refreshOperatorV3Capability = useCallback(async (): Promise<EngineOperatorV3Capability> => {
+    try {
+      const capability = await engineClient.getOperatorV3Capability();
+      setState((prev) => ({ ...prev, operatorV3Capability: capability }));
+      return capability;
+    } catch (error) {
+      const capability: EngineOperatorV3Capability = {
+        schema_id: "nepsis.operator_v3_backend_capability",
+        schema_version: "1.0.0",
+        available: false,
+        source: "backend_route_manifest",
+        required_routes: [],
+        present_routes: [],
+        missing_routes: [],
+        checked_at: new Date().toISOString(),
+        route_manifest_status: error instanceof EngineClientError ? error.status : null,
+        detail: error instanceof Error ? error.message : "Operator V3 backend capability check failed.",
+      };
+      setState((prev) => ({ ...prev, operatorV3Capability: capability }));
+      return capability;
+    }
+  }, []);
 
   const lockOperatorFrame = useCallback(
     async (
@@ -762,6 +791,7 @@ export function useEngineSession() {
     stageAudit,
     updateWorkspaceState,
     getOperatorSessionState,
+    refreshOperatorV3Capability,
     lockOperatorFrame,
     runOperatorReport,
     lockOperatorReport,

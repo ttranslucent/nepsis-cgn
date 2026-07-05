@@ -478,6 +478,28 @@ test("operator V3 layer loop advances with shortcuts and visible audit state", a
       body: JSON.stringify(currentPacket),
     });
   });
+  await page.route("**/api/engine/operator-packet/v3/capability", async (route) => {
+    const requiredRoutes = [
+      "/v1/operator-packet/v3/start",
+      "/v1/operator-packet/v3/field",
+      "/v1/operator-packet/v3/propose",
+      "/v1/operator-packet/v3/lock",
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_id: "nepsis.operator_v3_backend_capability",
+        schema_version: "1.0.0",
+        available: true,
+        source: "backend_route_manifest",
+        required_routes: requiredRoutes,
+        present_routes: requiredRoutes,
+        missing_routes: [],
+        checked_at: "2026-07-04T00:00:00.000Z",
+      }),
+    });
+  });
   await page.route("**/api/engine/operator-packet/v3/start", async (route) => {
     const payload = await route.request().postDataJSON();
     expect(payload.goal).toBe("Prototype V3 layer locks.");
@@ -559,6 +581,101 @@ test("operator V3 layer loop advances with shortcuts and visible audit state", a
   await page.getByRole("button", { name: /Lock Current Layer/i }).click();
   await expect(v3Panel).toContainText("Current layer: red");
   await expect(v3Panel).toContainText("LOCK_V3_LAYER");
+});
+
+test("operator does not advertise V3 controls when backend V3 routes are unavailable", async ({
+  page,
+}) => {
+  await useIsolatedRateLimitBucket(page, "v3-unavailable");
+  let currentPacket = packetStub("frame_draft", "START");
+  let v3ActionCalls = 0;
+
+  await page.route("**/api/engine/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.route("**/api/engine/sessions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sessions: [] }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/v3/capability", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_id: "nepsis.operator_v3_backend_capability",
+        schema_version: "1.0.0",
+        available: false,
+        source: "backend_route_manifest",
+        required_routes: [
+          "/v1/operator-packet/v3/start",
+          "/v1/operator-packet/v3/field",
+          "/v1/operator-packet/v3/propose",
+          "/v1/operator-packet/v3/lock",
+        ],
+        present_routes: [],
+        missing_routes: [
+          "/v1/operator-packet/v3/start",
+          "/v1/operator-packet/v3/field",
+          "/v1/operator-packet/v3/propose",
+          "/v1/operator-packet/v3/lock",
+        ],
+        checked_at: "2026-07-04T00:00:00.000Z",
+      }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/start", async (route) => {
+    currentPacket = packetStub("frame_draft", "START");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/frame", async (route) => {
+    const payload = await route.request().postDataJSON();
+    currentPacket = packetStub("frame_locked", "LOCK_FRAME", payload.frame);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route(/\/api\/engine\/operator-packet\/v3\/(start|field|propose|lock)$/, async (route) => {
+    v3ActionCalls += 1;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "V3 action route should not be called" }),
+    });
+  });
+
+  await login(page);
+  await page.goto("/operator");
+
+  await page.getByRole("textbox", { name: /Frame question/i }).fill("Decide whether to escalate a safety incident.");
+  await page
+    .getByRole("textbox", { name: /Key uncertainty/i })
+    .fill("Whether the first report reflects a real critical signal.");
+  await page.getByRole("textbox", { name: /Hard constraints/i }).fill("Preserve RED before BLUE sequencing.");
+  await page.getByRole("textbox", { name: /Soft constraints/i }).fill("Keep operator review concise.");
+  await page.getByRole("textbox", { name: /Red channel definition/i }).fill("Missing a catastrophic incident.");
+  await page.getByRole("textbox", { name: /Blue channel goals/i }).fill("Avoid unnecessary escalation after RED is closed.");
+  await page.getByRole("button", { name: /Lock Frame/i }).click();
+
+  const v3Panel = page.getByRole("region", { name: /V3 operator layer loop/i });
+  await expect(v3Panel).toContainText("unavailable");
+  await expect(page.getByRole("button", { name: /Start V3 Layer Loop/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Save Draft Layer/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Propose Layer Lock/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Lock Current Layer/i })).toHaveCount(0);
+  expect(v3ActionCalls).toBe(0);
 });
 
 test("operator report exposes the Case Reasoning Compiler packet summary", async ({ page }) => {
