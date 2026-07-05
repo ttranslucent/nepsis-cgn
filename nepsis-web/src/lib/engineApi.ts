@@ -101,14 +101,14 @@ export function engineErrorResponse(error: unknown): Response {
 
 export async function proxyJsonResponse(res: Response): Promise<Response> {
   const contentType = res.headers.get("content-type") ?? "";
+  const text = await res.text();
   if (contentType.includes("application/json")) {
-    const data = await res.json();
-    return new Response(JSON.stringify(data), {
+    return new Response(text, {
       status: res.status,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": contentType },
     });
   }
-  const text = await res.text();
+
   return new Response(
     JSON.stringify({
       error: "Upstream did not return JSON",

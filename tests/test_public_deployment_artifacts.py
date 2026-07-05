@@ -376,6 +376,17 @@ def test_public_mvp_fallback_discloses_reason() -> None:
     assert "public_fallback_after_proxy_error" in route
 
 
+def test_engine_proxy_preserves_upstream_json_text_for_sealed_packets() -> None:
+    helper = (ROOT / "nepsis-web" / "src" / "lib" / "engineApi.ts").read_text(
+        encoding="utf-8"
+    )
+    proxy = helper[helper.index("export async function proxyJsonResponse") :]
+
+    assert "const text = await res.text();" in proxy
+    assert "return new Response(text" in proxy
+    assert "await res.json()" not in proxy
+
+
 def test_render_blueprint_deploys_existing_asgi_entrypoint() -> None:
     text = (ROOT / "render.yaml").read_text(encoding="utf-8")
 
