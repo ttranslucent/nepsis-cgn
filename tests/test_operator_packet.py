@@ -56,6 +56,16 @@ def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _browser_json_roundtrip(value: object) -> object:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_browser_json_roundtrip(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _browser_json_roundtrip(item) for key, item in value.items()}
+    return value
+
+
 def _canonical_v3_field_text(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -429,6 +439,32 @@ def test_stateless_operator_packet_seals_output_and_accepts_valid_sealed_flow(
     assert reported["integrity"]["counter"] == 2
     assert reported["schema_id"] == "nepsis.operator_packet"
     assert reported["phase"] == "report_evaluated"
+
+
+def test_operator_packet_seal_survives_browser_integral_float_roundtrip(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret"
+    )
+    monkeypatch.setenv("NEPSIS_V3_PACKET_SEAL_SECRET", "unit-test-v3-layer-secret")
+    packet = start_operator_packet(family="safety", frame=_operator_frame())
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    browser_packet = _browser_json_roundtrip(locked)
+
+    looped = start_v3_layer_loop(
+        packet=browser_packet,  # type: ignore[arg-type]
+        goal="Prototype V3 layer locks.",
+        scope="Operator packet layer loop.",
+    )
+
+    assert looped["schema_id"] == "nepsis.operator_packet"
+    assert looped["v3_layer_loop"]["packet"]["current_layer"] == "intake"
 
 
 def test_stateless_operator_packet_rejects_tampered_seal(monkeypatch) -> None:

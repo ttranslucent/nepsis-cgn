@@ -1264,9 +1264,21 @@ def _verify_packet_integrity(packet: dict[str, Any]) -> None:
 
 
 def _packet_integrity_payload(packet: dict[str, Any], counter: int) -> bytes:
-    body = {key: value for key, value in packet.items() if key != "integrity"}
+    body = _normalize_integrity_json(
+        {key: value for key, value in packet.items() if key != "integrity"}
+    )
     payload = {"counter": counter, "packet": body}
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _normalize_integrity_json(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_normalize_integrity_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_integrity_json(item) for key, item in value.items()}
+    return value
 
 
 def _packet_integrity_seal(packet: dict[str, Any], counter: int) -> str:

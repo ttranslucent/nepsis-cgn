@@ -558,7 +558,17 @@ def _packet_integrity_payload(packet: dict[str, Any]) -> dict[str, Any]:
         integrity = dict(integrity)
         integrity.pop("seal", None)
         body["integrity"] = integrity
-    return body
+    return _normalize_integrity_json(body)
+
+
+def _normalize_integrity_json(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_normalize_integrity_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_integrity_json(item) for key, item in value.items()}
+    return value
 
 
 def _v3_packet_seal_secret() -> bytes:
