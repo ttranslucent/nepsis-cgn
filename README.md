@@ -197,8 +197,12 @@ NEPSIS_SITE_BASE_URL=https://nepsis-cgn.vercel.app scripts/site-smoke.sh
 ```
 
 `scripts/api-smoke.sh` checks the live backend boundary: public health/routes,
-protected direct `POST /v1/mvp`, protected `POST /v1/private-demo`, public MCP
-discovery, and capability-token rejection for unauthenticated MCP tool calls.
+the operator V3 route manifest, protected direct `POST /v1/mvp`, protected
+`POST /v1/private-demo`, public MCP discovery, and capability-token rejection
+for unauthenticated MCP tool calls. When `NEPSIS_API_TOKEN` is supplied, it also
+probes the four operator V3 layer-loop routes with invalid bodies and expects
+handler-level validation failures, proving the deployed backend can receive
+`/v1/operator-packet/v3/start`, `/field`, `/propose`, and `/lock`.
 `scripts/site-smoke.sh` uses Python stdlib HTTP calls and checks `/`, `/mvp`,
 `/api/status`, `/api/engine/health`, `POST /api/engine/mvp`, unauthenticated
 auth session state, disabled public model routes, and the playground config

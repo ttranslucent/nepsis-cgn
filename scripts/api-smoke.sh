@@ -19,6 +19,12 @@ base_url = sys.argv[1].rstrip("/")
 api_token = sys.argv[2].strip()
 mcp_capability_token = sys.argv[3].strip()
 failed = False
+OPERATOR_V3_ROUTES = {
+    "/v1/operator-packet/v3/start",
+    "/v1/operator-packet/v3/field",
+    "/v1/operator-packet/v3/propose",
+    "/v1/operator-packet/v3/lock",
+}
 
 
 def request(
@@ -127,10 +133,17 @@ status, payload = check("/v1/routes")
 if status == 200:
     data = as_json("/v1/routes", payload)
     routes = data.get("routes")
-    paths = {route.get("path") for route in routes if isinstance(route, dict)} if isinstance(routes, list) else set()
+    route_methods = {
+        (route.get("method"), route.get("path"))
+        for route in routes
+        if isinstance(route, dict)
+    } if isinstance(routes, list) else set()
+    paths = {path for _, path in route_methods}
     require("/v1/mvp" in paths, "/v1/routes did not include /v1/mvp")
     require("/v1/private-demo" in paths, "/v1/routes did not include /v1/private-demo")
     require("/mcp" in paths, "/v1/routes did not include /mcp")
+    for route in sorted(OPERATOR_V3_ROUTES):
+        require(("POST", route) in route_methods, f"/v1/routes did not include POST {route}")
 
 private_demo_body = {
     "case_id": "jailing",
@@ -191,6 +204,16 @@ if api_token:
         require(
             data.get("detail") == "Private demo runtime is not configured.",
             "/v1/private-demo misconfiguration did not fail closed with the generic detail",
+        )
+
+    for route in sorted(OPERATOR_V3_ROUTES):
+        check(
+            route,
+            method="POST",
+            body={},
+            bearer_token=api_token,
+            expected={400, 422},
+            label=f"operator V3 route reachability {route.rsplit('/', 1)[-1]}",
         )
 
 initialized = mcp_jsonrpc("initialize", 101)

@@ -408,6 +408,11 @@ def test_api_smoke_script_checks_vercel_backend_boundary() -> None:
     assert "/v1/routes" in text
     assert "/v1/mvp" in text
     assert "/v1/private-demo" in text
+    assert "/v1/operator-packet/v3/start" in text
+    assert "/v1/operator-packet/v3/field" in text
+    assert "/v1/operator-packet/v3/propose" in text
+    assert "/v1/operator-packet/v3/lock" in text
+    assert "operator V3 route reachability" in text
     assert "/mcp" in text
     assert "expected={401}" in text
     assert "nepsis.private_demo_runtime_packet" in text

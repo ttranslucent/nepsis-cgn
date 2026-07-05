@@ -1300,6 +1300,8 @@ export default function EnginePage() {
     updateWorkspaceState,
     getOperatorSessionState,
     operatorPacket,
+    operatorV3Capability,
+    refreshOperatorV3Capability,
     lockOperatorFrame,
     runOperatorReport,
     lockOperatorReport,
@@ -1442,6 +1444,9 @@ export default function EnginePage() {
       await refreshHealth();
       if (nextAuth?.engineControlAllowed) {
         await refreshSessions();
+        if (liveOperatorSurface) {
+          await refreshOperatorV3Capability();
+        }
       }
     }
 
@@ -1449,7 +1454,7 @@ export default function EnginePage() {
     return () => {
       cancelled = true;
     };
-  }, [refreshHealth, refreshSessions]);
+  }, [liveOperatorSurface, refreshHealth, refreshOperatorV3Capability, refreshSessions]);
 
   useEffect(() => {
     if (sessions.length > 0 && !sessionToOpen) {
@@ -1571,6 +1576,12 @@ export default function EnginePage() {
   const userMode = !developerToolsEnabled;
   const showOperatorControls = developerToolsEnabled;
   const panelHeightClass = userMode ? "min-h-[640px]" : "min-h-[760px]";
+  const operatorV3Available = operatorV3Capability?.available === true;
+  const operatorV3Unavailable = operatorV3Capability != null && !operatorV3Capability.available;
+  const operatorV3BlockedRoutes = [
+    ...(operatorV3Capability?.missing_routes ?? []),
+    ...(operatorV3Capability?.unreachable_routes ?? []),
+  ];
   const v3LayerLoop = operatorPacket?.v3_layer_loop;
   const v3LoopPacket = asRecord(v3LayerLoop?.packet);
   const v3CurrentLayer = readString(v3LoopPacket?.current_layer) ?? "intake";
@@ -2729,6 +2740,10 @@ export default function EnginePage() {
       setLocalError("Lock Frame before starting the V3 layer loop.");
       return;
     }
+    if (!operatorV3Available) {
+      setLocalError("V3 layer-loop controls are unavailable for this backend.");
+      return;
+    }
     const result = await startOperatorV3LayerLoop({
       goal: "Prototype V3 layer locks.",
       scope: "Operator packet layer loop.",
@@ -2767,6 +2782,10 @@ export default function EnginePage() {
       setLocalError("Start the V3 layer loop before saving a layer artifact.");
       return;
     }
+    if (!operatorV3Available) {
+      setLocalError("V3 layer-loop controls are unavailable for this backend.");
+      return;
+    }
     const artifact = parsedV3Artifact();
     if (!artifact) {
       return;
@@ -2788,6 +2807,10 @@ export default function EnginePage() {
       setLocalError("Start the V3 layer loop before proposing a layer lock.");
       return;
     }
+    if (!operatorV3Available) {
+      setLocalError("V3 layer-loop controls are unavailable for this backend.");
+      return;
+    }
     const result = await proposeOperatorV3Layer({ layer: v3CurrentLayer });
     if (!result) {
       return;
@@ -2803,6 +2826,10 @@ export default function EnginePage() {
     clearAllErrors();
     if (!v3LayerLoop) {
       setLocalError("Start the V3 layer loop before locking a layer.");
+      return;
+    }
+    if (!operatorV3Available) {
+      setLocalError("V3 layer-loop controls are unavailable for this backend.");
       return;
     }
     if (!v3ProposalHash) {
@@ -3659,102 +3686,125 @@ export default function EnginePage() {
                 aria-label="V3 operator layer loop"
                 className="mt-3 space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-amber-100">V3 operator layer loop</h2>
-                    <div className="mt-1 text-nepsis-muted">
-                      Current layer: <span className="font-mono text-nepsis-text">{v3LayerLoop ? v3CurrentLayer : "not started"}</span>
+                {!operatorV3Available ? (
+                  <div className="space-y-2">
+                    <div>
+                      <h2 className="text-sm font-semibold text-amber-100">V3 operator layer loop</h2>
+                      <div className="mt-1 font-mono text-[11px] text-amber-100">
+                        {operatorV3Unavailable ? "unavailable" : "checking backend capability"}
+                      </div>
                     </div>
-                    <div className="mt-1 text-nepsis-muted">
-                      Shortcuts: next {v3Shortcuts.next_layer ?? "Meta+ArrowRight"} · previous{" "}
-                      {v3Shortcuts.previous_layer ?? "Meta+ArrowLeft"}
+                    <div className="rounded border border-amber-400/40 bg-black/20 p-2 text-[11px] text-nepsis-muted">
+                      {operatorV3Unavailable
+                        ? "The connected backend does not expose or accept all V3 layer-loop route probes."
+                        : "V3 controls stay hidden until the backend route manifest is checked."}
+                      {operatorV3BlockedRoutes.length > 0 && (
+                        <div className="mt-1 font-mono text-amber-100">
+                          unavailable: {operatorV3BlockedRoutes.join(", ")}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  {!v3LayerLoop ? (
-                    <button
-                      onClick={() => void handleStartV3LayerLoop()}
-                      disabled={loading}
-                      className="rounded-full bg-amber-300 px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
-                    >
-                      Start V3 Layer Loop
-                    </button>
-                  ) : (
-                    <div className="rounded border border-amber-400/40 bg-black/20 px-2 py-1 font-mono text-[11px] text-amber-100">
-                      proposal hash: {v3ProposalHash ?? "none"}
-                    </div>
-                  )}
-                </div>
-
-                {v3LayerLoop && (
+                ) : (
                   <>
-                    <div className="grid gap-2 md:grid-cols-3">
-                      <div className="rounded border border-nepsis-border bg-black/20 p-2">
-                        <div className="text-nepsis-muted">legal tools</div>
-                        <div className="mt-1 flex flex-wrap gap-1 font-mono text-[11px] text-nepsis-text">
-                          {v3LegalTools.map((tool) => (
-                            <span key={tool} className="rounded border border-nepsis-border px-1.5 py-0.5">
-                              {tool}
-                            </span>
-                          ))}
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-semibold text-amber-100">V3 operator layer loop</h2>
+                        <div className="mt-1 text-nepsis-muted">
+                          Current layer: <span className="font-mono text-nepsis-text">{v3LayerLoop ? v3CurrentLayer : "not started"}</span>
+                        </div>
+                        <div className="mt-1 text-nepsis-muted">
+                          Shortcuts: next {v3Shortcuts.next_layer ?? "Meta+ArrowRight"} · previous{" "}
+                          {v3Shortcuts.previous_layer ?? "Meta+ArrowLeft"}
                         </div>
                       </div>
-                      <div className="rounded border border-nepsis-border bg-black/20 p-2">
-                        <div className="text-nepsis-muted">locked layers</div>
-                        <div className="mt-1 font-mono text-[11px] text-nepsis-text">
-                          {v3LockedLayerNames.length > 0 ? v3LockedLayerNames.join(", ") : "none"}
+                      {!v3LayerLoop ? (
+                        <button
+                          onClick={() => void handleStartV3LayerLoop()}
+                          disabled={loading}
+                          className="rounded-full bg-amber-300 px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+                        >
+                          Start V3 Layer Loop
+                        </button>
+                      ) : (
+                        <div className="rounded border border-amber-400/40 bg-black/20 px-2 py-1 font-mono text-[11px] text-amber-100">
+                          proposal hash: {v3ProposalHash ?? "none"}
                         </div>
-                      </div>
-                      <div className="rounded border border-nepsis-border bg-black/20 p-2">
-                        <div className="text-nepsis-muted">audit events</div>
-                        <div className="mt-1 font-mono text-[11px] text-nepsis-text">
-                          {v3AuditEvents.length > 0 ? v3AuditEvents.join(" -> ") : "none"}
-                        </div>
-                      </div>
+                      )}
                     </div>
 
-                    <label className="block text-xs text-nepsis-muted">
-                      V3 {v3CurrentLayer} artifact JSON
-                      <textarea
-                        value={v3ArtifactJson}
-                        onChange={(event) => setV3ArtifactJson(event.target.value)}
-                        rows={10}
-                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 font-mono text-[11px] text-nepsis-text"
-                      />
-                    </label>
+                    {v3LayerLoop && (
+                      <>
+                        <div className="grid gap-2 md:grid-cols-3">
+                          <div className="rounded border border-nepsis-border bg-black/20 p-2">
+                            <div className="text-nepsis-muted">legal tools</div>
+                            <div className="mt-1 flex flex-wrap gap-1 font-mono text-[11px] text-nepsis-text">
+                              {v3LegalTools.map((tool) => (
+                                <span key={tool} className="rounded border border-nepsis-border px-1.5 py-0.5">
+                                  {tool}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="rounded border border-nepsis-border bg-black/20 p-2">
+                            <div className="text-nepsis-muted">locked layers</div>
+                            <div className="mt-1 font-mono text-[11px] text-nepsis-text">
+                              {v3LockedLayerNames.length > 0 ? v3LockedLayerNames.join(", ") : "none"}
+                            </div>
+                          </div>
+                          <div className="rounded border border-nepsis-border bg-black/20 p-2">
+                            <div className="text-nepsis-muted">audit events</div>
+                            <div className="mt-1 font-mono text-[11px] text-nepsis-text">
+                              {v3AuditEvents.length > 0 ? v3AuditEvents.join(" -> ") : "none"}
+                            </div>
+                          </div>
+                        </div>
 
-                    <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                      <label className="block text-xs text-nepsis-muted">
-                        Lock nonce
-                        <input
-                          value={v3LockNonce}
-                          onChange={(event) => setV3LockNonce(event.target.value)}
-                          className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 font-mono text-xs text-nepsis-text"
-                        />
-                      </label>
-                      <div className="flex flex-wrap items-end gap-2">
-                        <button
-                          onClick={() => void handleSaveV3LayerArtifact()}
-                          disabled={loading}
-                          className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
-                        >
-                          Save Draft Layer
-                        </button>
-                        <button
-                          onClick={() => void handleProposeV3Layer()}
-                          disabled={loading}
-                          className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
-                        >
-                          Propose Layer Lock
-                        </button>
-                        <button
-                          onClick={() => void handleLockV3Layer()}
-                          disabled={loading || !v3ProposalHash}
-                          className="rounded-full bg-amber-300 px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-60"
-                        >
-                          Lock Current Layer
-                        </button>
-                      </div>
-                    </div>
+                        <label className="block text-xs text-nepsis-muted">
+                          V3 {v3CurrentLayer} artifact JSON
+                          <textarea
+                            value={v3ArtifactJson}
+                            onChange={(event) => setV3ArtifactJson(event.target.value)}
+                            rows={10}
+                            className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 font-mono text-[11px] text-nepsis-text"
+                          />
+                        </label>
+
+                        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                          <label className="block text-xs text-nepsis-muted">
+                            Lock nonce
+                            <input
+                              value={v3LockNonce}
+                              onChange={(event) => setV3LockNonce(event.target.value)}
+                              className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 font-mono text-xs text-nepsis-text"
+                            />
+                          </label>
+                          <div className="flex flex-wrap items-end gap-2">
+                            <button
+                              onClick={() => void handleSaveV3LayerArtifact()}
+                              disabled={loading}
+                              className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
+                            >
+                              Save Draft Layer
+                            </button>
+                            <button
+                              onClick={() => void handleProposeV3Layer()}
+                              disabled={loading}
+                              className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
+                            >
+                              Propose Layer Lock
+                            </button>
+                            <button
+                              onClick={() => void handleLockV3Layer()}
+                              disabled={loading || !v3ProposalHash}
+                              className="rounded-full bg-amber-300 px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-60"
+                            >
+                              Lock Current Layer
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
               </section>

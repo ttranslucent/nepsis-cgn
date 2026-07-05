@@ -309,6 +309,13 @@ disabled model routes, and the playground config endpoint. A failing
 `/api/engine/mvp` usually means `NEPSIS_API_BASE_URL`, `NEPSIS_API_TOKEN`,
 Vercel API health, or CORS origins are misconfigured.
 
+For hosted operator V3, the API smoke is also the backend catch-up gate. It must
+see `POST /v1/operator-packet/v3/start`, `/field`, `/propose`, and `/lock` in
+`/v1/routes`. With `NEPSIS_API_TOKEN` set, it also sends invalid-body probes to
+those four routes and expects handler-level validation failures. If the route
+manifest is missing any V3 path, or the probes do not reach the route handlers,
+the web `/operator` surface must keep V3 layer-loop controls unavailable.
+
 ## Key Safety
 
 The public site must not invite visitors to paste provider keys. If a real key
