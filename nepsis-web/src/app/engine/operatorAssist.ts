@@ -8,7 +8,10 @@ export type AssistReview = OperatorModelSuggestion & {
   createdAt: string;
   editedValue?: string;
   model: string;
+  confirmationChecked?: boolean;
 };
+
+export type AssistConsequenceLevel = "low" | "high";
 
 export const FRAME_ASSIST_TARGETS = new Set<OperatorAssistTarget>([
   "frame.text",
@@ -47,6 +50,22 @@ export function targetLabel(target: OperatorAssistTarget): string {
     "next_frame.text": "Next frame text",
   };
   return labels[target];
+}
+
+export function assistConsequenceLevel(target: OperatorAssistTarget): AssistConsequenceLevel {
+  return target === "frame.constraints_soft" ? "low" : "high";
+}
+
+export function assistRequiresEchoConfirmation(target: OperatorAssistTarget): boolean {
+  return assistConsequenceLevel(target) === "high";
+}
+
+export function assistConfirmationPrompt(target: OperatorAssistTarget): string {
+  const label = targetLabel(target);
+  if (assistConsequenceLevel(target) === "low") {
+    return `${label} can be accepted in a low-friction batch when it only preserves already-stated wording.`;
+  }
+  return `${label} changes the decision frame or risk channel. Confirm this patch individually.`;
 }
 
 export function readRationaleSegment(rationale: unknown, label: string): string {

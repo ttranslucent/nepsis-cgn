@@ -254,6 +254,7 @@ export type EngineOperatorPacket = {
   policy?: Record<string, unknown>;
   integrity?: Record<string, unknown>;
   v3_layer_loop?: EngineOperatorV3LayerLoop;
+  guide_state?: EngineOperatorGuideState;
 };
 
 export type NepsisCaseReasoningCompilerPacket = Record<string, unknown> & {
@@ -305,6 +306,7 @@ export type EngineOperatorPacketState = {
   latest_audit: EngineStageAuditResponse | Record<string, unknown>;
   packet_hash: string | null;
   v3_layer_loop?: EngineOperatorV3LayerLoop;
+  guide_state?: EngineOperatorGuideState;
 };
 
 export type EngineOperatorPacketResult = EngineOperatorPacket | EnginePhaseRejection;
@@ -323,6 +325,111 @@ export type EngineOperatorV3LayerLoop = {
     next_layer?: string;
     previous_layer?: string;
   };
+};
+
+export type EngineOperatorGuideTurn = {
+  turn_id?: string;
+  created_at?: string;
+  domain_adapter?: string;
+  user_message_hash?: string;
+  user_message_excerpt?: string;
+  next_question?: string;
+  model_route_id?: string;
+  tier_table_version?: string;
+  tier_table_sha256?: string;
+  visible_scaffold?: Record<string, unknown>;
+  packet_delta_preview?: Record<string, unknown>;
+  proposed_updates?: Array<Record<string, unknown>>;
+  fields_ready_to_lock?: string[];
+  blocking_uncertainties?: string[];
+  ranked_discriminators?: Array<Record<string, unknown>>;
+};
+
+export type EngineOperatorGuidePatch = {
+  patch_id: string;
+  target: string;
+  title?: string;
+  proposed_value?: string | string[];
+  proposed_value_hash?: string;
+  friction_tier?: "batch_eligible" | "consequence_bearing" | string;
+  batch_eligible?: boolean;
+  requires_echo_confirmation?: boolean;
+  confirmation_prompt?: string;
+  status?: "proposed" | "accepted" | "accepted_edited" | "rejected" | "superseded" | "void" | string;
+  superseded_by?: string;
+  final_value_hash?: string;
+  confirmation_hash?: string;
+};
+
+export type EngineOperatorGuideDiscriminator = {
+  discriminator_id?: string;
+  rank?: number;
+  label?: string;
+  question?: string;
+  why_it_moves_decision?: string;
+  rationale?: string;
+  rationale_sha256?: string;
+  basis?: string;
+  target_field?: string;
+  expected_information_gain?: "low" | "medium" | "high" | string;
+  cost_to_resolve?: "low" | "medium" | "high" | string;
+  consequence_if_wrong?: "low" | "medium" | "high" | string;
+  resolution_status?: "open" | "resolved" | "mooted" | "blocked" | "deferred" | string;
+  blocking?: boolean;
+};
+
+export type EngineOperatorGuideConvergence = {
+  basis?: string;
+  blocking_uncertainty_count?: number;
+  blocking_uncertainties?: string[];
+  blocking_discriminator_ids?: string[];
+  accepted_field_count?: number;
+  accepted_fields?: string[];
+  pending_consequence_patch_ids?: string[];
+  lock_ready?: boolean;
+  lock_refusal_count?: number;
+};
+
+export type EngineOperatorGuideState = {
+  schema_id: "nepsis.operator_guide_state";
+  schema_version: string;
+  domain_adapter: string;
+  message_count: number;
+  last_turn: EngineOperatorGuideTurn;
+  turns: EngineOperatorGuideTurn[];
+  patches?: EngineOperatorGuidePatch[];
+  discriminators?: EngineOperatorGuideDiscriminator[];
+  convergence?: EngineOperatorGuideConvergence;
+  lock_refusals?: Array<Record<string, unknown>>;
+};
+
+export type EngineOperatorGuidePayload = {
+  packet: EngineOperatorPacket;
+  user_message: string;
+  domain_adapter: "general" | "clinical" | "finance" | "legal" | "research";
+  guide: {
+    next_question: string;
+    visible_scaffold?: Record<string, unknown>;
+    packet_delta_preview?: Record<string, unknown>;
+    proposed_updates?: Array<Record<string, unknown>>;
+    fields_ready_to_lock?: string[];
+    blocking_uncertainties?: string[];
+    ranked_discriminators?: Array<Record<string, unknown>>;
+  };
+};
+
+export type EngineOperatorGuidePatchActionPayload = {
+  packet: EngineOperatorPacket;
+  patch_id: string;
+  action: "accept" | "accept_edited" | "reject" | "void";
+  final_value?: string | string[];
+  confirmation?: {
+    checked: boolean;
+    text?: string;
+    text_sha256?: string;
+  };
+  receipt_id?: string;
+  batch_id?: string;
 };
 
 export type EngineOperatorV3Capability = {
@@ -858,6 +965,20 @@ export const engineClient = {
     return requestEngine<EngineOperatorV3Capability>("/operator-packet/v3/capability", {
       method: "GET",
     });
+  },
+
+  guideOperatorPacket(payload: EngineOperatorGuidePayload): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/guide",
+      jsonRequest("POST", payload),
+    );
+  },
+
+  guidePatchAction(payload: EngineOperatorGuidePatchActionPayload): Promise<EngineOperatorPacketResult> {
+    return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(
+      "/operator-packet/guide/patch-action",
+      jsonRequest("POST", payload),
+    );
   },
 
   lockOperatorFrame(payload: EngineOperatorFramePayload & {

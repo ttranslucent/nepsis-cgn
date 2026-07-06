@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+import nepsis_cgn.api.operator_packet as operator_packet
 import nepsis_cgn.api.server as api_server
 from nepsis_cgn.api.service import EngineApiService
 from nepsis_cgn.api.server import (
@@ -53,6 +54,14 @@ def _stop_test_server(httpd: api_server.ThreadingHTTPServer, thread: threading.T
 
 def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_guide_text_sha256_canonicalizes_browser_paste_artifacts() -> None:
+    browser_paste = "Cafe\u0301 concern\r\nline with trailing spaces   \r\n"
+    server_text = "Café concern\nline with trailing spaces"
+
+    assert operator_packet.canonical_guide_text(browser_paste) == server_text
+    assert operator_packet.guide_text_sha256(browser_paste) == operator_packet.guide_text_sha256(server_text)
 
 
 def _operator_frame() -> dict[str, object]:
@@ -172,6 +181,8 @@ def test_route_manifest_contains_routes_endpoint() -> None:
     assert any(r["path"] == "/v1/operator-packet/start" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/report" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/commit" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator-packet/guide" and r["method"] == "POST" for r in routes)
+    assert any(r["path"] == "/v1/operator-packet/guide/patch-action" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/v3/start" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/v3/field" and r["method"] == "POST" for r in routes)
     assert any(r["path"] == "/v1/operator-packet/v3/propose" and r["method"] == "POST" for r in routes)
@@ -820,6 +831,357 @@ def test_http_operator_packet_v3_layer_loop_is_stateless_and_inspectable(
     assert events[:2] == ["LOCK_FRAME", "START_V3_LAYER_LOOP"]
     assert events.count("SET_V3_LAYER_FIELD") == len(_v3_intake_artifact())
     assert events[-2:] == ["PROPOSE_V3_LAYER_LOCK", "LOCK_V3_LAYER"]
+
+
+def test_http_operator_packet_guide_turn_is_packet_visible_and_sealed(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-operator-seal")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+
+        status, guided = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": packet,
+                "domain_adapter": "clinical",
+                "user_message": "I am worried this is sepsis but something feels off.",
+                "guide": {
+                    "next_question": "What irreversible action are you considering first?",
+                    "visible_scaffold": {
+                        "current_frame": "Possible sepsis with alternate frame open.",
+                        "open_constraint": "Do not close before a discriminator addresses the miss risk.",
+                        "red_concern": "Delayed source control or undertreatment.",
+                        "ready_to_lock": ["Empiric antibiotics are reasonable to consider."],
+                    },
+                    "packet_delta_preview": {
+                        "frame.text": "Decide the next irreversible action under possible sepsis.",
+                        "frame.constraints_hard": [
+                            "Do not close the alternate frame until a discriminator addresses high-cost miss risk."
+                        ],
+                    },
+                    "proposed_updates": [
+                        {
+                            "target": "frame.text",
+                            "proposed_value": "Decide the next irreversible action under possible sepsis.",
+                            "rationale": "User supplied a vague concern that needs a decision frame.",
+                        },
+                        {
+                            "target": "frame.constraints_soft",
+                            "proposed_value": [
+                                "Avoid unnecessary intervention if a discriminator safely shifts the frame."
+                            ],
+                            "rationale": "Low-consequence wording refinement.",
+                        },
+                    ],
+                    "fields_ready_to_lock": ["frame.text"],
+                    "blocking_uncertainties": ["first irreversible action"],
+                    "ranked_discriminators": [
+                        {
+                            "label": "irreversible action",
+                            "question": "Antibiotics, fluids, transfer, imaging, or observation?",
+                            "why_it_moves_decision": "Separates safety action from diagnostic closure.",
+                            "basis": "consequence asymmetry",
+                            "rank": 1,
+                        }
+                    ],
+                },
+            },
+        )
+        assert status == 200
+        status, inspected = _post_json(port, "/v1/operator-packet/state", {"packet": guided})
+        tampered_guide_state = json.loads(json.dumps(guided))
+        tampered_guide_state["guide_state"]["last_turn"]["next_question"] = "Tampered question"
+        state_status, state_rejected = _post_json(
+            port, "/v1/operator-packet/state", {"packet": tampered_guide_state}
+        )
+        tampered_audit_trace = json.loads(json.dumps(guided))
+        tampered_audit_trace["audit_trace"][-1]["arguments"]["next_question"] = "Tampered question"
+        audit_status, audit_rejected = _post_json(
+            port, "/v1/operator-packet/state", {"packet": tampered_audit_trace}
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert guided["schema_id"] == "nepsis.operator_packet"
+    assert guided["phase"] == "frame_draft"
+    assert guided["guide_state"]["schema_id"] == "nepsis.operator_guide_state"
+    assert guided["guide_state"]["domain_adapter"] == "clinical"
+    assert guided["guide_state"]["message_count"] == 1
+    assert guided["guide_state"]["last_turn"]["user_message_hash"] == _h(
+        "I am worried this is sepsis but something feels off."
+    )
+    assert guided["guide_state"]["last_turn"]["user_message_excerpt"].endswith("feels off.")
+    assert guided["guide_state"]["last_turn"]["ranked_discriminators"][0]["rank"] == 1
+    assert guided["guide_state"]["last_turn"]["ranked_discriminators"][0]["basis"] == "consequence asymmetry"
+    assert guided["guide_state"]["last_turn"]["proposed_updates"][0]["consequence_level"] == "high"
+    assert guided["guide_state"]["last_turn"]["proposed_updates"][0]["requires_echo_confirmation"] is True
+    assert guided["guide_state"]["last_turn"]["proposed_updates"][1]["consequence_level"] == "low"
+    assert guided["guide_state"]["last_turn"]["proposed_updates"][1]["requires_echo_confirmation"] is False
+    assert guided["audit_trace"][-1]["event"] == "GUIDE_TURN"
+    assert guided["audit_trace"][-1]["arguments"]["domain_adapter"] == "clinical"
+    assert inspected["guide_state"]["last_turn"]["next_question"] == (
+        "What irreversible action are you considering first?"
+    )
+    assert state_status == 400
+    assert "integrity seal" in state_rejected["error"]
+    assert audit_status == 400
+    assert "integrity seal" in audit_rejected["error"]
+
+
+def test_http_operator_packet_guide_projection_rejects_resealed_tamper(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-operator-seal")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, guided = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": packet,
+                "domain_adapter": "general",
+                "user_message": "Should we expand hours?",
+                "guide": {
+                    "next_question": "What is the irreversible commitment?",
+                    "proposed_updates": [
+                        {
+                            "patch_id": "patch_frame_text",
+                            "target": "frame.text",
+                            "proposed_value": "Decide whether to expand hours.",
+                        }
+                    ],
+                },
+            },
+        )
+        assert status == 200
+
+        tampered_event = json.loads(json.dumps(guided))
+        tampered_event["audit_trace"][-1]["arguments"]["turn"]["next_question"] = "Tampered"
+        tampered_event = operator_packet._seal_packet(tampered_event)
+        event_status, event_rejected = _post_json(
+            port, "/v1/operator-packet/state", {"packet": tampered_event}
+        )
+
+        tampered_projection = json.loads(json.dumps(guided))
+        tampered_projection["guide_state"]["last_turn"]["next_question"] = "Tampered"
+        tampered_projection = operator_packet._seal_packet(tampered_projection)
+        projection_status, projection_rejected = _post_json(
+            port, "/v1/operator-packet/state", {"packet": tampered_projection}
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert event_status == 400
+    assert "guide event chain breaks" in event_rejected["error"]
+    assert projection_status == 400
+    assert "guide_state does not match" in projection_rejected["error"]
+
+
+def test_http_operator_packet_guide_patch_action_requires_fresh_confirmation(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-operator-seal")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    proposed = "Decide whether to expand urgent care coverage."
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, guided = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": packet,
+                "domain_adapter": "general",
+                "user_message": "Should we go 24/7?",
+                "guide": {
+                    "next_question": "What downside can you not walk back?",
+                    "proposed_updates": [
+                        {
+                            "patch_id": "patch_frame_text",
+                            "target": "frame.text",
+                            "proposed_value": proposed,
+                        }
+                    ],
+                },
+            },
+        )
+        assert status == 200
+
+        status, stale = _post_json(
+            port,
+            "/v1/operator-packet/guide/patch-action",
+            {
+                "packet": guided,
+                "patch_id": "patch_frame_text",
+                "action": "accept",
+                "confirmation": {
+                    "checked": True,
+                    "text_sha256": operator_packet.guide_text_sha256("stale"),
+                },
+            },
+        )
+        assert status == 400
+
+        status, accepted = _post_json(
+            port,
+            "/v1/operator-packet/guide/patch-action",
+            {
+                "packet": guided,
+                "patch_id": "patch_frame_text",
+                "action": "accept",
+                "confirmation": {
+                    "checked": True,
+                    "text_sha256": operator_packet.guide_text_sha256(proposed),
+                },
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert "confirmation hash does not match" in stale["error"]
+    assert status == 200
+    assert accepted["audit_trace"][-1]["event"] == "GUIDE_PATCH_ACTION"
+    patch = accepted["guide_state"]["patches"][0]
+    assert patch["status"] == "accepted"
+    assert patch["confirmation_hash"] == operator_packet.guide_text_sha256(proposed)
+
+
+def test_http_operator_packet_guide_turn_supersedes_pending_patch(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-operator-seal")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, first = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": packet,
+                "domain_adapter": "general",
+                "user_message": "I need a frame.",
+                "guide": {
+                    "next_question": "What is the first constraint?",
+                    "proposed_updates": [
+                        {
+                            "patch_id": "patch_old",
+                            "target": "frame.text",
+                            "proposed_value": "Old frame.",
+                        }
+                    ],
+                },
+            },
+        )
+        assert status == 200
+        status, second = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": first,
+                "domain_adapter": "general",
+                "user_message": "Actually the decision is narrower.",
+                "guide": {
+                    "next_question": "What would reopen the frame?",
+                    "proposed_updates": [
+                        {
+                            "patch_id": "patch_new",
+                            "target": "frame.text",
+                            "proposed_value": "New frame.",
+                        }
+                    ],
+                },
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert status == 200
+    patches = {row["patch_id"]: row for row in second["guide_state"]["patches"]}
+    assert patches["patch_old"]["status"] == "superseded"
+    assert patches["patch_old"]["superseded_by"] == "patch_new"
+    assert patches["patch_new"]["status"] == "proposed"
+
+
+def test_http_operator_packet_lock_frame_records_guide_refusal_event(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setenv("NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-operator-seal")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, guided = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": packet,
+                "domain_adapter": "general",
+                "user_message": "Can we lock this?",
+                "guide": {
+                    "next_question": "What is still blocking?",
+                    "blocking_uncertainties": ["downside is unbounded"],
+                },
+            },
+        )
+        assert status == 200
+        status, refused = _post_json(
+            port,
+            "/v1/operator-packet/frame",
+            {"packet": guided, "family": "safety", "frame": _operator_frame()},
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert status == 200
+    assert refused["phase"] == "frame_draft"
+    assert refused["audit_trace"][-1]["event"] == "GUIDE_LOCK_REFUSAL"
+    assert refused["audit_trace"][-1]["arguments"]["reason"] == "blocking_uncertainties_present"
+    assert refused["guide_state"]["convergence"]["lock_refusal_count"] == 1
+
+
+def test_http_operator_packet_guide_turn_rejects_after_frame_lock(monkeypatch) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, locked = _post_json(
+            port,
+            "/v1/operator-packet/frame",
+            {"packet": packet, "family": "safety", "frame": _operator_frame()},
+        )
+        assert status == 200
+        status, rejected = _post_json(
+            port,
+            "/v1/operator-packet/guide",
+            {
+                "packet": locked,
+                "domain_adapter": "general",
+                "user_message": "Can you keep guiding?",
+                "guide": {"next_question": "What is still uncertain?"},
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert status == 409
+    assert rejected["schema_id"] == "nepsis.phase_rejection"
+    assert rejected["attempted_tool"] == "guide_turn"
+    assert rejected["failed_precondition"] == "guide_frame_draft_required"
 
 
 def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) -> None:

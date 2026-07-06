@@ -23,6 +23,8 @@ from ..provenance import record_packet_observation
 from .operator_packet import (
     abandon_packet,
     commit_iteration,
+    guide_patch_action,
+    guide_turn,
     inspect_operator_packet,
     lock_frame as lock_operator_packet_frame,
     lock_report as lock_operator_packet_report,
@@ -105,6 +107,16 @@ ROUTES = (
         "path": "/v1/operator-packet/threshold",
         "description": "Set stateless operator packet threshold decision",
     },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/guide",
+            "description": "Append a structured operator guide turn to a stateless packet",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/guide/patch-action",
+            "description": "Append an operator disposition for a guide packet patch",
+        },
     {
         "method": "POST",
         "path": "/v1/operator-packet/v3/start",
@@ -411,6 +423,14 @@ class EngineApiHandler(BaseHTTPRequestHandler):
 
         if path == "/v1/operator-packet/threshold":
             self._safe(lambda: self._operator_packet_set_threshold_decision(body))
+            return
+
+        if path == "/v1/operator-packet/guide":
+            self._safe(lambda: self._operator_packet_guide_turn(body))
+            return
+
+        if path == "/v1/operator-packet/guide/patch-action":
+            self._safe(lambda: self._operator_packet_guide_patch_action(body))
             return
 
         if path == "/v1/operator-packet/v3/start":
@@ -804,6 +824,49 @@ class EngineApiHandler(BaseHTTPRequestHandler):
                 decision=decision,
                 hold_reason=hold_reason,
                 assist_acceptances=body.get("assist_acceptances"),
+            )
+        )
+
+    def _operator_packet_guide_turn(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        user_message = body.get("user_message", body.get("userMessage"))
+        domain_adapter = body.get("domain_adapter", body.get("domainAdapter", "general"))
+        guide = body.get("guide")
+        if not isinstance(user_message, str):
+            raise ValueError("operator packet guide payload requires string field 'user_message'")
+        if not isinstance(domain_adapter, str):
+            raise ValueError("domain_adapter must be a string when provided")
+        if not isinstance(guide, dict):
+            raise ValueError("operator packet guide payload requires object field 'guide'")
+        return self._record_stateless_packet_result(
+            guide_turn(
+                packet=packet,
+                user_message=user_message,
+                domain_adapter=domain_adapter,
+                guide=guide,
+            )
+        )
+
+    def _operator_packet_guide_patch_action(self, body: dict[str, Any]) -> dict[str, Any]:
+        packet = _required_operator_packet(body)
+        patch_id = body.get("patch_id", body.get("patchId"))
+        action = body.get("action")
+        if not isinstance(patch_id, str):
+            raise ValueError("guide patch action payload requires string field 'patch_id'")
+        if not isinstance(action, str):
+            raise ValueError("guide patch action payload requires string field 'action'")
+        confirmation = body.get("confirmation")
+        if confirmation is not None and not isinstance(confirmation, dict):
+            raise ValueError("confirmation must be an object when provided")
+        return self._record_stateless_packet_result(
+            guide_patch_action(
+                packet=packet,
+                patch_id=patch_id,
+                action=action,
+                final_value=body.get("final_value", body.get("finalValue")),
+                confirmation=confirmation,
+                receipt_id=body.get("receipt_id", body.get("receiptId")),
+                batch_id=body.get("batch_id", body.get("batchId")),
             )
         )
 

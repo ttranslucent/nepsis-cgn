@@ -16,6 +16,8 @@ from .private_demo import build_private_demo_runtime_packet
 from .operator_packet import (
     abandon_packet,
     commit_iteration,
+    guide_patch_action,
+    guide_turn,
     inspect_operator_packet,
     lock_frame as lock_operator_packet_frame,
     lock_report as lock_operator_packet_report,
@@ -375,6 +377,73 @@ def create_app():
                         decision=decision,
                         hold_reason=hold_reason,
                         assist_acceptances=body.get("assist_acceptances"),
+                    ),
+                    request,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/guide")
+    async def operator_packet_guide_turn_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            user_message = body.get("user_message", body.get("userMessage"))
+            domain_adapter = body.get(
+                "domain_adapter", body.get("domainAdapter", "general")
+            )
+            guide = body.get("guide")
+            if not isinstance(user_message, str):
+                raise ValueError(
+                    "operator packet guide payload requires string field 'user_message'"
+                )
+            if not isinstance(domain_adapter, str):
+                raise ValueError("domain_adapter must be a string when provided")
+            if not isinstance(guide, dict):
+                raise ValueError(
+                    "operator packet guide payload requires object field 'guide'"
+                )
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    guide_turn(
+                        packet=_required_operator_packet(body),
+                        user_message=user_message,
+                        domain_adapter=domain_adapter,
+                        guide=guide,
+                    ),
+                    request,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/operator-packet/guide/patch-action")
+    async def operator_packet_guide_patch_action_route(request: Request):
+        body = await _read_json_body(request)
+        try:
+            patch_id = body.get("patch_id", body.get("patchId"))
+            action = body.get("action")
+            confirmation = body.get("confirmation")
+            if not isinstance(patch_id, str):
+                raise ValueError(
+                    "guide patch action payload requires string field 'patch_id'"
+                )
+            if not isinstance(action, str):
+                raise ValueError(
+                    "guide patch action payload requires string field 'action'"
+                )
+            if confirmation is not None and not isinstance(confirmation, dict):
+                raise ValueError("confirmation must be an object when provided")
+            return _phase_json_response(
+                _record_stateless_packet_result(
+                    guide_patch_action(
+                        packet=_required_operator_packet(body),
+                        patch_id=patch_id,
+                        action=action,
+                        final_value=body.get("final_value", body.get("finalValue")),
+                        confirmation=confirmation,
+                        receipt_id=body.get("receipt_id", body.get("receiptId")),
+                        batch_id=body.get("batch_id", body.get("batchId")),
                     ),
                     request,
                 )
@@ -1226,6 +1295,16 @@ def route_manifest() -> list[dict[str, str]]:
             "method": "POST",
             "path": "/v1/operator-packet/threshold",
             "description": "Set stateless operator packet threshold decision",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/guide",
+            "description": "Append a structured operator guide turn to a stateless packet",
+        },
+        {
+            "method": "POST",
+            "path": "/v1/operator-packet/guide/patch-action",
+            "description": "Append an operator disposition for a guide packet patch",
         },
         {
             "method": "POST",
