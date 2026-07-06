@@ -174,8 +174,9 @@ For a private live operator deployment, use a separate environment from the
 public demo. Hosted model routes stay disabled by default; enable them only with
 `NEPSIS_DEPLOYMENT_MODE=operator`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
 `NEPSIS_MODEL_ROUTES_ENABLED=true`, exact-email OTP allowlisting, login email
-delivery, backend auth, rate limits, and explicit server-side model credentials.
-Do not enable live model routes on the public demo deployment.
+delivery through Supabase OTP or Resend, backend auth, rate limits, and explicit
+server-side model credentials. Do not enable live model routes on the public
+demo deployment.
 
 ### Private operator deployment
 
@@ -183,8 +184,9 @@ Start private operator Vercel env from `nepsis-web/.env.operator.example`, not
 the public template. That path requires a reachable backend, `NEPSIS_API_TOKEN`,
 `NEPSIS_V3_PACKET_SEAL_SECRET`, `NEPSIS_OPERATOR_PACKET_SEAL_SECRET`,
 `NEPSIS_AUTH_SECRET`,
-`NEPSIS_AUTH_ALLOWED_EMAILS`, real email delivery with `RESEND_API_KEY` and
-`NEPSIS_AUTH_FROM_EMAIL`, `NEPSIS_DEPLOYMENT_MODE=operator`,
+`NEPSIS_AUTH_ALLOWED_EMAILS`, real email delivery with either
+`NEXT_PUBLIC_SUPABASE_URL` plus `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or
+`RESEND_API_KEY` plus `NEPSIS_AUTH_FROM_EMAIL`, `NEPSIS_DEPLOYMENT_MODE=operator`,
 `NEXT_PUBLIC_NEPSIS_OPERATOR_SITE=true`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
 `NEPSIS_MODEL_ROUTES_ENABLED=true`, and a server-side
 `OPENAI_API_KEY` or `NEPSIS_OPENAI_API_KEY`.

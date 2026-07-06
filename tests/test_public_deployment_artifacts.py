@@ -144,7 +144,44 @@ def test_status_api_exposes_provider_access_custody_boundary() -> None:
     assert "userProviderKeysAccepted: false" in route.read_text(encoding="utf-8")
     assert "server-side-operator-or-mcp-host" in combined
     assert "approved users sign in" in combined.lower()
-    assert "Supabase invite" in combined
+    assert "Supabase OTP" in combined
+
+
+def test_operator_login_supports_supabase_otp_without_replacing_local_session() -> None:
+    package = json.loads((ROOT / "nepsis-web" / "package.json").read_text(encoding="utf-8"))
+    auth_helper = (ROOT / "nepsis-web" / "src" / "lib" / "nepsisAuth.ts").read_text(
+        encoding="utf-8"
+    )
+    request_route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "auth" / "request-code" / "route.ts"
+    ).read_text(encoding="utf-8")
+    verify_route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "auth" / "verify-code" / "route.ts"
+    ).read_text(encoding="utf-8")
+    status_route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "status" / "route.ts"
+    ).read_text(encoding="utf-8")
+    operator_env = (ROOT / "nepsis-web" / ".env.operator.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "@supabase/supabase-js" in package["dependencies"]
+    assert "NEXT_PUBLIC_SUPABASE_URL" in auth_helper
+    assert "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in auth_helper
+    assert "NEXT_PUBLIC_SUPABASE_ANON_KEY" in auth_helper
+    assert "supabaseOtpConfigured" in auth_helper
+    assert "signInWithOtp" in auth_helper
+    assert "shouldCreateUser: false" in auth_helper
+    assert 'verifyOtp({ email, token: code.trim(), type: "email" })' in auth_helper
+    assert "requestSupabaseLoginCode" in request_route
+    assert "verifySupabaseLoginCode" in verify_route
+    assert "createLoginSession" in verify_route
+    assert "createCsrfToken" in verify_route
+    assert "NEPSIS_USER_COOKIE" in verify_route
+    assert "NEPSIS_CSRF_COOKIE" in verify_route
+    assert "supabaseOtpConfigured" in status_route
+    assert "NEXT_PUBLIC_SUPABASE_URL" in operator_env
+    assert "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in operator_env
 
 
 def test_browser_provider_key_storage_is_removed_from_web_runtime() -> None:

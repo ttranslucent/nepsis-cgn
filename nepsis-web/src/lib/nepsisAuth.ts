@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
 import { envFlag, operatorSiteMode, publicSiteMode } from "@/lib/publicMode";
 import {
   NEPSIS_CSRF_COOKIE,
@@ -46,6 +47,21 @@ type AuthSecretStatus = {
   mode: "configured" | "development-fallback" | "missing";
 };
 
+type SupabaseOtpConfig = {
+  url: string;
+  publishableKey: string;
+};
+
+type SupabaseAuthError = {
+  message?: string;
+  code?: string;
+  status?: number;
+};
+
+type SupabaseOtpResult =
+  | { ok: true }
+  | { ok: false; error: string; status: number };
+
 type LoginRateLimitScope = "request-code" | "verify-code";
 type LoginRateLimitResult =
   | { ok: true }
@@ -75,6 +91,128 @@ export function loginEmailConfigured(): boolean {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.NEPSIS_AUTH_FROM_EMAIL?.trim();
   return Boolean(resendApiKey && from && !isPlaceholderResendConfig(resendApiKey, from));
+}
+
+function supabaseOtpConfig(): SupabaseOtpConfig | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
+  const publishableKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ||
+    process.env.SUPABASE_PUBLISHABLE_KEY?.trim() ||
+    process.env.SUPABASE_ANON_KEY?.trim();
+
+  if (!url || !publishableKey) {
+    return null;
+  }
+  return { url, publishableKey };
+}
+
+export function supabaseOtpConfigured(): boolean {
+  return Boolean(supabaseOtpConfig());
+}
+
+function createSupabaseOtpClient() {
+  const config = supabaseOtpConfig();
+  if (!config) {
+    return null;
+  }
+  return createClient(config.url, config.publishableKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
+  });
+}
+
+function isSupabaseAuthError(error: unknown): error is SupabaseAuthError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    ("message" in error || "code" in error || "status" in error)
+  );
+}
+
+function supabaseAuthErrorStatus(error: unknown, fallback: number): number {
+  if (isSupabaseAuthError(error) && typeof error.status === "number") {
+    if (error.status === 429) {
+      return 429;
+    }
+    if (error.status >= 400 && error.status < 500) {
+      return error.status;
+    }
+  }
+  return fallback;
+}
+
+function supabaseAuthErrorMessage(error: unknown, fallback: string): string {
+  if (isSupabaseAuthError(error)) {
+    if (error.status === 429 || error.code === "over_email_send_rate_limit") {
+      return "Email code delivery is temporarily rate-limited. Wait before requesting another code.";
+    }
+    if (typeof error.message === "string" && error.message.trim()) {
+      return error.message.trim();
+    }
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+}
+
+export async function requestSupabaseLoginCode(email: string): Promise<SupabaseOtpResult> {
+  const supabase = createSupabaseOtpClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase OTP login is not configured.", status: 503 };
+  }
+
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+      },
+    });
+    if (error) {
+      return {
+        ok: false,
+        error: supabaseAuthErrorMessage(error, "Supabase OTP delivery failed."),
+        status: supabaseAuthErrorStatus(error, 503),
+      };
+    }
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: supabaseAuthErrorMessage(error, "Supabase OTP delivery failed."),
+      status: 503,
+    };
+  }
+}
+
+export async function verifySupabaseLoginCode(email: string, code: string): Promise<SupabaseOtpResult> {
+  const supabase = createSupabaseOtpClient();
+  if (!supabase) {
+    return { ok: false, error: "Supabase OTP login is not configured.", status: 503 };
+  }
+
+  try {
+    const { error } = await supabase.auth.verifyOtp({ email, token: code.trim(), type: "email" });
+    if (error) {
+      return {
+        ok: false,
+        error: supabaseAuthErrorMessage(error, "Invalid or expired code."),
+        status: supabaseAuthErrorStatus(error, 400),
+      };
+    }
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: supabaseAuthErrorMessage(error, "Supabase OTP verification failed."),
+      status: 503,
+    };
+  }
 }
 
 function allowedOperatorEmailSet(): Set<string> {
@@ -111,7 +249,11 @@ export function authSecretStatus(): AuthSecretStatus {
 }
 
 export function operatorLoginReady(): boolean {
-  return authSecretStatus().ready && operatorEmailAllowlistConfigured() && (loginEmailConfigured() || previewCodesAllowed());
+  return (
+    authSecretStatus().ready &&
+    operatorEmailAllowlistConfigured() &&
+    (supabaseOtpConfigured() || loginEmailConfigured() || previewCodesAllowed())
+  );
 }
 
 function authSecret(): string {

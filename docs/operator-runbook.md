@@ -90,8 +90,9 @@ npm run dev
 - Web has a long random `NEPSIS_AUTH_SECRET`.
 - Web sets `NEPSIS_AUTH_ALLOWED_EMAILS` to the exact operator email addresses
   permitted to request OTP login.
-- For invited-user access, the current repo uses exact-email allowlisting. When
-  Supabase is added, use Supabase invite approval as the login source, not as a
+- For invited-user access, the current repo uses exact-email allowlisting.
+  Supabase OTP may provide email-code delivery, but CGN still issues its own
+  signed operator session cookie after verification. Do not use Supabase as a
   vault for raw model-provider API keys.
 - Web sets `NEXT_PUBLIC_NEPSIS_PUBLIC_SITE=true` and
   `NEPSIS_MODEL_ROUTES_ENABLED=false` for the public production site.
@@ -102,9 +103,10 @@ npm run dev
   `NEPSIS_DEPLOYMENT_MODE=operator`, `NEPSIS_LIVE_OPERATOR_ENABLED=true`,
   `NEPSIS_MODEL_ROUTES_ENABLED=true`, and a server-side model key. Do not reuse
   that configuration for the public demo deployment.
-- Login email delivery is configured with `RESEND_API_KEY` and
-  `NEPSIS_AUTH_FROM_EMAIL`; preview-code login stays disabled on shared
-  operator deployments.
+- Login email delivery is configured with either
+  `NEXT_PUBLIC_SUPABASE_URL` plus `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or
+  `RESEND_API_KEY` plus `NEPSIS_AUTH_FROM_EMAIL`; preview-code login stays
+  disabled on shared operator deployments.
 - `.venv/bin/python scripts/check_openai_secrets.py --all` passes before
   deployment env templates or config changes are committed.
 - Operators rehearse the `/mvp` script before broad testing.
@@ -227,6 +229,8 @@ NEPSIS_OPERATOR_PACKET_SEAL_SECRET=<long-random-operator-packet-seal-secret>
 NEPSIS_AUTH_SECRET=<long-random-secret>
 NEPSIS_AUTH_ALLOWED_EMAILS=<operator-email-list>
 NEPSIS_AUTH_SESSION_REVOKE_BEFORE=
+NEXT_PUBLIC_SUPABASE_URL=<supabase-project-url>
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<supabase-publishable-key>
 RESEND_API_KEY=<resend-api-key>
 NEPSIS_AUTH_FROM_EMAIL=Nepsis Operator <login@operator.example>
 NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false

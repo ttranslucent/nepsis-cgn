@@ -17,6 +17,7 @@ import {
   operatorLoginReady,
   previewCodesAllowed,
   sessionRevokeBeforeConfigured,
+  supabaseOtpConfigured,
 } from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
@@ -169,6 +170,7 @@ export async function GET() {
   ]);
   const authSecret = authSecretStatus();
   const emailConfigured = loginEmailConfigured();
+  const supabaseOtpReady = supabaseOtpConfigured();
   const allowedEmailsConfigured = operatorEmailAllowlistConfigured();
   const previewCodesEnabled = previewCodesAllowed();
   const revokeBeforeConfigured = sessionRevokeBeforeConfigured();
@@ -232,6 +234,7 @@ export async function GET() {
       authSecretMode: authSecret.mode,
       allowedEmailsConfigured,
       emailConfigured,
+      supabaseOtpConfigured: supabaseOtpReady,
       previewCodesEnabled,
       persistentSessionDays: LOGIN_SESSION_DAYS,
       sessionRevokeBeforeConfigured: revokeBeforeConfigured,
@@ -249,7 +252,7 @@ export async function GET() {
         ? "Local admin test login uses an allowlisted email and preview OTP code."
         : "Admin login uses an allowlisted email and delivered OTP code.",
       invitedUserFlow:
-        "Approved users sign in through OTP/email. When Supabase is added, use Supabase invite approval for login access, not raw provider-key collection.",
+        "Approved users sign in through OTP/email. Supabase OTP may provide code delivery, but CGN still uses local signed operator cookies for this deployment.",
       userOwnedModelAccess:
         "User-owned model accounts should connect through MCP-capable hosts that authenticate to their own provider accounts.",
     },
@@ -315,14 +318,18 @@ export async function GET() {
           },
           {
             id: "real-login",
-            ok: authSecret.ready && allowedEmailsConfigured && emailConfigured && !previewCodesEnabled,
+            ok:
+              authSecret.ready &&
+              allowedEmailsConfigured &&
+              (emailConfigured || supabaseOtpReady) &&
+              !previewCodesEnabled,
             label: "Real operator OTP login ready",
-            detail: "Operator login should use signed cookies, exact-email authorization, and email delivery, not preview codes.",
+            detail:
+              "Operator login should use signed cookies, exact-email authorization, and Supabase or Resend email delivery, not preview codes.",
             env: [
               "NEPSIS_AUTH_SECRET",
               "NEPSIS_AUTH_ALLOWED_EMAILS",
-              "RESEND_API_KEY",
-              "NEPSIS_AUTH_FROM_EMAIL",
+              "NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or RESEND_API_KEY + NEPSIS_AUTH_FROM_EMAIL",
               "NEPSIS_AUTH_ALLOW_CODE_PREVIEW=false",
             ],
           },
