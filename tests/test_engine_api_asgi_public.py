@@ -335,6 +335,7 @@ def test_asgi_operator_packet_phase_rejection_maps_to_409(monkeypatch) -> None:
     assert payload["attempted_tool"] == "run_report"
     assert payload["legal_next_tools"] == [
         "start_operator_packet",
+        "guide_turn",
         "lock_frame",
         "abandon_packet",
     ]

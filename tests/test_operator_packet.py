@@ -307,6 +307,7 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
     assert committed["phase"] == "frame_draft"
     assert committed["legal_next_tools"] == [
         "start_operator_packet",
+        "guide_turn",
         "lock_frame",
         "abandon_packet",
     ]
@@ -338,6 +339,7 @@ def test_stateless_operator_packet_rejects_report_before_frame_lock() -> None:
     assert result["current_phase"] == "frame_draft"
     assert result["legal_next_tools"] == [
         "start_operator_packet",
+        "guide_turn",
         "lock_frame",
         "abandon_packet",
     ]
