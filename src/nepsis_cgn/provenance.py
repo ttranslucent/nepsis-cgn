@@ -11,6 +11,8 @@ from threading import RLock
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from .runtime_storage import is_serverless_runtime, serverless_runtime_sessions_path
+
 LOGGER = logging.getLogger("nepsis_cgn.provenance")
 
 PROVENANCE_RECORD_SCHEMA_ID = "nepsis.packet_provenance_record"
@@ -109,6 +111,8 @@ def default_provenance_path() -> Path:
     configured = os.getenv("NEPSIS_PACKET_PROVENANCE_PATH", "").strip()
     if configured:
         return Path(configured).expanduser()
+    if is_serverless_runtime():
+        return serverless_runtime_sessions_path("packet_provenance.jsonl")
     return Path.cwd() / "ledger" / "sessions" / "packet_provenance.jsonl"
 
 

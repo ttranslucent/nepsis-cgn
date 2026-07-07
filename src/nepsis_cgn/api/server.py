@@ -36,7 +36,7 @@ from .operator_packet import (
     start_v3_layer_loop,
     start_operator_packet,
 )
-from .service import EngineApiService, Family
+from .service import EngineApiService, Family, default_api_store_path
 
 LOGGER = logging.getLogger("nepsis_cgn.api")
 _RATE_LIMIT_LOCK = RLock()
@@ -50,12 +50,7 @@ class _RequestBodyError(ValueError):
 
 
 def _default_store_path() -> str:
-    configured = os.getenv("NEPSIS_API_STORE_PATH")
-    if configured and configured.strip():
-        return configured
-    return str(
-        (Path.cwd() / "ledger" / "sessions" / "engine_api_sessions.db").resolve()
-    )
+    return default_api_store_path()
 
 
 API = EngineApiService(store_path=_default_store_path())

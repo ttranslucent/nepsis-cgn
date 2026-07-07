@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from nepsis_cgn.api import asgi
 from nepsis_cgn.api.service import EngineApiService
-from nepsis_cgn.provenance import PacketProvenanceStore
+from nepsis_cgn.provenance import PacketProvenanceStore, default_provenance_path
 
 
 def test_engine_service_records_iteration_provenance_and_audit_export(tmp_path, monkeypatch) -> None:
@@ -132,3 +133,79 @@ def test_asgi_provenance_request_reconstruction_endpoint(tmp_path, monkeypatch) 
     assert exported.status_code == 200
     assert exported.json()["verification"]["record_count"] == 1
     assert json.loads(json.dumps(exported.json()))
+
+
+def test_vercel_default_store_path_uses_temp_runtime_root_on_read_only_checkout(
+    tmp_path, monkeypatch
+) -> None:
+    runtime_tmp = tmp_path / "runtime-tmp"
+    runtime_tmp.mkdir()
+    checkout = tmp_path / "var-task"
+    checkout.mkdir()
+    checkout.chmod(0o555)
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv("TMPDIR", str(runtime_tmp))
+    monkeypatch.delenv("NEPSIS_API_STORE_PATH", raising=False)
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+
+    try:
+        monkeypatch.chdir(checkout)
+        store_path = Path(asgi._default_store_path())
+        expected = runtime_tmp.resolve() / "nepsis-cgn" / "sessions" / "engine_api_sessions.db"
+        assert store_path == expected
+
+        monkeypatch.setattr(asgi, "API", EngineApiService(store_path=str(store_path)))
+        response = TestClient(asgi.create_app()).post("/v1/sessions", json={"family": "safety"})
+
+        assert response.status_code == 200
+        assert store_path.exists()
+        assert not (checkout / "ledger" / "sessions" / "engine_api_sessions.db").exists()
+    finally:
+        checkout.chmod(0o755)
+
+
+def test_vercel_default_provenance_path_uses_temp_runtime_root_and_preserves_retention_modes(
+    tmp_path, monkeypatch
+) -> None:
+    runtime_tmp = tmp_path / "runtime-tmp"
+    runtime_tmp.mkdir()
+    checkout = tmp_path / "var-task"
+    checkout.mkdir()
+    checkout.chmod(0o555)
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv("TMPDIR", str(runtime_tmp))
+    monkeypatch.delenv("NEPSIS_PACKET_PROVENANCE_PATH", raising=False)
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+
+    try:
+        monkeypatch.chdir(checkout)
+        ledger_path = default_provenance_path()
+        expected = runtime_tmp.resolve() / "nepsis-cgn" / "sessions" / "packet_provenance.jsonl"
+        assert ledger_path == expected
+
+        client = TestClient(asgi.create_app())
+        mvp = client.post(
+            "/v1/mvp",
+            headers={"X-Request-ID": "request-mvp-vercel-default"},
+            json={"case_id": "jailing"},
+        )
+        operator = client.post(
+            "/v1/operator-packet/start",
+            headers={"X-Request-ID": "request-operator-vercel-default"},
+            json={},
+        )
+
+        assert mvp.status_code == 200
+        assert mvp.json()["schema_id"] == "nepsis.mvp_packet"
+        assert operator.status_code == 200
+        assert operator.json()["schema_id"] == "nepsis.operator_packet"
+
+        records = PacketProvenanceStore(ledger_path).records()
+        retained = [record for record in records if record["source"] == "backend_mvp"]
+        hash_only = [record for record in records if record["source"] == "stateless_operator_packet"]
+        assert retained and retained[0]["retention"]["payload_retained"] is True
+        assert hash_only and hash_only[0]["retention"]["mode"] == "hash_only"
+        assert "payload" not in hash_only[0]
+        assert not (checkout / "ledger" / "sessions" / "packet_provenance.jsonl").exists()
+    finally:
+        checkout.chmod(0o755)

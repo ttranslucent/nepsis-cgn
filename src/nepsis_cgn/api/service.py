@@ -33,6 +33,7 @@ from ..provenance import (
     default_provenance_path,
     record_packet_observation,
 )
+from ..runtime_storage import is_serverless_runtime, serverless_runtime_sessions_path
 
 Family = Literal["puzzle", "clinical", "safety"]
 _STORE_SCHEMA_ID = "nepsis.engine_api_sessions"
@@ -70,6 +71,15 @@ LOGGER = logging.getLogger("nepsis_cgn.api.service")
 
 class _StoreDecryptionError(ValueError):
     pass
+
+
+def default_api_store_path() -> str:
+    configured = os.getenv("NEPSIS_API_STORE_PATH")
+    if configured and configured.strip():
+        return configured
+    if is_serverless_runtime():
+        return str(serverless_runtime_sessions_path("engine_api_sessions.db"))
+    return str((Path.cwd() / "ledger" / "sessions" / "engine_api_sessions.db").resolve())
 
 
 @dataclass
