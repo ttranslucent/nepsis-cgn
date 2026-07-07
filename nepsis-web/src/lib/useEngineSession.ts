@@ -8,6 +8,8 @@ import {
   type EngineCreateSessionPayload,
   type EngineDeleteSessionResponse,
   type EngineFrame,
+  type EngineOperatorGuidePayload,
+  type EngineOperatorGuidePatchActionPayload,
   type EngineOperatorFramePayload,
   type EngineOperatorV3Capability,
   type EngineOperatorPacket,
@@ -598,6 +600,37 @@ export function useEngineSession() {
     [applyOperatorResult, run, state.operatorPacket],
   );
 
+  const guideOperatorPacket = useCallback(
+    async (
+      payload: Omit<EngineOperatorGuidePayload, "packet"> & { packet?: EngineOperatorPacket },
+    ): Promise<EngineOperatorResult | undefined> => {
+      const result = await run(async () => {
+        const { packet: payloadPacket, ...rest } = payload;
+        const packet = payloadPacket ?? state.operatorPacket ?? (await engineClient.startOperatorPacket());
+        return engineClient.guideOperatorPacket({ ...rest, packet });
+      });
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
+  const guidePatchAction = useCallback(
+    async (
+      payload: Omit<EngineOperatorGuidePatchActionPayload, "packet"> & { packet?: EngineOperatorPacket },
+    ): Promise<EngineOperatorResult | undefined> => {
+      const result = await run(async () => {
+        const { packet: payloadPacket, ...rest } = payload;
+        const packet = payloadPacket ?? state.operatorPacket;
+        if (!packet) {
+          throw new EngineClientError("No operator packet is active.", 400);
+        }
+        return engineClient.guidePatchAction({ ...rest, packet });
+      });
+      return applyOperatorResult(result);
+    },
+    [applyOperatorResult, run, state.operatorPacket],
+  );
+
   const runOperatorReport = useCallback(
     async (payload: EngineOperatorReportPayload): Promise<EngineOperatorResult | undefined> => {
       const packet = state.operatorPacket;
@@ -792,6 +825,8 @@ export function useEngineSession() {
     updateWorkspaceState,
     getOperatorSessionState,
     refreshOperatorV3Capability,
+    guideOperatorPacket,
+    guidePatchAction,
     lockOperatorFrame,
     runOperatorReport,
     lockOperatorReport,

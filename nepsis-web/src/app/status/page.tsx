@@ -42,6 +42,7 @@ type StatusPayload = {
     authSecretMode?: "configured" | "development-fallback" | "missing";
     allowedEmailsConfigured?: boolean;
     emailConfigured?: boolean;
+    supabaseOtpConfigured?: boolean;
     previewCodesEnabled: boolean;
     persistentSessionDays?: number;
     sessionRevokeBeforeConfigured?: boolean;
@@ -271,7 +272,10 @@ export default function StatusPage() {
             title="Operator Login"
             ok={
               status.auth.operatorLoginReady ??
-              (status.auth.loginConfigured && (status.auth.emailConfigured || status.auth.previewCodesEnabled))
+              (status.auth.loginConfigured &&
+                (status.auth.supabaseOtpConfigured ||
+                  status.auth.emailConfigured ||
+                  status.auth.previewCodesEnabled))
             }
           >
             <p>Public MVP access does not require login.</p>
@@ -282,6 +286,7 @@ export default function StatusPage() {
                 : "Operator email allowlist missing."}
             </p>
             <p>{status.auth.emailConfigured ? "Email login configured." : "Email login not configured."}</p>
+            <p>{status.auth.supabaseOtpConfigured ? "Supabase OTP configured." : "Supabase OTP not configured."}</p>
             <p>{status.auth.previewCodesEnabled ? "Preview codes enabled." : "Preview codes disabled."}</p>
             <p>Persistent session window: {status.auth.persistentSessionDays ?? 30} days.</p>
             <p>

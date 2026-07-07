@@ -14,6 +14,8 @@ import {
   normalizeEmail,
   operatorEmailAllowed,
   readCookieFromHeader,
+  supabaseOtpConfigured,
+  verifySupabaseLoginCode,
   verifyLoginChallenge,
 } from "@/lib/nepsisAuth";
 
@@ -52,25 +54,32 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Code expired or not found" }, { status: 400 });
   }
 
-  const challenge = readCookieFromHeader(
-    req.headers.get("cookie") ?? "",
-    NEPSIS_LOGIN_CHALLENGE_COOKIE,
-  );
-  let verification: ReturnType<typeof verifyLoginChallenge>;
-  try {
-    verification = verifyLoginChallenge(challenge, email, code);
-  } catch (error) {
-    return NextResponse.json(
-      { error: (error as Error)?.message ?? "Login is unavailable in this environment." },
-      { status: 503 },
-    );
-  }
-  if (!verification.ok) {
-    const response = NextResponse.json({ error: verification.error }, { status: 400 });
-    if (verification.error !== "Invalid code") {
-      response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
+  if (supabaseOtpConfigured()) {
+    const verification = await verifySupabaseLoginCode(email, code);
+    if (!verification.ok) {
+      return NextResponse.json({ error: verification.error }, { status: verification.status });
     }
-    return response;
+  } else {
+    const challenge = readCookieFromHeader(
+      req.headers.get("cookie") ?? "",
+      NEPSIS_LOGIN_CHALLENGE_COOKIE,
+    );
+    let verification: ReturnType<typeof verifyLoginChallenge>;
+    try {
+      verification = verifyLoginChallenge(challenge, email, code);
+    } catch (error) {
+      return NextResponse.json(
+        { error: (error as Error)?.message ?? "Login is unavailable in this environment." },
+        { status: 503 },
+      );
+    }
+    if (!verification.ok) {
+      const response = NextResponse.json({ error: verification.error }, { status: 400 });
+      if (verification.error !== "Invalid code") {
+        response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
+      }
+      return response;
+    }
   }
 
   let sessionToken: string;

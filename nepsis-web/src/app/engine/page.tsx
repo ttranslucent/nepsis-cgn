@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   type EngineFamily,
   type EngineFrame,
+  type EngineOperatorPacket,
   type EngineOperatorResult,
   type EngineReframePayload,
   type EngineStageAuditResponse,
@@ -35,7 +36,15 @@ import {
   type OperatorAssistTarget,
 } from "@/lib/operatorModelClient";
 import {
+  requestOperatorGuide,
+  type OperatorGuideDomainAdapter,
+  type OperatorGuideResponse,
+} from "@/lib/operatorGuideClient";
+import {
   FRAME_ASSIST_TARGETS,
+  assistConfirmationPrompt,
+  assistConsequenceLevel,
+  assistRequiresEchoConfirmation,
   assistTargetTextFromFramePayload,
   buildAssistDispositions,
   canonicalFieldText,
@@ -430,6 +439,12 @@ function readStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function operatorPacketFromResult(result: EngineOperatorResult | undefined): EngineOperatorPacket | null {
+  if (!result || isPhaseRejection(result)) return null;
+  const packet = asRecord(result.packet);
+  return packet?.schema_id === "nepsis.operator_packet" ? (packet as EngineOperatorPacket) : null;
 }
 
 function readRecordArray(value: unknown): Record<string, unknown>[] {
@@ -1026,6 +1041,14 @@ function gateMissingText<TPacket>(gate: GateResult<TPacket>): string {
   return "All required checks passed.";
 }
 
+function guideRiskConcernLabel(adapter: OperatorGuideDomainAdapter): string {
+  if (adapter === "clinical") return "Must-not-miss concern";
+  if (adapter === "finance") return "Downside risk";
+  if (adapter === "legal") return "Adverse exposure";
+  if (adapter === "research") return "Validity threat";
+  return "What could go wrong";
+}
+
 function coachMessage(coach: StageCoach): string {
   if (coach.prompts.length === 0) {
     return coach.summary;
@@ -1302,6 +1325,8 @@ export default function EnginePage() {
     operatorPacket,
     operatorV3Capability,
     refreshOperatorV3Capability,
+    guideOperatorPacket,
+    guidePatchAction,
     lockOperatorFrame,
     runOperatorReport,
     lockOperatorReport,
@@ -1368,6 +1393,11 @@ export default function EnginePage() {
   const [activeAssistTarget, setActiveAssistTarget] = useState<OperatorAssistTarget | null>(null);
   const [assistReviews, setAssistReviews] = useState<AssistReview[]>([]);
   const [editingAssistId, setEditingAssistId] = useState<string | null>(null);
+  const [guideInput, setGuideInput] = useState("");
+  const [guideDomainAdapter, setGuideDomainAdapter] = useState<OperatorGuideDomainAdapter>("general");
+  const [guideBusy, setGuideBusy] = useState(false);
+  const [lastGuideResponse, setLastGuideResponse] = useState<OperatorGuideResponse | null>(null);
+  const [guideShowAllDiscriminators, setGuideShowAllDiscriminators] = useState(false);
   const [v3ArtifactJson, setV3ArtifactJson] = useState(() =>
     JSON.stringify(v3LayerArtifactTemplate("intake"), null, 2),
   );
@@ -1594,6 +1624,65 @@ export default function EnginePage() {
   const v3AuditEvents = (operatorPacket?.audit_trace ?? [])
     .map((entry) => readString(asRecord(entry)?.event))
     .filter((event): event is string => Boolean(event && event.includes("V3")));
+  const guideState = operatorPacket?.guide_state ?? null;
+  const guideLastTurn = asRecord(guideState?.last_turn);
+  const guideScaffoldRecord = asRecord(guideLastTurn?.visible_scaffold);
+  const guideConvergence = asRecord(guideState?.convergence);
+  const guideScaffold = {
+    current_frame:
+      readString(guideScaffoldRecord?.current_frame) ?? lastGuideResponse?.visible_scaffold.current_frame ?? "",
+    open_constraint:
+      readString(guideScaffoldRecord?.open_constraint) ?? lastGuideResponse?.visible_scaffold.open_constraint ?? "",
+    next_question:
+      readString(guideScaffoldRecord?.next_question) ??
+      readString(guideLastTurn?.next_question) ??
+      lastGuideResponse?.visible_scaffold.next_question ??
+      "",
+    red_concern:
+      readString(guideScaffoldRecord?.red_concern) ?? lastGuideResponse?.visible_scaffold.red_concern ?? "",
+    ready_to_lock: readStringArray(guideScaffoldRecord?.ready_to_lock).length
+      ? readStringArray(guideScaffoldRecord?.ready_to_lock)
+      : lastGuideResponse?.visible_scaffold.ready_to_lock ?? [],
+  };
+  const guideReadyToLock =
+    readStringArray(guideConvergence?.accepted_fields).length > 0
+      ? readStringArray(guideConvergence?.accepted_fields)
+      : readStringArray(guideLastTurn?.fields_ready_to_lock).length > 0
+        ? readStringArray(guideLastTurn?.fields_ready_to_lock)
+        : lastGuideResponse?.fields_ready_to_lock ?? [];
+  const guideBlockingUncertainties =
+    readStringArray(guideConvergence?.blocking_uncertainties).length > 0
+      ? readStringArray(guideConvergence?.blocking_uncertainties)
+      : readStringArray(guideLastTurn?.blocking_uncertainties).length > 0
+        ? readStringArray(guideLastTurn?.blocking_uncertainties)
+        : lastGuideResponse?.blocking_uncertainties ?? [];
+  const guideBlockingCount = readNumber(guideConvergence?.blocking_uncertainty_count);
+  const guideAcceptedFieldCount = readNumber(guideConvergence?.accepted_field_count);
+  const guideLockReady = guideConvergence?.lock_ready === true;
+  const guideRankedDiscriminators = useMemo(() => {
+    const raw =
+      Array.isArray(guideState?.discriminators) && guideState.discriminators.length > 0
+        ? guideState.discriminators
+        : Array.isArray(guideLastTurn?.ranked_discriminators)
+          ? guideLastTurn.ranked_discriminators
+          : lastGuideResponse?.ranked_discriminators;
+    return Array.isArray(raw)
+      ? raw
+          .map((item) => asRecord(item))
+          .filter((item): item is Record<string, unknown> => Boolean(item))
+          .map((item, idx) => ({
+            rank: typeof item.rank === "number" ? item.rank : idx + 1,
+            label: readString(item.label) ?? "",
+            question: readString(item.question) ?? "",
+            why_it_moves_decision: readString(item.why_it_moves_decision) ?? readString(item.rationale) ?? "",
+            basis: readString(item.basis) ?? "",
+            resolution_status: readString(item.resolution_status) ?? "open",
+          }))
+      : [];
+  }, [guideLastTurn, guideState, lastGuideResponse]);
+  const visibleGuideDiscriminators = guideShowAllDiscriminators
+    ? guideRankedDiscriminators
+    : guideRankedDiscriminators.slice(0, 3);
 
   useEffect(() => {
     if (!v3LayerLoop) {
@@ -1736,6 +1825,12 @@ export default function EnginePage() {
   const displayFrameGateStatus = frameGateView.status;
   const displayInterpretationGateStatus = interpretationGateView.status;
   const displayThresholdGateStatus = thresholdGateView.status;
+  const frameConvergencePassed = frameGateView.checks.filter((check) => check.status === "pass").length;
+  const frameConvergenceTotal = frameGateView.checks.length;
+  const frameConvergenceSummary =
+    displayFrameGateStatus === "PASS"
+      ? "Deterministic frame gate is satisfied."
+      : `${frameGateView.missing.length} blocker${frameGateView.missing.length === 1 ? "" : "s"} before frame lock.`;
   const frameCoach = useMemo(() => buildFrameCoach(frameGate), [frameGate]);
   const interpretationCoach = useMemo(
     () => buildInterpretationCoach(interpretationGate),
@@ -2022,20 +2117,122 @@ export default function EnginePage() {
     }
   }
 
+  async function handleAskGuide() {
+    clearAllErrors();
+    const userMessage = optionalText(guideInput);
+    if (!userMessage) {
+      return;
+    }
+    setGuideBusy(true);
+    try {
+      let packetForGuide = operatorPacket ?? null;
+      if (!packetForGuide) {
+        const started = await getOperatorSessionState();
+        const startedPacket = started?.packet;
+        packetForGuide =
+          startedPacket &&
+          typeof startedPacket === "object" &&
+          (startedPacket as { schema_id?: unknown }).schema_id === "nepsis.operator_packet"
+            ? (startedPacket as typeof operatorPacket)
+            : null;
+      }
+      const loopId = packetForGuide?.loop_id;
+      if (!packetForGuide || !loopId) {
+        setLocalError("Could not start an operator packet for guide mode.");
+        return;
+      }
+      pushFrameMessage("human", userMessage);
+      const guide = await requestOperatorGuide({
+        user_message: userMessage,
+        domain_adapter: guideDomainAdapter,
+        operator_loop_id: loopId,
+        context: {
+          family,
+          current_frame: frameDraft,
+          frame_gate: displayFrameGateStatus,
+          guide_state: packetForGuide.guide_state ?? null,
+          legal_next_tools: packetForGuide.legal_next_tools,
+        },
+      });
+      setLastGuideResponse(guide);
+      const guided = await guideOperatorPacket({
+        packet: packetForGuide,
+        user_message: userMessage,
+        domain_adapter: guideDomainAdapter,
+        guide: {
+          next_question: guide.next_question,
+          visible_scaffold: guide.visible_scaffold,
+          packet_delta_preview: guide.packet_delta_preview,
+          proposed_updates: guide.proposed_updates,
+          fields_ready_to_lock: guide.fields_ready_to_lock,
+          blocking_uncertainties: guide.blocking_uncertainties,
+          ranked_discriminators: guide.ranked_discriminators,
+        },
+      });
+      if (!guided) {
+        return;
+      }
+      if (guided && isPhaseRejection(guided)) {
+        setLocalError(phaseRejectionMessage(guided));
+        return;
+      }
+      pushFrameMessage("nepsis", guide.next_question);
+      if (guide.proposed_updates.length > 0) {
+        setModelAssistOpen(true);
+        setAssistReviews((prev) => [
+          ...prev,
+          ...guide.proposed_updates.map((suggestion) => ({
+            ...suggestion,
+            uiStatus: "draft" as const,
+            createdAt: new Date().toISOString(),
+            model: guide.model,
+          })),
+        ]);
+      }
+      setGuideInput("");
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Operator guide failed.");
+    } finally {
+      setGuideBusy(false);
+    }
+  }
+
   function editAssist(id: string, value: string) {
     setAssistReviews((prev) =>
-      prev.map((review) => (review.id === id ? { ...review, editedValue: value } : review)),
+      prev.map((review) =>
+        review.id === id ? { ...review, editedValue: value, confirmationChecked: false } : review,
+      ),
     );
   }
 
-  function rejectAssist(id: string) {
+  async function rejectAssist(id: string) {
     setEditingAssistId(null);
+    const review = assistReviews.find((item) => item.id === id);
+    if (review?.patch_id) {
+      const recorded = await guidePatchAction({
+        patch_id: review.patch_id,
+        action: "reject",
+      });
+      if (!recorded) {
+        return;
+      }
+      if (recorded && isPhaseRejection(recorded)) {
+        setLocalError(phaseRejectionMessage(recorded));
+        return;
+      }
+    }
     setAssistReviews((prev) =>
       prev.map((review) => (review.id === id ? { ...review, uiStatus: "rejected" } : review)),
     );
   }
 
-  function applyAssist(review: AssistReview) {
+  function toggleAssistConfirmation(id: string, checked: boolean) {
+    setAssistReviews((prev) =>
+      prev.map((review) => (review.id === id ? { ...review, confirmationChecked: checked } : review)),
+    );
+  }
+
+  function applyAssistValue(review: AssistReview) {
     const text = review.editedValue ?? canonicalFieldText(review.proposedValue);
     if (review.target === "frame.text") {
       setFrameDraft((prev) => ({ ...prev, text }));
@@ -2061,11 +2258,81 @@ export default function EnginePage() {
     if (review.target === "next_frame.text") {
       setNextFrameDraft((prev) => ({ ...prev, text }));
     }
+  }
+
+  async function applyAssist(review: AssistReview) {
+    if (assistRequiresEchoConfirmation(review.target) && !review.confirmationChecked) {
+      setLocalError("Confirm the high-consequence patch before accepting it.");
+      return;
+    }
+    const finalText = review.editedValue ?? canonicalFieldText(review.proposedValue);
+    if (review.patch_id) {
+      const recorded = await guidePatchAction({
+        patch_id: review.patch_id,
+        action: review.editedValue !== undefined ? "accept_edited" : "accept",
+        final_value: finalText,
+        confirmation: assistRequiresEchoConfirmation(review.target)
+          ? { checked: review.confirmationChecked === true, text: finalText }
+          : undefined,
+        receipt_id: review.proposalReceipt.receipt_id,
+      });
+      if (!recorded) {
+        return;
+      }
+      if (recorded && isPhaseRejection(recorded)) {
+        setLocalError(phaseRejectionMessage(recorded));
+        return;
+      }
+    }
+    applyAssistValue(review);
     setEditingAssistId(null);
     setAssistReviews((prev) =>
       prev.map((item) =>
         item.id === review.id
           ? { ...item, uiStatus: review.editedValue !== undefined ? "edited" : "accepted" }
+          : item,
+      ),
+    );
+  }
+
+  async function acceptLowConsequenceAssists() {
+    const drafts = assistReviews.filter(
+      (review) => review.uiStatus === "draft" && assistConsequenceLevel(review.target) === "low",
+    );
+    if (drafts.length === 0) {
+      return;
+    }
+    const batchId = `guide-batch-${Date.now()}`;
+    let packetForAction = operatorPacket;
+    for (const review of drafts) {
+      if (!review.patch_id) {
+        continue;
+      }
+      const finalText = review.editedValue ?? canonicalFieldText(review.proposedValue);
+      const recorded = await guidePatchAction({
+        packet: packetForAction ?? undefined,
+        patch_id: review.patch_id,
+        action: review.editedValue !== undefined ? "accept_edited" : "accept",
+        final_value: finalText,
+        receipt_id: review.proposalReceipt.receipt_id,
+        batch_id: batchId,
+      });
+      if (!recorded) {
+        return;
+      }
+      if (recorded && isPhaseRejection(recorded)) {
+        setLocalError(phaseRejectionMessage(recorded));
+        return;
+      }
+      packetForAction = operatorPacketFromResult(recorded) ?? packetForAction;
+    }
+    const acceptedIds = new Set(drafts.map((review) => review.id));
+    drafts.forEach((review) => applyAssistValue(review));
+    setEditingAssistId(null);
+    setAssistReviews((prev) =>
+      prev.map((item) =>
+        acceptedIds.has(item.id)
+          ? { ...item, uiStatus: item.editedValue !== undefined ? "edited" : "accepted" }
           : item,
       ),
     );
@@ -2459,6 +2726,9 @@ export default function EnginePage() {
     setAssistReviews([]);
     setEditingAssistId(null);
     setActiveAssistTarget(null);
+    setGuideInput("");
+    setGuideDomainAdapter("general");
+    setLastGuideResponse(null);
     await refreshSessions();
   }
 
@@ -3336,6 +3606,9 @@ export default function EnginePage() {
     if (!liveOperatorSurface || (!modelAssistOpen && assistReviews.length === 0)) {
       return null;
     }
+    const lowDraftCount = assistReviews.filter(
+      (review) => review.uiStatus === "draft" && assistConsequenceLevel(review.target) === "low",
+    ).length;
     return (
       <section
         id="operator-assist-review"
@@ -3348,13 +3621,24 @@ export default function EnginePage() {
               Field suggestions stay advisory until accepted, edited, or rejected.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setModelAssistOpen(false)}
-            className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs hover:border-nepsis-accent"
-          >
-            Hide
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {lowDraftCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => void acceptLowConsequenceAssists()}
+                className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs text-nepsis-muted hover:border-nepsis-accent"
+              >
+                Accept low-consequence drafts ({lowDraftCount})
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setModelAssistOpen(false)}
+              className="rounded-full border border-nepsis-border px-2 py-0.5 text-xs hover:border-nepsis-accent"
+            >
+              Hide
+            </button>
+          </div>
         </div>
         {assistReviews.length === 0 ? (
           <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs text-nepsis-muted">
@@ -3365,6 +3649,10 @@ export default function EnginePage() {
             {assistReviews.map((review) => {
               const editing = editingAssistId === review.id;
               const value = review.editedValue ?? canonicalFieldText(review.proposedValue);
+              const consequence = review.consequenceLevel ?? assistConsequenceLevel(review.target);
+              const confirmation = review.confirmationPrompt ?? assistConfirmationPrompt(review.target);
+              const requiresEcho =
+                review.requiresEchoConfirmation ?? assistRequiresEchoConfirmation(review.target);
               return (
                 <div key={review.id} className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -3374,9 +3662,20 @@ export default function EnginePage() {
                         {targetLabel(review.target)} · {review.uiStatus}
                       </div>
                     </div>
-                    <span className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted">
-                      {review.model}
-                    </span>
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                          consequence === "high"
+                            ? "border-amber-400/40 text-amber-200"
+                            : "border-nepsis-border text-nepsis-muted"
+                        }`}
+                      >
+                        {consequence === "high" ? "high consequence" : "low consequence"}
+                      </span>
+                      <span className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted">
+                        {review.model}
+                      </span>
+                    </div>
                   </div>
                   {editing ? (
                     <textarea
@@ -3393,14 +3692,26 @@ export default function EnginePage() {
                   )}
                   {review.rationale ? <div className="mt-2 text-nepsis-muted">{review.rationale}</div> : null}
                   {review.riskNote ? <div className="mt-1 text-amber-300">{review.riskNote}</div> : null}
+                  <div className="mt-2 text-[11px] text-nepsis-muted">{confirmation}</div>
+                  {requiresEcho && review.uiStatus === "draft" ? (
+                    <label className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100">
+                      <input
+                        type="checkbox"
+                        checked={review.confirmationChecked === true}
+                        onChange={(event) => toggleAssistConfirmation(review.id, event.target.checked)}
+                        className="mt-0.5 h-3.5 w-3.5"
+                      />
+                      <span>I confirm this patch may narrow or change the frame or risk channel.</span>
+                    </label>
+                  ) : null}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => applyAssist(review)}
-                      disabled={review.uiStatus !== "draft"}
+                      onClick={() => void applyAssist(review)}
+                      disabled={review.uiStatus !== "draft" || (requiresEcho && !review.confirmationChecked)}
                       className="rounded-full bg-nepsis-accent px-3 py-1 text-xs font-semibold text-black disabled:opacity-50"
                     >
-                      Accept suggestion
+                      {consequence === "high" ? "Confirm patch" : "Accept suggestion"}
                     </button>
                     <button
                       type="button"
@@ -3412,7 +3723,7 @@ export default function EnginePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => rejectAssist(review.id)}
+                      onClick={() => void rejectAssist(review.id)}
                       disabled={review.uiStatus !== "draft"}
                       className="rounded-full border border-nepsis-border px-3 py-1 text-xs text-nepsis-muted hover:border-nepsis-accent disabled:opacity-50"
                     >
@@ -3632,6 +3943,194 @@ export default function EnginePage() {
               Open Status
             </a>
           </div>
+        )}
+
+        {liveOperatorSurface && (
+          <section className="mt-3 rounded-lg border border-nepsis-border bg-black/20 p-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold">Operator-guided packet mode</h2>
+                    <div className="mt-1 text-xs text-nepsis-muted">
+                      Conversation crystallizes into reviewable packet deltas.
+                    </div>
+                    <div className="mt-1 text-[11px] text-nepsis-muted">
+                      Adapter changes wording and emphasis only; the packet contract is unchanged.
+                    </div>
+                  </div>
+                  <label className="text-xs text-nepsis-muted">
+                    Domain adapter
+                    <select
+                      aria-label="Domain adapter"
+                      value={guideDomainAdapter}
+                      onChange={(event) =>
+                        setGuideDomainAdapter(event.target.value as OperatorGuideDomainAdapter)
+                      }
+                      className="ml-2 rounded-lg border border-nepsis-border bg-black/30 px-2 py-1 text-xs text-nepsis-text"
+                    >
+                      <option value="general">general</option>
+                      <option value="clinical">clinical</option>
+                      <option value="finance">finance</option>
+                      <option value="legal">legal</option>
+                      <option value="research">research</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="h-40 overflow-auto rounded-lg border border-nepsis-border bg-black/30 p-2 text-xs">
+                  {frameChat.map((message) => (
+                    <div key={`guide-${message.id}`} className="mb-2">
+                      <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
+                        {message.role === "human" ? "You" : "Nepsis"}
+                      </span>
+                      {formatMessageTime(message.at) && (
+                        <span className="text-nepsis-muted"> · {formatMessageTime(message.at)}</span>
+                      )}
+                      <div className="mt-0.5 whitespace-pre-wrap text-nepsis-text">{message.text}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <label className="sr-only" htmlFor="operator-guided-packet-message">
+                    Operator guided packet message
+                  </label>
+                  <textarea
+                    id="operator-guided-packet-message"
+                    aria-label="Operator guided packet message"
+                    value={guideInput}
+                    onChange={(event) => setGuideInput(event.target.value)}
+                    rows={3}
+                    placeholder="Tell me the case, problem, decision, or uncertainty..."
+                    className="w-full rounded-lg border border-nepsis-border bg-black/30 px-2 py-1.5 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAskGuide()}
+                    disabled={guideBusy || !optionalText(guideInput)}
+                    className="h-fit rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
+                  >
+                    {guideBusy ? "Working..." : "Ask guide"}
+                  </button>
+                </div>
+              </div>
+
+              <aside
+                aria-label="Operator packet instruments"
+                className="space-y-2 rounded-lg border border-nepsis-border bg-black/30 p-3 text-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Packet instruments</h3>
+                  <span className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted">
+                    turns: {guideState?.message_count ?? 0}
+                  </span>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Current frame</div>
+                  <div className="mt-1 text-nepsis-text">
+                    {guideScaffold.current_frame || frameDraft.text || "Not crystallized yet"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Open constraint</div>
+                  <div className="mt-1 text-nepsis-text">
+                    {guideScaffold.open_constraint || "No guide constraint recorded yet"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Frame convergence</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${gateBadgeClass(displayFrameGateStatus)}`}>
+                      {displayFrameGateStatus}
+                    </span>
+                    <span className="text-nepsis-text">
+                      {frameConvergencePassed}/{frameConvergenceTotal} checks
+                    </span>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                        guideLockReady ? "border-emerald-400/40 text-emerald-200" : "border-nepsis-border text-nepsis-muted"
+                      }`}
+                    >
+                      guide {guideLockReady ? "ready" : "open"}
+                    </span>
+                  </div>
+                  <div className={`mt-1 ${gateTextClass(displayFrameGateStatus)}`}>{frameConvergenceSummary}</div>
+                  <div className="mt-1 text-[11px] text-nepsis-muted">
+                    Server guide state: {guideBlockingCount ?? 0} blocking · {guideAcceptedFieldCount ?? 0} accepted fields
+                  </div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Ready to lock</div>
+                  <div className="mt-1 text-nepsis-text">
+                    {(guideScaffold.ready_to_lock?.length ? guideScaffold.ready_to_lock : guideReadyToLock).join(", ") ||
+                      "No advisory lock candidate yet"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">{guideRiskConcernLabel(guideDomainAdapter)}</div>
+                  <div className="mt-1 text-red-100">{guideScaffold.red_concern || "Awaiting risk concern"}</div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Blocking uncertainties</div>
+                  <div className="mt-1 text-nepsis-text">
+                    {guideBlockingUncertainties.join(", ") || "None recorded yet"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Discriminator queue</div>
+                  <div className="mt-1 space-y-1">
+                    {guideRankedDiscriminators.length === 0 ? (
+                      <div className="text-nepsis-text">No queue yet</div>
+                    ) : (
+                      visibleGuideDiscriminators.map((row) => (
+                        <div
+                          key={`${row.rank}-${row.label}-${row.question}-${row.resolution_status}`}
+                          className={`rounded border p-2 ${
+                            row.rank === 1 ? "border-amber-400/50 bg-amber-500/10" : "border-nepsis-border bg-black/20"
+                          }`}
+                        >
+                          <div className="font-medium text-nepsis-text">
+                            {row.rank}. {row.label || row.question}
+                            {row.rank === 1 ? <span className="ml-2 text-[11px] text-amber-200">current</span> : null}
+                            {row.resolution_status === "mooted" ? (
+                              <span className="ml-2 text-[11px] text-nepsis-muted">mooted</span>
+                            ) : null}
+                          </div>
+                          {row.question ? <div className="mt-1 text-nepsis-text">{row.question}</div> : null}
+                          {row.why_it_moves_decision ? (
+                            <div className="mt-1 text-nepsis-muted">Rationale: {row.why_it_moves_decision}</div>
+                          ) : null}
+                          {"basis" in row && typeof row.basis === "string" && row.basis ? (
+                            <div className="mt-1 text-nepsis-muted">Basis: {row.basis}</div>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                    {guideRankedDiscriminators.length > 3 ? (
+                      <button
+                        type="button"
+                        onClick={() => setGuideShowAllDiscriminators((value) => !value)}
+                        className="text-[11px] text-nepsis-accent"
+                      >
+                        {guideShowAllDiscriminators ? "Show top 3" : `Show ${guideRankedDiscriminators.length - 3} more`}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-nepsis-muted">Audit</div>
+                  <div className="mt-1 font-mono text-[11px] text-nepsis-text">
+                    {operatorPacket?.audit_trace?.some((entry) => readString(asRecord(entry)?.event) === "GUIDE_PATCH_ACTION")
+                      ? "GUIDE_TURN + GUIDE_PATCH_ACTION recorded"
+                      : operatorPacket?.audit_trace?.some((entry) => readString(asRecord(entry)?.event) === "GUIDE_TURN")
+                        ? "GUIDE_TURN recorded"
+                      : "No guide turn recorded"}
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
         )}
 
         {userMode && (

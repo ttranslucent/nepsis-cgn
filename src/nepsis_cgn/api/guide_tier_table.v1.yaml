@@ -1,0 +1,49 @@
+version: guide-tier-table-v1
+canonicalization:
+  encoding: utf-8
+  unicode_normalization: NFC
+  line_endings: LF
+  trim_trailing_line_whitespace: true
+  final_newline_policy: ignored
+default:
+  friction_tier: batch_eligible
+  batch_eligible: true
+  requires_echo_confirmation: false
+tiers:
+  consequence_bearing:
+    batch_eligible: false
+    requires_echo_confirmation: true
+    deterministic_reason: "Field can narrow the frame, alter ruin weighting, change domain posture, or affect irreversible commitment."
+assignments:
+  ruin_weighting_fields:
+    friction_tier: consequence_bearing
+    fields:
+      - red_concern
+      - risk_tolerance
+      - action_threshold
+      - irreversible_action
+      - ruin_path
+  option_set_narrowing_fields:
+    friction_tier: consequence_bearing
+    fields:
+      - frame.text
+      - frame.constraints_hard
+      - frame.key_uncertainty
+      - frame.red_definition
+      - frame.blue_goals
+      - frame_constraint
+      - excluded_options
+      - candidate_frame
+  domain_posture_fields:
+    friction_tier: consequence_bearing
+    fields:
+      - adapter
+  ordinary_packet_fields:
+    friction_tier: batch_eligible
+    fields:
+      - objective
+      - scope
+      - known_facts
+      - missing_constraints
+      - notes
+      - frame.constraints_soft

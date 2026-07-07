@@ -15,6 +15,7 @@ export type OperatorModelMode = "suggest_field" | "review_completion";
 
 export type OperatorModelSuggestion = {
   id: string;
+  patch_id?: string;
   target: OperatorAssistTarget;
   title: string;
   proposedValue: string | string[];
@@ -22,6 +23,9 @@ export type OperatorModelSuggestion = {
   proposalReceipt: OperatorProposalReceipt;
   rationale: string;
   riskNote: string;
+  consequenceLevel?: "low" | "high";
+  confirmationPrompt?: string;
+  requiresEchoConfirmation?: boolean;
 };
 
 export type OperatorModelResponse = {

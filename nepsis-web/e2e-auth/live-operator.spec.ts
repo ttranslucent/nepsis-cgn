@@ -419,7 +419,9 @@ test("field assist requires explicit acceptance, supports editing, and sends ver
   await page
     .getByRole("textbox", { name: /Edit suggestion/i })
     .fill("Maintain RED before BLUE sequencing.\nNo silent gate bypass.");
-  await page.getByRole("button", { name: /Accept suggestion/i }).click();
+  await expect(page.getByRole("button", { name: /Confirm patch/i })).toBeDisabled();
+  await page.getByLabel(/I confirm this patch may narrow/i).check();
+  await page.getByRole("button", { name: /Confirm patch/i }).click();
   await expect(page.getByText("Hard constraints · edited")).toBeVisible();
   await expect(page.getByRole("textbox", { name: /Hard constraints/i })).toHaveValue(/No silent gate bypass/);
 
@@ -434,6 +436,209 @@ test("field assist requires explicit acceptance, supports editing, and sends ver
       expect.objectContaining({
         target: "frame.constraints_hard",
         disposition: "edited",
+        proposed_value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        final_value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+    ]),
+  );
+});
+
+test("operator guided packet mode turns vague input into reviewable packet deltas", async ({
+  page,
+}) => {
+  await useIsolatedRateLimitBucket(page, "guided-packet");
+  const packetCalls: Array<Record<string, unknown>> = [];
+  const guideCalls: Array<Record<string, unknown>> = [];
+  const proposedValue = "Decide the next irreversible action under possible sepsis.";
+  const proposedValueHash = sha256Hex(proposedValue);
+  const proposedSoftValue = "Avoid unnecessary intervention if a discriminator safely shifts the frame.";
+  const proposedSoftValueHash = sha256Hex(proposedSoftValue);
+  const model = "gpt-4.1-mini";
+  let currentPacket = packetStub("frame_draft", "START");
+
+  await page.route("**/api/engine/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.route("**/api/engine/sessions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sessions: [] }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/start", async (route) => {
+    currentPacket = packetStub("frame_draft", "START");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/operator/guide", async (route) => {
+    const payload = await route.request().postDataJSON();
+    guideCalls.push(payload);
+    expect(payload.domain_adapter).toBe("clinical");
+    expect(payload.user_message).toContain("sepsis");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        model,
+        next_question: "What irreversible action are you considering first?",
+        visible_scaffold: {
+          current_frame: "Possible sepsis with alternate frame open.",
+          open_constraint: "Do not close before a discriminator addresses high-cost miss risk.",
+          red_concern: "Delayed source control or undertreatment.",
+          ready_to_lock: ["Frame question"],
+        },
+        packet_delta_preview: {
+          "frame.text": proposedValue,
+          "frame.constraints_soft": [proposedSoftValue],
+        },
+        proposed_updates: [
+          {
+            id: "guide-frame-text",
+            target: "frame.text",
+            title: "Decision frame",
+            proposedValue,
+            proposedValueHash,
+            proposalReceipt: proposalReceipt("frame.text", model, proposedValueHash),
+            rationale: "The vague concern needs a decision frame before RED/BLUE optimization.",
+            riskNote: "Operator must confirm this is the active decision.",
+            consequenceLevel: "high",
+            confirmationPrompt: "frame text changes the frame or risk channel. Confirm this patch individually.",
+            requiresEchoConfirmation: true,
+          },
+          {
+            id: "guide-soft-constraint",
+            target: "frame.constraints_soft",
+            title: "Soft constraint",
+            proposedValue: proposedSoftValue,
+            proposedValueHash: proposedSoftValueHash,
+            proposalReceipt: proposalReceipt("frame.constraints_soft", model, proposedSoftValueHash),
+            rationale: "This preserves the user's concern without narrowing the frame.",
+            riskNote: "",
+            consequenceLevel: "low",
+            confirmationPrompt: "frame constraints_soft can be batch accepted when it preserves already-stated wording.",
+            requiresEchoConfirmation: false,
+          },
+        ],
+        fields_ready_to_lock: ["frame.text"],
+        blocking_uncertainties: ["first irreversible action"],
+        ranked_discriminators: [
+          {
+            rank: 1,
+            label: "irreversible action",
+            question: "Antibiotics, fluids, transfer, imaging, or observation?",
+            why_it_moves_decision: "Separates safety action from diagnostic closure.",
+            basis: "consequence asymmetry",
+          },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/guide", async (route) => {
+    const payload = await route.request().postDataJSON();
+    currentPacket = {
+      ...currentPacket,
+      guide_state: {
+        schema_id: "nepsis.operator_guide_state",
+        schema_version: "0.1.0",
+        domain_adapter: payload.domain_adapter,
+        message_count: 1,
+        last_turn: {
+          next_question: payload.guide.next_question,
+          visible_scaffold: payload.guide.visible_scaffold,
+          ranked_discriminators: payload.guide.ranked_discriminators,
+        },
+      },
+      audit_trace: [
+        ...currentPacket.audit_trace,
+        { event: "GUIDE_TURN", arguments: { domain_adapter: payload.domain_adapter } },
+      ],
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentPacket),
+    });
+  });
+  await page.route("**/api/engine/operator-packet/frame", async (route) => {
+    const payload = await route.request().postDataJSON();
+    packetCalls.push(payload);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(packetStub("frame_locked", "LOCK_FRAME", payload.frame)),
+    });
+  });
+
+  await login(page);
+  await page.goto("/operator");
+
+  await page.getByLabel("Domain adapter").selectOption("clinical");
+  await page
+    .getByRole("textbox", { name: /Operator guided packet message/i })
+    .fill("I am worried this is sepsis but something feels off.");
+  await page.getByRole("button", { name: /Ask guide/i }).click();
+
+  const packetInstruments = page.getByRole("complementary", {
+    name: "Operator packet instruments",
+  });
+  await expect(page.getByText("What irreversible action are you considering first?").first()).toBeVisible();
+  await expect(page.getByText("Possible sepsis with alternate frame open.")).toBeVisible();
+  await expect(packetInstruments.getByText("1. irreversible action")).toBeVisible();
+  await expect(packetInstruments.getByText("Frame convergence")).toBeVisible();
+  await expect(packetInstruments.getByText("Basis: consequence asymmetry")).toBeVisible();
+  await expect(page.getByText("Decision frame", { exact: true })).toBeVisible();
+  await expect(page.getByText("high consequence")).toBeVisible();
+  await expect(page.getByText("low consequence")).toBeVisible();
+
+  await page.getByRole("button", { name: /Accept low-consequence drafts/i }).click();
+  await expect(page.getByRole("textbox", { name: /Soft constraints/i })).toHaveValue(proposedSoftValue);
+  await expect(page.getByRole("button", { name: /Confirm patch/i })).toBeDisabled();
+  await page.getByLabel(/I confirm this patch may narrow/i).check();
+  await page.getByRole("button", { name: /Confirm patch/i }).click();
+  await expect(page.getByRole("textbox", { name: /Frame question/i })).toHaveValue(proposedValue);
+  await page
+    .getByRole("textbox", { name: /Key uncertainty/i })
+    .fill("Whether this is true sepsis or an alternate high-risk frame.");
+  await page
+    .getByRole("textbox", { name: /Hard constraints/i })
+    .fill("Maintain RED before BLUE sequencing.");
+  await page.getByRole("textbox", { name: /Soft constraints/i }).fill(proposedSoftValue);
+  await page.getByRole("textbox", { name: /Red channel definition/i }).fill("Missing time-sensitive infection.");
+  await page.getByRole("textbox", { name: /Blue channel goals/i }).fill("Choose the least harmful next action.");
+
+  const lockButton = page.getByRole("button", { name: /Lock Frame/i });
+  await expect(lockButton).toBeEnabled();
+  await lockButton.click();
+
+  await expect.poll(() => guideCalls.length).toBe(1);
+  await expect.poll(() => packetCalls.length).toBe(1);
+  expect(packetCalls[0].packet).toEqual(
+    expect.objectContaining({
+      guide_state: expect.objectContaining({
+        schema_id: "nepsis.operator_guide_state",
+      }),
+    }),
+  );
+  const dispositions = packetCalls[0].assist_acceptances as Array<Record<string, unknown>>;
+  expect(dispositions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        target: "frame.text",
+        disposition: "accepted",
+        proposed_value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        final_value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+      expect.objectContaining({
+        target: "frame.constraints_soft",
+        disposition: "accepted",
         proposed_value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
         final_value_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
       }),

@@ -6,7 +6,9 @@ import json
 import os
 import re
 import secrets
+import unicodedata
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +26,16 @@ SCHEMA_VERSION = "2.1.0"
 INTEGRITY_SEAL_VERSION = "hmac-sha256:v1"
 V3_LAYER_LOOP_SCHEMA_ID = "nepsis.operator_v3_layer_loop"
 V3_LAYER_LOOP_SCHEMA_VERSION = "0.1.0"
+GUIDE_STATE_SCHEMA_ID = "nepsis.operator_guide_state"
+GUIDE_STATE_SCHEMA_VERSION = "0.1.0"
+GUIDE_TIER_TABLE_VERSION = "guide-tier-table-v1"
+GUIDE_TEXT_HASH_CANONICALIZATION = {
+    "encoding": "utf-8",
+    "unicode_normalization": "NFC",
+    "line_endings": "LF",
+    "trim_trailing_line_whitespace": True,
+    "final_newline_policy": "ignored",
+}
 V3_LAYER_NAVIGATION_SHORTCUTS = {
     "next_layer": "Meta+ArrowRight",
     "previous_layer": "Meta+ArrowLeft",
@@ -51,6 +63,35 @@ _V3_OPERATOR_TRACE_EVENTS = {
     "LOCK_V3_LAYER",
 }
 _DEVELOPMENT_SEAL_SECRET = secrets.token_bytes(32)
+_GUIDE_DOMAIN_ADAPTERS = {"general", "clinical", "finance", "legal", "research"}
+_GUIDE_MAX_TURNS = 8
+_GUIDE_EVENT_TYPES = {"GUIDE_TURN", "GUIDE_PATCH_ACTION", "GUIDE_LOCK_REFUSAL"}
+_GUIDE_PATCH_ACTIONS = {"accept", "accept_edited", "reject", "void", "superseded"}
+_GUIDE_PATCH_PENDING_STATUSES = {"proposed"}
+_GUIDE_DISCRIMINATOR_RESOLUTION_STATUSES = {
+    "open",
+    "resolved",
+    "mooted",
+    "blocked",
+    "deferred",
+}
+_GUIDE_ORDINAL_ESTIMATES = {"low", "medium", "high"}
+_GUIDE_CONSEQUENCE_TARGETS = {
+    "adapter",
+    "candidate_frame",
+    "excluded_options",
+    "frame.text",
+    "frame.constraints_hard",
+    "frame.key_uncertainty",
+    "frame.red_definition",
+    "frame.blue_goals",
+    "frame_constraint",
+    "irreversible_action",
+    "red_concern",
+    "risk_tolerance",
+    "ruin_path",
+    "action_threshold",
+}
 
 _DEFAULT_FRAME = {
     "text": "Operator session draft.",
@@ -67,7 +108,7 @@ _DEFAULT_FRAME = {
 }
 _DEFAULT_GOVERNANCE = {"c_fp": 1.0, "c_fn": 9.0}
 _LEGAL_NEXT: dict[str, list[str]] = {
-    "frame_draft": ["start_operator_packet", "lock_frame", "abandon_packet"],
+    "frame_draft": ["start_operator_packet", "guide_turn", "lock_frame", "abandon_packet"],
     "frame_locked": ["run_report", "abandon_packet"],
     "report_evaluated": ["run_report", "lock_report", "abandon_packet"],
     "report_locked": ["set_threshold_decision", "abandon_packet"],
@@ -117,6 +158,113 @@ def start_operator_packet(
     )
 
 
+def guide_turn(
+    *,
+    packet: dict[str, Any],
+    user_message: str,
+    domain_adapter: str,
+    guide: dict[str, Any],
+) -> dict[str, Any]:
+    _service_from_packet(packet)
+    phase = _packet_phase(packet)
+    if phase != "frame_draft":
+        return _local_rejection(
+            attempted_tool="guide_turn",
+            current_phase=phase,
+            failed_precondition="guide_frame_draft_required",
+            missing=["FRAME_DRAFT"],
+            coach_prompts=[
+                "Operator-guided packet mode V1 can only update guide state before the frame is locked."
+            ],
+        )
+    turn = _normalize_guide_turn(
+        user_message=user_message,
+        domain_adapter=domain_adapter,
+        guide=guide,
+    )
+    arguments = _guide_trace_arguments(turn, domain_adapter=turn["domain_adapter"])
+    arguments["turn"] = turn
+    arguments = _with_guide_event_chain(packet, "GUIDE_TURN", arguments)
+    trace = _append_trace(packet, "GUIDE_TURN", arguments)
+    state = _replay_guide_state_from_trace(trace)
+    return _packet_from_guide_transition(packet, trace, state)
+
+
+def guide_patch_action(
+    *,
+    packet: dict[str, Any],
+    patch_id: str,
+    action: str,
+    final_value: Any = None,
+    confirmation: dict[str, Any] | None = None,
+    receipt_id: str | None = None,
+    batch_id: str | None = None,
+) -> dict[str, Any]:
+    _service_from_packet(packet)
+    normalized_patch_id = _required_nonempty_string(
+        patch_id, max_len=80, field="patch_id"
+    )
+    normalized_action = _bounded_string(action, max_len=40, field="action")
+    if normalized_action not in {"accept", "accept_edited", "reject", "void"}:
+        raise ValueError("guide patch action must be accept, accept_edited, reject, or void")
+    patch = _guide_patch_by_id(_packet_guide_state(packet), normalized_patch_id)
+    if patch.get("status") not in _GUIDE_PATCH_PENDING_STATUSES:
+        raise ValueError("guide patch action requires a pending proposed patch")
+
+    proposed_hash = _required_hash(
+        patch.get("proposed_value_hash"), field="patch.proposed_value_hash"
+    )
+    final_text = ""
+    final_hash = ""
+    confirmation_hash = ""
+    confirmation_checked = False
+    if normalized_action in {"accept", "accept_edited"}:
+        if final_value is None:
+            final_text = _canonical_assist_text(patch.get("proposed_value")) or ""
+        else:
+            final_text = _canonical_assist_text(final_value) or ""
+        final_hash = guide_text_sha256(final_text)
+        if normalized_action == "accept" and final_hash != proposed_hash:
+            raise ValueError("guide patch accept requires final text to match proposed hash")
+        if normalized_action == "accept_edited" and final_hash == proposed_hash:
+            raise ValueError("guide patch accept_edited requires changed final text")
+        confirmation_checked, confirmation_hash = _normalize_guide_confirmation(
+            confirmation,
+            required=bool(patch.get("requires_echo_confirmation")),
+        )
+        if patch.get("requires_echo_confirmation") and confirmation_hash != final_hash:
+            raise ValueError("guide patch confirmation hash does not match final text")
+
+    arguments = _with_guide_event_chain(
+        packet,
+        "GUIDE_PATCH_ACTION",
+        {
+            "event_id": f"guide_patch_action_{uuid4().hex}",
+            "patch_id": normalized_patch_id,
+            "action": normalized_action,
+            "target": patch.get("target"),
+            "prior_text_hash": proposed_hash,
+            "final_value_hash": final_hash,
+            "confirmation_hash": confirmation_hash,
+            "confirmation_checked": confirmation_checked,
+            "echo_origin": (
+                "deterministic_server_template"
+                if patch.get("requires_echo_confirmation")
+                else "not_required"
+            ),
+            "receipt_id": _bounded_string(
+                receipt_id, max_len=120, field="receipt_id"
+            ),
+            "batch_id": _bounded_string(batch_id, max_len=120, field="batch_id"),
+            "batch_accepted": bool(batch_id),
+            "at": _now(),
+        },
+    )
+    trace = _append_trace(packet, "GUIDE_PATCH_ACTION", arguments)
+    state = _replay_guide_state_from_trace(trace)
+    return _packet_from_guide_transition(packet, trace, state)
+
+
 def lock_frame(
     *,
     packet: dict[str, Any],
@@ -127,6 +275,21 @@ def lock_frame(
     manifest_path: str | None = None,
     assist_acceptances: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    blockers = _guide_lock_blockers(packet)
+    if blockers:
+        arguments = _with_guide_event_chain(
+            packet,
+            "GUIDE_LOCK_REFUSAL",
+            {
+                "event_id": f"guide_refusal_{uuid4().hex}",
+                "reason": "blocking_uncertainties_present",
+                "blocking_uncertainties": blockers,
+                "at": _now(),
+            },
+        )
+        trace = _append_trace(packet, "GUIDE_LOCK_REFUSAL", arguments)
+        state = _replay_guide_state_from_trace(trace)
+        return _packet_from_guide_transition(packet, trace, state)
     accepted_assists = _normalize_assist_acceptances(
         assist_acceptances,
         final_values=_frame_assist_values(frame),
@@ -577,6 +740,9 @@ def inspect_operator_packet(packet: dict[str, Any] | None = None) -> dict[str, A
     v3_loop = _packet_v3_layer_loop(resolved)
     if v3_loop is not None:
         state["v3_layer_loop"] = _json_copy(v3_loop)
+    guide_state = _packet_guide_state(resolved)
+    if guide_state is not None:
+        state["guide_state"] = _json_copy(guide_state)
     return state
 
 
@@ -607,6 +773,44 @@ def _sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def canonical_guide_text(value: str) -> str:
+    """Canonical text form shared by guide hashing and echo confirmation."""
+    normalized = unicodedata.normalize("NFC", value)
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip(" \t") for line in normalized.splitlines())
+
+
+def guide_text_sha256(value: str) -> str:
+    return _sha256_hex(canonical_guide_text(value))
+
+
+def _guide_tier_table_sha256() -> str:
+    path = Path(__file__).with_name("guide_tier_table.v1.yaml")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        data = GUIDE_TIER_TABLE_VERSION.encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _guide_target_tier(target: str) -> dict[str, Any]:
+    if target in _GUIDE_CONSEQUENCE_TARGETS:
+        return {
+            "friction_tier": "consequence_bearing",
+            "batch_eligible": False,
+            "requires_echo_confirmation": True,
+            "tier_table_version": GUIDE_TIER_TABLE_VERSION,
+            "tier_table_sha256": _guide_tier_table_sha256(),
+        }
+    return {
+        "friction_tier": "batch_eligible",
+        "batch_eligible": True,
+        "requires_echo_confirmation": False,
+        "tier_table_version": GUIDE_TIER_TABLE_VERSION,
+        "tier_table_sha256": _guide_tier_table_sha256(),
+    }
+
+
 def _bounded_string(
     value: Any, *, max_len: int = _ASSIST_ACCEPTANCE_MAX_TEXT, field: str
 ) -> str:
@@ -616,6 +820,711 @@ def _bounded_string(
     if len(resolved) > max_len:
         raise ValueError(f"{field} exceeds maximum length of {max_len}")
     return resolved
+
+
+def _required_nonempty_string(value: Any, *, max_len: int, field: str) -> str:
+    resolved = _bounded_string(value, max_len=max_len, field=field)
+    if not resolved:
+        raise ValueError(f"{field} is required")
+    return resolved
+
+
+def _normalize_domain_adapter(value: Any) -> str:
+    adapter = _bounded_string(value, max_len=40, field="domain_adapter") or "general"
+    if adapter not in _GUIDE_DOMAIN_ADAPTERS:
+        raise ValueError(
+            f"domain_adapter must be one of: {', '.join(sorted(_GUIDE_DOMAIN_ADAPTERS))}"
+        )
+    return adapter
+
+
+def _normalize_string_list(value: Any, *, field: str, max_items: int = 8) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list when provided")
+    if len(value) > max_items:
+        raise ValueError(f"{field} exceeds maximum length of {max_items}")
+    out: list[str] = []
+    for idx, item in enumerate(value):
+        text = _bounded_string(item, max_len=500, field=f"{field}[{idx}]")
+        if text:
+            out.append(text)
+    return out
+
+
+def _normalize_guide_scaffold(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("visible_scaffold must be an object when provided")
+    out: dict[str, Any] = {}
+    for key in (
+        "current_frame",
+        "open_constraint",
+        "next_question",
+        "red_concern",
+    ):
+        text = _bounded_string(value.get(key), max_len=700, field=f"visible_scaffold.{key}")
+        if text:
+            out[key] = text
+    ready = _normalize_string_list(value.get("ready_to_lock"), field="visible_scaffold.ready_to_lock")
+    if ready:
+        out["ready_to_lock"] = ready
+    return out
+
+
+def _normalize_packet_delta_preview(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("packet_delta_preview must be an object when provided")
+    if len(value) > 16:
+        raise ValueError("packet_delta_preview exceeds maximum length of 16")
+    out: dict[str, Any] = {}
+    for key, raw in value.items():
+        field = _bounded_string(key, max_len=120, field="packet_delta_preview key")
+        if not field:
+            continue
+        if isinstance(raw, list):
+            out[field] = _normalize_string_list(raw, field=f"packet_delta_preview.{field}", max_items=8)
+        elif isinstance(raw, dict):
+            out[field] = _json_copy(raw)
+        else:
+            out[field] = _bounded_string(raw, max_len=1000, field=f"packet_delta_preview.{field}")
+    return out
+
+
+def _guide_update_consequence_level(target: str) -> str:
+    return "high" if _guide_target_tier(target)["friction_tier"] == "consequence_bearing" else "low"
+
+
+def _guide_update_confirmation_prompt(target: str) -> str:
+    if _guide_update_consequence_level(target) == "low":
+        return f"{target} can be batch accepted when it preserves already-stated wording."
+    return f"{target} changes the frame or risk channel. Confirm this patch individually."
+
+
+def _guide_update_requires_echo_confirmation(target: str) -> bool:
+    return bool(_guide_target_tier(target)["requires_echo_confirmation"])
+
+
+def _normalize_proposed_updates(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("proposed_updates must be a list when provided")
+    if len(value) > 8:
+        raise ValueError("proposed_updates exceeds maximum length of 8")
+    out: list[dict[str, Any]] = []
+    for idx, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError("proposed_updates entries must be objects")
+        target = _bounded_string(item.get("target"), max_len=120, field=f"proposed_updates[{idx}].target")
+        if not target:
+            continue
+        proposed_raw = item.get("proposed_value", item.get("proposedValue"))
+        if isinstance(proposed_raw, list):
+            proposed_value: Any = _normalize_string_list(
+                proposed_raw, field=f"proposed_updates[{idx}].proposed_value", max_items=12
+            )
+            proposed_text = "\n".join(proposed_value)
+        else:
+            proposed_text = _bounded_string(
+                proposed_raw, max_len=1000, field=f"proposed_updates[{idx}].proposed_value"
+            )
+            proposed_value = proposed_text
+        tier = _guide_target_tier(target)
+        row = {
+            "patch_id": _bounded_string(
+                item.get("patch_id", item.get("patchId", item.get("id"))),
+                max_len=80,
+                field=f"proposed_updates[{idx}].patch_id",
+            )
+            or f"patch_{uuid4().hex}",
+            "target": target,
+            "title": _bounded_string(item.get("title"), max_len=120, field=f"proposed_updates[{idx}].title")
+            or "Guide suggestion",
+            "proposed_value_hash": guide_text_sha256(proposed_text),
+            "consequence_level": _guide_update_consequence_level(target),
+            "friction_tier": tier["friction_tier"],
+            "batch_eligible": tier["batch_eligible"],
+            "confirmation_prompt": _guide_update_confirmation_prompt(target),
+            "requires_echo_confirmation": tier["requires_echo_confirmation"],
+            "tier_table_version": tier["tier_table_version"],
+            "tier_table_sha256": tier["tier_table_sha256"],
+            "status": "proposed",
+            "rationale": _bounded_string(
+                item.get("rationale"), max_len=1000, field=f"proposed_updates[{idx}].rationale"
+            ),
+            "risk_note": _bounded_string(
+                item.get("risk_note", item.get("riskNote")),
+                max_len=1000,
+                field=f"proposed_updates[{idx}].risk_note",
+            ),
+        }
+        if proposed_value:
+            row["proposed_value"] = proposed_value
+        out.append(row)
+    return out
+
+
+def _normalize_ordinal_estimate(value: Any, *, field: str) -> str:
+    if value is None:
+        return "medium"
+    resolved = _bounded_string(value, max_len=40, field=field)
+    if resolved not in _GUIDE_ORDINAL_ESTIMATES:
+        raise ValueError(f"{field} must be one of: low, medium, high")
+    return resolved
+
+
+def _normalize_discriminator_resolution_status(value: Any, *, field: str) -> str:
+    if value is None:
+        return "open"
+    resolved = _bounded_string(value, max_len=40, field=field)
+    if resolved not in _GUIDE_DISCRIMINATOR_RESOLUTION_STATUSES:
+        raise ValueError(
+            f"{field} must be one of: {', '.join(sorted(_GUIDE_DISCRIMINATOR_RESOLUTION_STATUSES))}"
+        )
+    return resolved
+
+
+def _normalize_ranked_discriminators(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("ranked_discriminators must be a list when provided")
+    if len(value) > 8:
+        raise ValueError("ranked_discriminators exceeds maximum length of 8")
+    out: list[dict[str, Any]] = []
+    for idx, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError("ranked_discriminators entries must be objects")
+        rank_raw = item.get("rank", idx + 1)
+        rank = rank_raw if isinstance(rank_raw, int) and rank_raw > 0 else idx + 1
+        rationale = _bounded_string(
+            item.get("rationale", item.get("why_it_moves_decision", item.get("whyItMovesDecision"))),
+            max_len=1000,
+            field=f"ranked_discriminators[{idx}].rationale",
+        )
+        out.append(
+            {
+                "discriminator_id": _bounded_string(
+                    item.get("discriminator_id", item.get("discriminatorId")),
+                    max_len=80,
+                    field=f"ranked_discriminators[{idx}].discriminator_id",
+                )
+                or f"disc_{uuid4().hex}",
+                "rank": rank,
+                "label": _bounded_string(
+                    item.get("label"), max_len=160, field=f"ranked_discriminators[{idx}].label"
+                ),
+                "question": _bounded_string(
+                    item.get("question"), max_len=700, field=f"ranked_discriminators[{idx}].question"
+                ),
+                "why_it_moves_decision": _bounded_string(
+                    item.get("why_it_moves_decision", item.get("whyItMovesDecision")),
+                    max_len=1000,
+                    field=f"ranked_discriminators[{idx}].why_it_moves_decision",
+                ),
+                "target_field": _bounded_string(
+                    item.get("target_field", item.get("targetField")),
+                    max_len=120,
+                    field=f"ranked_discriminators[{idx}].target_field",
+                ),
+                "expected_information_gain": _normalize_ordinal_estimate(
+                    item.get("expected_information_gain", item.get("expectedInformationGain")),
+                    field=f"ranked_discriminators[{idx}].expected_information_gain",
+                ),
+                "cost_to_resolve": _normalize_ordinal_estimate(
+                    item.get("cost_to_resolve", item.get("costToResolve")),
+                    field=f"ranked_discriminators[{idx}].cost_to_resolve",
+                ),
+                "consequence_if_wrong": _normalize_ordinal_estimate(
+                    item.get("consequence_if_wrong", item.get("consequenceIfWrong")),
+                    field=f"ranked_discriminators[{idx}].consequence_if_wrong",
+                ),
+                "rationale": rationale,
+                "rationale_sha256": guide_text_sha256(rationale),
+                "resolution_status": _normalize_discriminator_resolution_status(
+                    item.get("resolution_status", item.get("resolutionStatus")),
+                    field=f"ranked_discriminators[{idx}].resolution_status",
+                ),
+                "blocking": bool(item.get("blocking", True)),
+                "basis": _bounded_string(
+                    item.get("basis"), max_len=400, field=f"ranked_discriminators[{idx}].basis"
+                )
+                or "model_estimate",
+            }
+        )
+    return out
+
+
+def _normalize_guide_turn(
+    *,
+    user_message: str,
+    domain_adapter: str,
+    guide: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(guide, dict):
+        raise ValueError("guide must be an object")
+    message = _required_nonempty_string(user_message, max_len=4000, field="user_message")
+    adapter = _normalize_domain_adapter(domain_adapter)
+    next_question = _required_nonempty_string(
+        guide.get("next_question", guide.get("nextQuestion")),
+        max_len=700,
+        field="guide.next_question",
+    )
+    turn = {
+        "turn_id": str(uuid4()),
+        "created_at": _now(),
+        "domain_adapter": adapter,
+        "user_message_hash": guide_text_sha256(message),
+        "user_message_excerpt": message[:280],
+        "next_question": next_question,
+        "model_route_id": _bounded_string(
+            guide.get("model_route_id", guide.get("modelRouteId")),
+            max_len=120,
+            field="guide.model_route_id",
+        )
+        or "/api/operator/guide",
+        "tier_table_version": GUIDE_TIER_TABLE_VERSION,
+        "tier_table_sha256": _guide_tier_table_sha256(),
+        "canonicalization": dict(GUIDE_TEXT_HASH_CANONICALIZATION),
+        "visible_scaffold": _normalize_guide_scaffold(guide.get("visible_scaffold", guide.get("visibleScaffold"))),
+        "packet_delta_preview": _normalize_packet_delta_preview(
+            guide.get("packet_delta_preview", guide.get("packetDeltaPreview"))
+        ),
+        "proposed_updates": _normalize_proposed_updates(
+            guide.get("proposed_updates", guide.get("proposedUpdates"))
+        ),
+        "fields_ready_to_lock": _normalize_string_list(
+            guide.get("fields_ready_to_lock", guide.get("fieldsReadyToLock")),
+            field="fields_ready_to_lock",
+        ),
+        "blocking_uncertainties": _normalize_string_list(
+            guide.get("blocking_uncertainties", guide.get("blockingUncertainties")),
+            field="blocking_uncertainties",
+        ),
+        "ranked_discriminators": _normalize_ranked_discriminators(
+            guide.get("ranked_discriminators", guide.get("rankedDiscriminators"))
+        ),
+    }
+    turn["proposed_patch_ids"] = [
+        row["patch_id"] for row in turn["proposed_updates"] if isinstance(row, dict)
+    ]
+    turn["ranked_discriminator_ids"] = [
+        row["discriminator_id"]
+        for row in turn["ranked_discriminators"]
+        if isinstance(row, dict)
+    ]
+    turn["ranking_rationale_hashes"] = [
+        row["rationale_sha256"]
+        for row in turn["ranked_discriminators"]
+        if isinstance(row, dict)
+    ]
+    return turn
+
+
+def _empty_guide_state(domain_adapter: str = "general") -> dict[str, Any]:
+    return {
+        "schema_id": GUIDE_STATE_SCHEMA_ID,
+        "schema_version": GUIDE_STATE_SCHEMA_VERSION,
+        "domain_adapter": _normalize_domain_adapter(domain_adapter),
+        "message_count": 0,
+        "turns": [],
+        "patches": [],
+        "discriminators": [],
+        "convergence": _guide_convergence([], [], []),
+    }
+
+
+def apply_guide_event(
+    previous: dict[str, Any] | None,
+    *,
+    event: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any] | None:
+    if event not in _GUIDE_EVENT_TYPES:
+        return _json_copy(previous) if previous is not None else None
+    if event == "GUIDE_TURN":
+        return _apply_guide_turn_event(previous, arguments)
+    if event == "GUIDE_PATCH_ACTION":
+        return _apply_guide_patch_action_event(previous, arguments)
+    if event == "GUIDE_LOCK_REFUSAL":
+        return _apply_guide_lock_refusal_event(previous, arguments)
+    raise PacketReplayError(f"unsupported guide event: {event}")
+
+
+def _apply_guide_turn_event(
+    previous: dict[str, Any] | None, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    turn = arguments.get("turn")
+    if not isinstance(turn, dict):
+        raise PacketReplayError("GUIDE_TURN requires turn payload")
+    adapter = _normalize_domain_adapter(turn.get("domain_adapter"))
+    previous_turns = (
+        previous.get("turns")
+        if isinstance(previous, dict) and isinstance(previous.get("turns"), list)
+        else []
+    )
+    turns = [*_json_copy(previous_turns), turn][-_GUIDE_MAX_TURNS:]
+    message_count = (
+        previous.get("message_count")
+        if isinstance(previous, dict) and isinstance(previous.get("message_count"), int)
+        else len(previous_turns)
+    )
+    patches = _merge_guide_patches(
+        previous.get("patches") if isinstance(previous, dict) else None,
+        turn.get("proposed_updates"),
+    )
+    discriminators = _merge_guide_discriminators(
+        previous.get("discriminators") if isinstance(previous, dict) else None,
+        turn.get("ranked_discriminators"),
+    )
+    blocking_uncertainties = _normalize_string_list(
+        turn.get("blocking_uncertainties"),
+        field="turn.blocking_uncertainties",
+    )
+    return {
+        "schema_id": GUIDE_STATE_SCHEMA_ID,
+        "schema_version": GUIDE_STATE_SCHEMA_VERSION,
+        "domain_adapter": adapter,
+        "message_count": message_count + 1,
+        "last_turn": turn,
+        "turns": turns,
+        "patches": patches,
+        "discriminators": discriminators,
+        "convergence": _guide_convergence(
+            patches,
+            discriminators,
+            blocking_uncertainties,
+        ),
+    }
+
+
+def _apply_guide_patch_action_event(
+    previous: dict[str, Any] | None, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    if not isinstance(previous, dict):
+        raise PacketReplayError("GUIDE_PATCH_ACTION requires existing guide_state")
+    patch_id = _bounded_string(arguments.get("patch_id"), max_len=80, field="patch_id")
+    action = _bounded_string(arguments.get("action"), max_len=40, field="action")
+    if action not in _GUIDE_PATCH_ACTIONS:
+        raise PacketReplayError("GUIDE_PATCH_ACTION action is unsupported")
+    patches = []
+    matched = False
+    for patch in previous.get("patches", []):
+        if not isinstance(patch, dict):
+            continue
+        row = _json_copy(patch)
+        if row.get("patch_id") == patch_id:
+            matched = True
+            row["status"] = {
+                "accept": "accepted",
+                "accept_edited": "accepted_edited",
+            }.get(action, action)
+            row["disposition_event_id"] = arguments.get("event_id")
+            row["final_value_hash"] = arguments.get("final_value_hash", "")
+            row["confirmation_hash"] = arguments.get("confirmation_hash", "")
+            row["receipt_id"] = arguments.get("receipt_id", "")
+            row["batch_id"] = arguments.get("batch_id", "")
+        patches.append(row)
+    if not matched:
+        raise PacketReplayError(f"GUIDE_PATCH_ACTION references unknown patch: {patch_id}")
+    state = _json_copy(previous)
+    state["patches"] = patches
+    state["convergence"] = _guide_convergence(
+        patches,
+        state.get("discriminators", []),
+        _latest_blocking_uncertainties(state),
+    )
+    return state
+
+
+def _apply_guide_lock_refusal_event(
+    previous: dict[str, Any] | None, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    state = _json_copy(previous) if isinstance(previous, dict) else _empty_guide_state()
+    refusals = state.get("lock_refusals") if isinstance(state.get("lock_refusals"), list) else []
+    refusals.append(
+        {
+            "event_id": arguments.get("event_id"),
+            "reason": arguments.get("reason"),
+            "blocking_uncertainties": _json_copy(arguments.get("blocking_uncertainties")) or [],
+            "at": arguments.get("at"),
+        }
+    )
+    state["lock_refusals"] = refusals
+    state["convergence"] = _guide_convergence(
+        state.get("patches", []),
+        state.get("discriminators", []),
+        _latest_blocking_uncertainties(state),
+        lock_refusals=refusals,
+    )
+    return state
+
+
+def _merge_guide_patches(
+    previous: Any, proposed_updates: Any
+) -> list[dict[str, Any]]:
+    if isinstance(previous, list):
+        patches = [_json_copy(row) for row in previous if isinstance(row, dict)]
+    else:
+        patches = []
+    incoming = (
+        [_json_copy(row) for row in proposed_updates if isinstance(row, dict)]
+        if isinstance(proposed_updates, list)
+        else []
+    )
+    incoming_targets = {
+        row.get("target")
+        for row in incoming
+        if isinstance(row.get("target"), str)
+    }
+    superseding_by_target = {
+        row.get("target"): row.get("patch_id")
+        for row in incoming
+        if isinstance(row.get("target"), str) and isinstance(row.get("patch_id"), str)
+    }
+    for row in patches:
+        if (
+            row.get("status") in _GUIDE_PATCH_PENDING_STATUSES
+            and row.get("target") in incoming_targets
+        ):
+            row["status"] = "superseded"
+            row["superseded_by"] = superseding_by_target.get(row.get("target"), "")
+    return [*patches, *incoming]
+
+
+def _merge_guide_discriminators(
+    previous: Any, ranked_discriminators: Any
+) -> list[dict[str, Any]]:
+    if not isinstance(ranked_discriminators, list) or not ranked_discriminators:
+        return (
+            [_json_copy(row) for row in previous if isinstance(row, dict)]
+            if isinstance(previous, list)
+            else []
+        )
+    return [_json_copy(row) for row in ranked_discriminators if isinstance(row, dict)]
+
+
+def _latest_blocking_uncertainties(state: dict[str, Any]) -> list[str]:
+    last_turn = state.get("last_turn")
+    if not isinstance(last_turn, dict):
+        return []
+    return _normalize_string_list(
+        last_turn.get("blocking_uncertainties"),
+        field="last_turn.blocking_uncertainties",
+    )
+
+
+def _guide_convergence(
+    patches: Any,
+    discriminators: Any,
+    blocking_uncertainties: list[str],
+    *,
+    lock_refusals: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    patch_rows = patches if isinstance(patches, list) else []
+    discriminator_rows = discriminators if isinstance(discriminators, list) else []
+    blocking_discriminators = [
+        row
+        for row in discriminator_rows
+        if isinstance(row, dict)
+        and bool(row.get("blocking", True))
+        and row.get("resolution_status", "open") in {"open", "blocked"}
+    ]
+    accepted_fields = [
+        row.get("target")
+        for row in patch_rows
+        if isinstance(row, dict)
+        and row.get("status") in {"accepted", "accepted_edited"}
+        and isinstance(row.get("target"), str)
+    ]
+    pending_high_tier = [
+        row.get("patch_id")
+        for row in patch_rows
+        if isinstance(row, dict)
+        and row.get("status") == "proposed"
+        and row.get("friction_tier") == "consequence_bearing"
+    ]
+    blocking_count = len(blocking_uncertainties) + len(blocking_discriminators)
+    return {
+        "basis": "server_computed_from_packet_state",
+        "blocking_uncertainty_count": blocking_count,
+        "blocking_uncertainties": list(blocking_uncertainties),
+        "blocking_discriminator_ids": [
+            row.get("discriminator_id")
+            for row in blocking_discriminators
+            if isinstance(row.get("discriminator_id"), str)
+        ],
+        "accepted_field_count": len(set(accepted_fields)),
+        "accepted_fields": sorted(set(accepted_fields)),
+        "pending_consequence_patch_ids": [
+            patch_id for patch_id in pending_high_tier if isinstance(patch_id, str)
+        ],
+        "lock_ready": blocking_count == 0 and not pending_high_tier,
+        "lock_refusal_count": len(lock_refusals or []),
+    }
+
+
+def _guide_patch_by_id(
+    guide_state: dict[str, Any] | None, patch_id: str
+) -> dict[str, Any]:
+    if not isinstance(guide_state, dict):
+        raise ValueError("guide_state is required before patch actions")
+    patches = guide_state.get("patches")
+    if not isinstance(patches, list):
+        raise ValueError("guide_state patches registry is required")
+    for patch in patches:
+        if isinstance(patch, dict) and patch.get("patch_id") == patch_id:
+            return _json_copy(patch)
+    raise ValueError(f"unknown guide patch id: {patch_id}")
+
+
+def _normalize_guide_confirmation(
+    value: dict[str, Any] | None, *, required: bool
+) -> tuple[bool, str]:
+    if value is None:
+        if required:
+            raise ValueError("guide patch confirmation is required")
+        return False, ""
+    if not isinstance(value, dict):
+        raise ValueError("guide patch confirmation must be an object")
+    checked = bool(value.get("checked"))
+    text_hash = value.get("text_sha256", value.get("textSha256"))
+    if not isinstance(text_hash, str) or not text_hash:
+        text = value.get("text")
+        if isinstance(text, str):
+            text_hash = guide_text_sha256(text)
+    resolved_hash = _required_hash(text_hash, field="confirmation.text_sha256")
+    if required and not checked:
+        raise ValueError("guide patch confirmation checkbox is required")
+    return checked, resolved_hash
+
+
+def _guide_lock_blockers(packet: dict[str, Any]) -> list[str]:
+    guide_state = _packet_guide_state(packet)
+    if not isinstance(guide_state, dict):
+        return []
+    convergence = guide_state.get("convergence")
+    if not isinstance(convergence, dict):
+        return []
+    blockers = _normalize_string_list(
+        convergence.get("blocking_uncertainties"),
+        field="guide_state.convergence.blocking_uncertainties",
+        max_items=16,
+    )
+    for discriminator_id in convergence.get("blocking_discriminator_ids", []):
+        if isinstance(discriminator_id, str) and discriminator_id:
+            blockers.append(f"discriminator:{discriminator_id}")
+    return blockers
+
+
+def _guide_chain_start(packet: dict[str, Any]) -> str:
+    integrity = packet.get("integrity")
+    seal = integrity.get("seal") if isinstance(integrity, dict) else None
+    return seal if isinstance(seal, str) and seal else "0" * 64
+
+
+def _last_guide_chain_hash(trace: list[dict[str, Any]], *, fallback: str) -> str:
+    chain = fallback
+    for entry in trace:
+        if not isinstance(entry, dict) or entry.get("event") not in _GUIDE_EVENT_TYPES:
+            continue
+        args = entry.get("arguments")
+        if isinstance(args, dict) and isinstance(args.get("sealed_sha256_after"), str):
+            chain = args["sealed_sha256_after"]
+    return chain
+
+
+def _with_guide_event_chain(
+    packet: dict[str, Any], event: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    args = _json_copy(arguments) or {}
+    args.setdefault("event_id", f"guide_event_{uuid4().hex}")
+    before = _last_guide_chain_hash(
+        _packet_trace(packet),
+        fallback=_guide_chain_start(packet),
+    )
+    args["sealed_sha256_before"] = before
+    args["sealed_sha256_after"] = _guide_event_chain_hash(event, args)
+    return args
+
+
+def _guide_event_chain_hash(event: str, arguments: dict[str, Any]) -> str:
+    payload_args = {
+        key: _json_copy(value)
+        for key, value in arguments.items()
+        if key != "sealed_sha256_after"
+    }
+    payload = {
+        "event": event,
+        "arguments": _normalize_integrity_json(payload_args),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _verify_guide_event_chain(trace: list[dict[str, Any]]) -> None:
+    previous_after = ""
+    for idx, entry in enumerate(trace):
+        if not isinstance(entry, dict) or entry.get("event") not in _GUIDE_EVENT_TYPES:
+            continue
+        event = str(entry.get("event"))
+        args = entry.get("arguments")
+        if not isinstance(args, dict):
+            raise ValueError(f"guide event {idx} arguments are required")
+        before = args.get("sealed_sha256_before")
+        after = args.get("sealed_sha256_after")
+        if not isinstance(before, str) or not _SHA256_HEX_RE.match(before):
+            raise ValueError(f"guide event {idx} sealed_sha256_before is invalid")
+        if not isinstance(after, str) or not _SHA256_HEX_RE.match(after):
+            raise ValueError(f"guide event {idx} sealed_sha256_after is invalid")
+        if previous_after and before != previous_after:
+            raise ValueError(f"guide event chain breaks before event {idx}")
+        expected_after = _guide_event_chain_hash(event, args)
+        if not hmac.compare_digest(after, expected_after):
+            raise ValueError(f"guide event chain breaks at event {idx}")
+        previous_after = after
+
+
+def _replay_guide_state_from_trace(trace: list[dict[str, Any]]) -> dict[str, Any] | None:
+    _verify_guide_event_chain(trace)
+    state: dict[str, Any] | None = None
+    for entry in trace:
+        if not isinstance(entry, dict):
+            continue
+        event = entry.get("event")
+        args = entry.get("arguments")
+        if not isinstance(event, str) or not isinstance(args, dict):
+            continue
+        state = apply_guide_event(state, event=event, arguments=args)
+    return state
+
+
+def _guide_trace_arguments(last_turn: dict[str, Any], *, domain_adapter: str) -> dict[str, Any]:
+    return {
+        "domain_adapter": domain_adapter,
+        "turn_id": last_turn.get("turn_id"),
+        "user_message_hash": last_turn.get("user_message_hash"),
+        "user_message_excerpt": last_turn.get("user_message_excerpt"),
+        "next_question": last_turn.get("next_question"),
+        "model_route_id": last_turn.get("model_route_id"),
+        "tier_table_version": last_turn.get("tier_table_version"),
+        "tier_table_sha256": last_turn.get("tier_table_sha256"),
+        "fields_ready_to_lock": _json_copy(last_turn.get("fields_ready_to_lock")) or [],
+        "blocking_uncertainties": _json_copy(last_turn.get("blocking_uncertainties")) or [],
+        "ranked_discriminators": _json_copy(last_turn.get("ranked_discriminators")) or [],
+        "ranking_rationale_hashes": _json_copy(last_turn.get("ranking_rationale_hashes")) or [],
+        "proposed_update_targets": [
+            row.get("target")
+            for row in last_turn.get("proposed_updates", [])
+            if isinstance(row, dict) and isinstance(row.get("target"), str)
+        ],
+    }
 
 
 def _required_hash(value: Any, *, field: str) -> str:
@@ -844,6 +1753,7 @@ def _packet(
     last_abandoned_packet: dict[str, Any] | None,
     previous_trace: list[dict[str, Any]] | None = None,
     v3_layer_loop: dict[str, Any] | None = None,
+    guide_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     packet = {
         "schema_id": SCHEMA_ID,
@@ -868,6 +1778,8 @@ def _packet(
     }
     if v3_layer_loop is not None:
         packet["v3_layer_loop"] = _json_copy(v3_layer_loop)
+    if guide_state is not None:
+        packet["guide_state"] = _json_copy(guide_state)
     return _seal_packet(packet)
 
 
@@ -904,6 +1816,30 @@ def _packet_from_transition(
         last_commit_packet=_json_copy(previous.get("last_commit_packet")),
         last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
         v3_layer_loop=_packet_v3_layer_loop(previous),
+        guide_state=_packet_guide_state(previous),
+    )
+
+
+def _packet_from_guide_transition(
+    previous: dict[str, Any],
+    trace: list[dict[str, Any]],
+    guide_state: dict[str, Any],
+) -> dict[str, Any]:
+    return _packet(
+        loop_id=_packet_loop_id(previous),
+        phase=_packet_phase(previous),
+        family=_packet_family(previous),
+        frame=_packet_frame(previous),
+        governance_costs=_packet_governance(previous),
+        governance_calibration=_packet_calibration(previous),
+        manifest_path=_packet_manifest_path(previous),
+        audit_trace=trace,
+        latest_audit=_json_copy(previous.get("latest_audit") or {}),
+        latest_step=_json_copy(previous.get("latest_step")),
+        last_commit_packet=_json_copy(previous.get("last_commit_packet")),
+        last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
+        v3_layer_loop=_packet_v3_layer_loop(previous),
+        guide_state=guide_state,
     )
 
 
@@ -926,6 +1862,7 @@ def _packet_from_v3_transition(
         last_commit_packet=_json_copy(previous.get("last_commit_packet")),
         last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
         v3_layer_loop=v3_layer_loop,
+        guide_state=_packet_guide_state(previous),
     )
 
 
@@ -971,6 +1908,8 @@ def _replay_event(
             decision=str(args.get("decision") or ""),
             hold_reason=str(args.get("hold_reason") or ""),
         )
+    if event in _GUIDE_EVENT_TYPES:
+        return svc.get_operator_session_state()
     if event in _V3_OPERATOR_TRACE_EVENTS:
         return svc.get_operator_session_state()
     if event in {"COMMIT_ITERATION", "ABANDON_PACKET"}:
@@ -1004,6 +1943,17 @@ def _validate_packet(packet: dict[str, Any]) -> None:
             f"operator packet audit_trace exceeds configured maximum of {max_trace} events"
         )
     _verify_packet_integrity(packet)
+    _verify_guide_projection(packet)
+
+
+def _verify_guide_projection(packet: dict[str, Any]) -> None:
+    trace = _packet_trace(packet)
+    expected = _replay_guide_state_from_trace(trace)
+    actual = _packet_guide_state(packet)
+    if expected is None and actual is None:
+        return
+    if expected != actual:
+        raise ValueError("operator packet guide_state does not match replayed guide events")
 
 
 def _transition_session(result: dict[str, Any]) -> dict[str, Any]:
@@ -1139,6 +2089,17 @@ def _packet_calibration(packet: dict[str, Any]) -> dict[str, Any] | None:
 def _packet_manifest_path(packet: dict[str, Any]) -> str | None:
     value = packet.get("manifest_path")
     return value if isinstance(value, str) and value else None
+
+
+def _packet_guide_state(packet: dict[str, Any]) -> dict[str, Any] | None:
+    state = packet.get("guide_state")
+    return (
+        _json_copy(state)
+        if isinstance(state, dict)
+        and state.get("schema_id") == GUIDE_STATE_SCHEMA_ID
+        and state.get("schema_version") == GUIDE_STATE_SCHEMA_VERSION
+        else None
+    )
 
 
 def _new_v3_layer_loop(v3_packet: dict[str, Any]) -> dict[str, Any]:
@@ -1339,7 +2300,11 @@ __all__ = [
     "SCHEMA_ID",
     "SCHEMA_VERSION",
     "abandon_packet",
+    "canonical_guide_text",
     "commit_iteration",
+    "guide_patch_action",
+    "guide_text_sha256",
+    "guide_turn",
     "inspect_operator_packet",
     "lock_frame",
     "lock_report",

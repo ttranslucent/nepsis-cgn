@@ -144,7 +144,44 @@ def test_status_api_exposes_provider_access_custody_boundary() -> None:
     assert "userProviderKeysAccepted: false" in route.read_text(encoding="utf-8")
     assert "server-side-operator-or-mcp-host" in combined
     assert "approved users sign in" in combined.lower()
-    assert "Supabase invite" in combined
+    assert "Supabase OTP" in combined
+
+
+def test_operator_login_supports_supabase_otp_without_replacing_local_session() -> None:
+    package = json.loads((ROOT / "nepsis-web" / "package.json").read_text(encoding="utf-8"))
+    auth_helper = (ROOT / "nepsis-web" / "src" / "lib" / "nepsisAuth.ts").read_text(
+        encoding="utf-8"
+    )
+    request_route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "auth" / "request-code" / "route.ts"
+    ).read_text(encoding="utf-8")
+    verify_route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "auth" / "verify-code" / "route.ts"
+    ).read_text(encoding="utf-8")
+    status_route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "status" / "route.ts"
+    ).read_text(encoding="utf-8")
+    operator_env = (ROOT / "nepsis-web" / ".env.operator.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "@supabase/supabase-js" in package["dependencies"]
+    assert "NEXT_PUBLIC_SUPABASE_URL" in auth_helper
+    assert "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in auth_helper
+    assert "NEXT_PUBLIC_SUPABASE_ANON_KEY" in auth_helper
+    assert "supabaseOtpConfigured" in auth_helper
+    assert "signInWithOtp" in auth_helper
+    assert "shouldCreateUser: false" in auth_helper
+    assert 'verifyOtp({ email, token: code.trim(), type: "email" })' in auth_helper
+    assert "requestSupabaseLoginCode" in request_route
+    assert "verifySupabaseLoginCode" in verify_route
+    assert "createLoginSession" in verify_route
+    assert "createCsrfToken" in verify_route
+    assert "NEPSIS_USER_COOKIE" in verify_route
+    assert "NEPSIS_CSRF_COOKIE" in verify_route
+    assert "supabaseOtpConfigured" in status_route
+    assert "NEXT_PUBLIC_SUPABASE_URL" in operator_env
+    assert "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in operator_env
 
 
 def test_browser_provider_key_storage_is_removed_from_web_runtime() -> None:
@@ -351,12 +388,72 @@ def test_operator_model_route_signs_packet_bound_proposal_receipts() -> None:
     assert "proposalReceipt" in client
 
 
+def test_operator_guide_route_is_protected_and_packet_delta_scoped() -> None:
+    route = (
+        ROOT / "nepsis-web" / "src" / "app" / "api" / "operator" / "guide" / "route.ts"
+    ).read_text(encoding="utf-8")
+    patch_action_route = (
+        ROOT
+        / "nepsis-web"
+        / "src"
+        / "app"
+        / "api"
+        / "engine"
+        / "operator-packet"
+        / "guide"
+        / "patch-action"
+        / "route.ts"
+    ).read_text(encoding="utf-8")
+    client = (ROOT / "nepsis-web" / "src" / "lib" / "operatorGuideClient.ts").read_text(
+        encoding="utf-8"
+    )
+    engine_client = (ROOT / "nepsis-web" / "src" / "lib" / "engineClient.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert "requireEngineControlAuth" in route
+    assert "requireCsrfToken" in route
+    assert "modelRoutesEnabled" in route
+    assert "hasConfiguredOpenAiKey" in route
+    assert "hasConfiguredProposalReceiptSecret" in route
+    assert "signOperatorProposalReceipt" in route
+    assert "threshold.decision" not in route
+    assert "packet_delta_preview" in route
+    assert "consequenceLevel" in route
+    assert "requiresEchoConfirmation" in route
+    assert "basis" in route
+    assert "fields_ready_to_lock" in route
+    assert "blocking_uncertainties" in route
+    assert "ranked_discriminators" in route
+    assert "requestOperatorGuide" in client
+    assert "/api/operator/guide" in client
+    assert "guideOperatorPacket" in engine_client
+    assert "/operator-packet/guide" in engine_client
+    assert "guidePatchAction" in engine_client
+    assert "/operator-packet/guide/patch-action" in engine_client
+    assert "requireEngineControlAuth" in patch_action_route
+    assert "requireCsrfToken" in patch_action_route
+    assert "/v1/operator-packet/guide/patch-action" in patch_action_route
+
+    operator_page = (ROOT / "nepsis-web" / "src" / "app" / "engine" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "Frame convergence" in operator_page
+    assert "Discriminator queue" in operator_page
+    assert "Accept low-consequence drafts" in operator_page
+    assert "I confirm this patch may narrow" in operator_page
+
+
 def test_guided_operator_completion_does_not_touch_public_mvp() -> None:
     mvp_page = (ROOT / "nepsis-web" / "src" / "app" / "mvp" / "page.tsx").read_text(
         encoding="utf-8"
     )
     assert "requestOperatorModel" not in mvp_page
+    assert "requestOperatorGuide" not in mvp_page
     assert "/api/operator/model" not in mvp_page
+    assert "/api/operator/guide" not in mvp_page
+    assert "guidePatchAction" not in mvp_page
+    assert "/operator-packet/guide/patch-action" not in mvp_page
     assert "Run Demo" in mvp_page
     assert "Model-free deterministic run" in mvp_page
 

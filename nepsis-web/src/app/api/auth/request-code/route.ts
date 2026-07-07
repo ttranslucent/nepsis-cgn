@@ -13,6 +13,8 @@ import {
   normalizeEmail,
   operatorEmailAllowlistConfigured,
   operatorEmailAllowed,
+  requestSupabaseLoginCode,
+  supabaseOtpConfigured,
 } from "@/lib/nepsisAuth";
 
 export const runtime = "nodejs";
@@ -57,9 +59,27 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       delivery: "email",
+      provider: supabaseOtpConfigured() ? "supabase" : "nepsis",
       previewCode: null,
       expiresInSeconds: LOGIN_CODE_TTL_SECONDS,
     });
+  }
+
+  if (supabaseOtpConfigured()) {
+    const delivery = await requestSupabaseLoginCode(email);
+    if (!delivery.ok) {
+      return NextResponse.json({ error: delivery.error }, { status: delivery.status });
+    }
+
+    const response = NextResponse.json({
+      ok: true,
+      delivery: "email",
+      provider: "supabase",
+      previewCode: null,
+      expiresInSeconds: LOGIN_CODE_TTL_SECONDS,
+    });
+    response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
+    return response;
   }
 
   const code = generateLoginCode();
