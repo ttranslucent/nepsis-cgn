@@ -68,7 +68,13 @@ export async function POST(req: Request) {
   if (supabaseOtpConfigured()) {
     const delivery = await requestSupabaseLoginCode(email);
     if (!delivery.ok) {
-      return NextResponse.json({ error: delivery.error }, { status: delivery.status });
+      return NextResponse.json(
+        {
+          error: delivery.error,
+          allowCodeEntry: delivery.status === 429,
+        },
+        { status: delivery.status },
+      );
     }
 
     const response = NextResponse.json({

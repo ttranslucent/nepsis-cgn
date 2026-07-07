@@ -11,6 +11,7 @@ import {
   createCsrfToken,
   createLoginSession,
   csrfCookieOptions,
+  normalizeLoginCode,
   normalizeEmail,
   operatorEmailAllowed,
   readCookieFromHeader,
@@ -36,10 +37,10 @@ export async function POST(req: Request) {
 
   const email = normalizeEmail((body as { email?: unknown } | null)?.email);
   const rawCode = (body as { code?: unknown } | null)?.code;
-  const code = typeof rawCode === "string" ? rawCode.trim() : "";
+  const code = normalizeLoginCode(rawCode);
   const rememberDevice = (body as { rememberDevice?: unknown } | null)?.rememberDevice !== false;
   if (!email || !code) {
-    return NextResponse.json({ error: "Email and code required" }, { status: 400 });
+    return NextResponse.json({ error: "Email and 6-digit code required" }, { status: 400 });
   }
 
   const rateLimit = checkLoginRateLimit("verify-code", req, email);

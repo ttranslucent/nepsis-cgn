@@ -17,6 +17,8 @@ const LOGIN_REQUEST_MAX_ATTEMPTS = 5;
 const LOGIN_VERIFY_WINDOW_SECONDS = 10 * 60;
 const LOGIN_VERIFY_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_STATE = new Map<string, number[]>();
+const STALE_SUPABASE_OTP_MESSAGE =
+  "That code is invalid or was replaced by a newer email. Request a fresh code and use the newest message only.";
 
 type LoginChallengePayload = {
   email: string;
@@ -150,6 +152,14 @@ function supabaseAuthErrorMessage(error: unknown, fallback: string): string {
     if (error.status === 429 || error.code === "over_email_send_rate_limit") {
       return "Email code delivery is temporarily rate-limited. Wait before requesting another code.";
     }
+    if (
+      error.status === 403 ||
+      error.code === "otp_expired" ||
+      (typeof error.message === "string" &&
+        error.message.toLowerCase().includes("token has expired or is invalid"))
+    ) {
+      return STALE_SUPABASE_OTP_MESSAGE;
+    }
     if (typeof error.message === "string" && error.message.trim()) {
       return error.message.trim();
     }
@@ -195,9 +205,13 @@ export async function verifySupabaseLoginCode(email: string, code: string): Prom
   if (!supabase) {
     return { ok: false, error: "Supabase OTP login is not configured.", status: 503 };
   }
+  const normalizedCode = normalizeLoginCode(code);
+  if (!normalizedCode) {
+    return { ok: false, error: "Enter the 6-digit code from your email.", status: 400 };
+  }
 
   try {
-    const { error } = await supabase.auth.verifyOtp({ email, token: code.trim(), type: "email" });
+    const { error } = await supabase.auth.verifyOtp({ email, token: normalizedCode, type: "email" });
     if (error) {
       return {
         ok: false,
@@ -493,12 +507,21 @@ export function normalizeEmail(value: unknown): string | null {
   return normalized;
 }
 
+export function normalizeLoginCode(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.replace(/\D/g, "");
+  return /^\d{6}$/.test(normalized) ? normalized : null;
+}
+
 export function generateLoginCode(): string {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
 export function hashLoginCode(email: string, code: string): string {
-  return crypto.createHmac("sha256", authSecret()).update(`${email}\0${code.trim()}`).digest("base64url");
+  const normalizedCode = normalizeLoginCode(code) ?? code.trim();
+  return crypto.createHmac("sha256", authSecret()).update(`${email}\0${normalizedCode}`).digest("base64url");
 }
 
 export function createLoginChallenge(email: string, code: string): string {

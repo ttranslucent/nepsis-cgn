@@ -172,8 +172,11 @@ def test_operator_login_supports_supabase_otp_without_replacing_local_session() 
     assert "supabaseOtpConfigured" in auth_helper
     assert "signInWithOtp" in auth_helper
     assert "shouldCreateUser: false" in auth_helper
-    assert 'verifyOtp({ email, token: code.trim(), type: "email" })' in auth_helper
+    assert "normalizeLoginCode" in auth_helper
+    assert 'verifyOtp({ email, token: normalizedCode, type: "email" })' in auth_helper
+    assert "replaced by a newer email" in auth_helper
     assert "requestSupabaseLoginCode" in request_route
+    assert "allowCodeEntry: delivery.status === 429" in request_route
     assert "verifySupabaseLoginCode" in verify_route
     assert "createLoginSession" in verify_route
     assert "createCsrfToken" in verify_route

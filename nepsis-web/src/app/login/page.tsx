@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [rememberDevice, setRememberDevice] = useState(true);
   const [loading, setLoading] = useState(false);
   const trimmedEmail = email.trim();
+  const normalizedCode = code.replace(/\D/g, "").slice(0, 6);
 
   async function sendCode() {
     if (!trimmedEmail) {
@@ -35,10 +36,23 @@ export default function LoginPage() {
           setMessage(`Email delivery is not configured here. Use this one-time code: ${data.previewCode}`);
         } else {
           setCode("");
-          setMessage("If this address is authorized, check your inbox for the one-time code.");
+          setMessage(
+            "If this address is authorized, check your inbox for the newest one-time code. Requesting another code invalidates earlier emails.",
+          );
         }
       } else {
-        setMessage(data.error || "Failed to send code.");
+        if (data.allowCodeEntry === true) {
+          setEmail(trimmedEmail);
+          setStep("code");
+          setDelivery("email");
+          setCode("");
+          setMessage(
+            data.error ||
+              "No new code was sent. If you already have the newest code, enter it here; otherwise wait before requesting another.",
+          );
+        } else {
+          setMessage(data.error || "Failed to send code.");
+        }
       }
     } catch (err) {
       console.error(err);
@@ -55,14 +69,14 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/verify-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code, rememberDevice }),
+        body: JSON.stringify({ email, code: normalizedCode, rememberDevice }),
       });
       const data = await res.json();
       if (res.ok) {
         setMessage("Logged in. Redirecting...");
         window.location.href = "/engine";
       } else {
-        setMessage(data.error || "Invalid code.");
+        setMessage(data.error || "Invalid or expired code. Request a fresh code and use the newest email.");
       }
     } catch (err) {
       console.error(err);
@@ -120,6 +134,7 @@ export default function LoginPage() {
             <p className="text-xs text-nepsis-muted">
               {delivery === "preview" ? "Use the preview code for" : "We’ve sent a code to"}{" "}
               <span className="font-mono">{email}</span>.
+              {delivery !== "preview" ? " Use the newest email; newer requests replace older codes." : null}
             </p>
             <div>
               <label className="mb-1 block text-xs" htmlFor="nepsis-login-code">
@@ -129,11 +144,11 @@ export default function LoginPage() {
                 id="nepsis-login-code"
                 className="w-full rounded-lg border border-nepsis-border bg-black/30 px-3 py-2 text-center text-sm font-mono tracking-[0.3em] focus:border-nepsis-accent focus:outline-none"
                 value={code}
-                onChange={(e) => setCode(e.target.value)}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="123456"
                 autoComplete="one-time-code"
                 inputMode="numeric"
-                maxLength={6}
+                maxLength={12}
               />
             </div>
             <label className="flex items-center gap-2 text-xs text-nepsis-muted">
@@ -147,10 +162,20 @@ export default function LoginPage() {
             </label>
             <button
               type="submit"
-              disabled={loading || code.trim().length === 0}
+              disabled={loading || normalizedCode.length !== 6}
               className="w-full rounded-full bg-nepsis-accent py-2 text-sm font-medium text-black transition hover:bg-nepsis-accentSoft disabled:opacity-60"
             >
               {loading ? "Verifying..." : "Verify & continue"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void sendCode();
+              }}
+              disabled={loading}
+              className="w-full rounded-full border border-nepsis-border py-2 text-sm transition hover:border-nepsis-accent disabled:opacity-60"
+            >
+              Send a fresh code
             </button>
             <button
               type="button"

@@ -150,6 +150,16 @@ test("allowed operator OTP verifies and creates a 30-day remembered session", as
   expect(csrfCookie?.sameSite).toBe("Lax");
 });
 
+test("formatted OTP paste is normalized before verification", async ({ page }) => {
+  await useIsolatedRateLimitBucket(page, "formatted-code");
+  const previewCode = await requestPreviewCode(page, OPERATOR_EMAIL);
+  await page.getByLabel("Code").fill(`${previewCode.slice(0, 3)} ${previewCode.slice(3)}`);
+  await expect(page.getByLabel("Code")).toHaveValue(previewCode);
+
+  await page.getByRole("button", { name: "Verify & continue" }).click();
+  await expect(page).toHaveURL(/\/engine$/);
+});
+
 test("signed-in operator can open live operator route", async ({ page }) => {
   await useIsolatedRateLimitBucket(page, "live-operator-route");
   await requestPreviewCode(page, OPERATOR_EMAIL);
