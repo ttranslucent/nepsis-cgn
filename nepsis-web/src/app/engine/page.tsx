@@ -447,6 +447,11 @@ function operatorPacketFromResult(result: EngineOperatorResult | undefined): Eng
   return packet?.schema_id === "nepsis.operator_packet" ? (packet as EngineOperatorPacket) : null;
 }
 
+function isOperatorPacketRecord(value: unknown): value is EngineOperatorPacket {
+  const packet = asRecord(value);
+  return packet?.schema_id === "nepsis.operator_packet" && typeof packet.loop_id === "string";
+}
+
 function readRecordArray(value: unknown): Record<string, unknown>[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1409,6 +1414,15 @@ export default function EnginePage() {
     [activeSession?.session_id],
   );
   const packetEvents = useMemo(() => buildPacketEvents(packets), [packets]);
+  const latestOperatorPacket = useMemo(() => {
+    for (const packet of [...packets].reverse()) {
+      if (isOperatorPacketRecord(packet)) {
+        return packet;
+      }
+    }
+    return null;
+  }, [packets]);
+  const visibleOperatorPacket = operatorPacket ?? latestOperatorPacket;
   const compactTimeline = useMemo<CompactTimelineItem[]>(() => {
     const frameItems: CompactTimelineItem[] = frameTimeline.map((entry, idx) => ({
       id: `frame:${entry.key}`,
@@ -1603,8 +1617,17 @@ export default function EnginePage() {
   }, [snapshotStorageKey, loadedSnapshotStorageKey, modelSnapshots]);
 
   const currentStageStep = !frameLocked ? 1 : !reportLocked ? 2 : 3;
+  const currentGuideStage: GateStageId =
+    currentStageStep === 1 ? "frame" : currentStageStep === 2 ? "interpretation" : "threshold";
+  const currentGuideMessages =
+    currentGuideStage === "frame"
+      ? frameChat
+      : currentGuideStage === "interpretation"
+        ? reportChat
+        : posteriorChat;
   const userMode = !developerToolsEnabled;
   const showOperatorControls = developerToolsEnabled;
+  const guideSurfaceEnabled = liveOperatorSurface || authSession?.engineControlAllowed === true;
   const panelHeightClass = userMode ? "min-h-[640px]" : "min-h-[760px]";
   const operatorV3Available = operatorV3Capability?.available === true;
   const operatorV3Unavailable = operatorV3Capability != null && !operatorV3Capability.available;
@@ -1624,7 +1647,7 @@ export default function EnginePage() {
   const v3AuditEvents = (operatorPacket?.audit_trace ?? [])
     .map((entry) => readString(asRecord(entry)?.event))
     .filter((event): event is string => Boolean(event && event.includes("V3")));
-  const guideState = operatorPacket?.guide_state ?? null;
+  const guideState = visibleOperatorPacket?.guide_state ?? null;
   const guideLastTurn = asRecord(guideState?.last_turn);
   const guideScaffoldRecord = asRecord(guideLastTurn?.visible_scaffold);
   const guideConvergence = asRecord(guideState?.convergence);
@@ -2064,7 +2087,7 @@ export default function EnginePage() {
     setActiveAssistTarget(target);
     setModelAssistBusy(true);
     try {
-      let loopId = operatorPacket?.loop_id;
+      let loopId = visibleOperatorPacket?.loop_id;
       if (!loopId) {
         const started = await getOperatorSessionState();
         const startedPacket = started?.packet;
@@ -2117,15 +2140,16 @@ export default function EnginePage() {
     }
   }
 
-  async function handleAskGuide() {
+  async function handleAskGuide(stage: GateStageId = currentGuideStage, explicitMessage?: string) {
     clearAllErrors();
-    const userMessage = optionalText(guideInput);
+    const userMessage = optionalText(explicitMessage ?? guideInput);
     if (!userMessage) {
       return;
     }
+    const usedFreeformInput = explicitMessage === undefined;
     setGuideBusy(true);
     try {
-      let packetForGuide = operatorPacket ?? null;
+      let packetForGuide = visibleOperatorPacket ?? null;
       if (!packetForGuide) {
         const started = await getOperatorSessionState();
         const startedPacket = started?.packet;
@@ -2141,15 +2165,35 @@ export default function EnginePage() {
         setLocalError("Could not start an operator packet for guide mode.");
         return;
       }
-      pushFrameMessage("human", userMessage);
+      pushGuideMessage(stage, "human", userMessage);
       const guide = await requestOperatorGuide({
         user_message: userMessage,
         domain_adapter: guideDomainAdapter,
         operator_loop_id: loopId,
         context: {
           family,
+          active_stage: stage,
           current_frame: frameDraft,
           frame_gate: displayFrameGateStatus,
+          interpretation_gate: displayInterpretationGateStatus,
+          threshold_gate: displayThresholdGateStatus,
+          report: {
+            draft_text: reportDraftText,
+            last_evaluated_text: lastEvaluatedReportText,
+            contradictions_status: contradictionsStatus,
+            contradictions_note: contradictionsNote,
+          },
+          threshold: {
+            decision: thresholdDecision,
+            hold_reason: thresholdHoldReason,
+            posterior_hypotheses: posteriorHypotheses,
+            recommendation: governance?.recommended_action ?? reportResult?.decision ?? null,
+            warning_level: governance?.warning_level ?? null,
+          },
+          unresolved: {
+            blockers: unresolvedBlocks.filter((item) => item.stageId === stage),
+            warnings: unresolvedWarnings.filter((item) => item.stageId === stage),
+          },
           guide_state: packetForGuide.guide_state ?? null,
           legal_next_tools: packetForGuide.legal_next_tools,
         },
@@ -2176,7 +2220,7 @@ export default function EnginePage() {
         setLocalError(phaseRejectionMessage(guided));
         return;
       }
-      pushFrameMessage("nepsis", guide.next_question);
+      pushGuideMessage(stage, "nepsis", guide.next_question);
       if (guide.proposed_updates.length > 0) {
         setModelAssistOpen(true);
         setAssistReviews((prev) => [
@@ -2189,9 +2233,13 @@ export default function EnginePage() {
           })),
         ]);
       }
-      setGuideInput("");
+      if (usedFreeformInput) {
+        setGuideInput("");
+      }
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "Operator guide failed.");
+      const message = error instanceof Error ? error.message : "Operator guide failed.";
+      setLocalError(message);
+      pushGuideMessage(stage, "nepsis", `Guide unavailable: ${message}`);
     } finally {
       setGuideBusy(false);
     }
@@ -2465,6 +2513,52 @@ export default function EnginePage() {
 
   function pushPosteriorMessage(role: ChatRole, text: string) {
     setPosteriorChat((prev) => [...prev, createMessage(role, text)]);
+  }
+
+  function guideStageTitle(stage: GateStageId): string {
+    if (stage === "frame") return audienceLabels.stage1;
+    if (stage === "interpretation") return audienceLabels.stage2;
+    return audienceLabels.stage3;
+  }
+
+  function pushGuideMessage(stage: GateStageId, role: ChatRole, text: string) {
+    if (stage === "frame") {
+      pushFrameMessage(role, text);
+      return;
+    }
+    if (stage === "interpretation") {
+      pushReportMessage(role, text);
+      return;
+    }
+    pushPosteriorMessage(role, text);
+  }
+
+  function buildLayerGuideMessage(stage: GateStageId): string {
+    const blockers = unresolvedBlocks
+      .filter((item) => item.stageId === stage)
+      .map((item) => `${item.label}: ${item.detail}`);
+    const warnings = unresolvedWarnings
+      .filter((item) => item.stageId === stage)
+      .map((item) => `${item.label}: ${item.detail}`);
+    const lines = [
+      `Guide the ${guideStageTitle(stage)} layer.`,
+      `Current blockers: ${blockers.length > 0 ? blockers.join(" | ") : "none"}.`,
+      `Current warnings: ${warnings.length > 0 ? warnings.join(" | ") : "none"}.`,
+      `Frame: ${frameDraft.text || "n/a"}`,
+    ];
+    if (stage === "interpretation") {
+      lines.push(`Evidence/report text: ${reportDraftText || "none yet"}`);
+      lines.push(
+        "Explain the next highest-value reasoning move and ask one question that would unblock candidate hypotheses or evaluation freshness.",
+      );
+    } else if (stage === "threshold") {
+      lines.push(`Posterior hypotheses: ${posteriorHypotheses.length > 0 ? posteriorHypotheses.join(", ") : "none"}`);
+      lines.push(`Decision declaration: ${thresholdDecision}`);
+      lines.push("Explain what is still needed before commit without making the final decision for the operator.");
+    } else {
+      lines.push("Ask one question or propose one reviewable patch that would make the frame lockable.");
+    }
+    return lines.join("\n");
   }
 
   function captureModelSnapshot(note: string | null = null) {
@@ -3568,8 +3662,8 @@ export default function EnginePage() {
   const showPosteriorPanel = showOperatorControls || currentStageStep >= 3;
   const showTimeline = showOperatorControls || currentStageStep >= 3;
   const caseReasoningCompiler = useMemo(
-    () => findCaseReasoningCompiler(lastAudit, operatorPacket),
-    [lastAudit, operatorPacket],
+    () => findCaseReasoningCompiler(lastAudit, visibleOperatorPacket),
+    [lastAudit, visibleOperatorPacket],
   );
 
   const selectedTimeline = compactTimeline.find((item) => item.id === selectedTimelineId) ?? null;
@@ -3602,8 +3696,32 @@ export default function EnginePage() {
     );
   }
 
+  function layerGuidePanel(stage: GateStageId, disabled = false) {
+    if (!guideSurfaceEnabled) {
+      return null;
+    }
+    return (
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+        <div>
+          <div className="font-semibold text-amber-100">{guideStageTitle(stage)} layer guide</div>
+          <div className="mt-1 text-amber-100/80">
+            Ask for the next discriminator, blocker explanation, or reviewable packet delta.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleAskGuide(stage, buildLayerGuideMessage(stage))}
+          disabled={disabled || guideBusy}
+          className="rounded-full border border-amber-400/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300 disabled:opacity-60"
+        >
+          {guideBusy ? "Guide working..." : "Guide next move"}
+        </button>
+      </div>
+    );
+  }
+
   function assistReviewPanel() {
-    if (!liveOperatorSurface || (!modelAssistOpen && assistReviews.length === 0)) {
+    if (!guideSurfaceEnabled || (!modelAssistOpen && assistReviews.length === 0)) {
       return null;
     }
     const lowDraftCount = assistReviews.filter(
@@ -3790,7 +3908,7 @@ export default function EnginePage() {
             >
               Model Sandbox
             </button>
-            {liveOperatorSurface && (
+            {guideSurfaceEnabled && (
               <button
                 onClick={() => setModelAssistOpen(true)}
                 className="rounded-full border border-amber-500/50 px-3 py-1.5 text-xs text-amber-100 hover:border-amber-300"
@@ -3945,7 +4063,7 @@ export default function EnginePage() {
           </div>
         )}
 
-        {liveOperatorSurface && (
+        {guideSurfaceEnabled && (
           <section className="mt-3 rounded-lg border border-nepsis-border bg-black/20 p-3">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
               <div className="space-y-3">
@@ -3953,7 +4071,7 @@ export default function EnginePage() {
                   <div>
                     <h2 className="text-sm font-semibold">Operator-guided packet mode</h2>
                     <div className="mt-1 text-xs text-nepsis-muted">
-                      Conversation crystallizes into reviewable packet deltas.
+                      {guideStageTitle(currentGuideStage)} guide turns crystallize into reviewable packet deltas.
                     </div>
                     <div className="mt-1 text-[11px] text-nepsis-muted">
                       Adapter changes wording and emphasis only; the packet contract is unchanged.
@@ -3979,7 +4097,7 @@ export default function EnginePage() {
                 </div>
 
                 <div className="h-40 overflow-auto rounded-lg border border-nepsis-border bg-black/30 p-2 text-xs">
-                  {frameChat.map((message) => (
+                  {currentGuideMessages.map((message) => (
                     <div key={`guide-${message.id}`} className="mb-2">
                       <span className={message.role === "human" ? "text-nepsis-accent" : "text-nepsis-muted"}>
                         {message.role === "human" ? "You" : "Nepsis"}
@@ -4007,7 +4125,7 @@ export default function EnginePage() {
                   />
                   <button
                     type="button"
-                    onClick={() => void handleAskGuide()}
+                    onClick={() => void handleAskGuide(currentGuideStage)}
                     disabled={guideBusy || !optionalText(guideInput)}
                     className="h-fit rounded-full bg-nepsis-accent px-4 py-2 text-xs font-semibold text-black disabled:opacity-60"
                   >
@@ -4121,9 +4239,9 @@ export default function EnginePage() {
                 <div>
                   <div className="text-nepsis-muted">Audit</div>
                   <div className="mt-1 font-mono text-[11px] text-nepsis-text">
-                    {operatorPacket?.audit_trace?.some((entry) => readString(asRecord(entry)?.event) === "GUIDE_PATCH_ACTION")
+                    {visibleOperatorPacket?.audit_trace?.some((entry) => readString(asRecord(entry)?.event) === "GUIDE_PATCH_ACTION")
                       ? "GUIDE_TURN + GUIDE_PATCH_ACTION recorded"
-                      : operatorPacket?.audit_trace?.some((entry) => readString(asRecord(entry)?.event) === "GUIDE_TURN")
+                      : visibleOperatorPacket?.audit_trace?.some((entry) => readString(asRecord(entry)?.event) === "GUIDE_TURN")
                         ? "GUIDE_TURN recorded"
                       : "No guide turn recorded"}
                   </div>
@@ -4426,6 +4544,8 @@ export default function EnginePage() {
             )}
           </div>
 
+          {layerGuidePanel("frame", frameLocked)}
+
           {userMode && frameLocked && frameCollapsed ? (
             <div className="flex-1 space-y-3">
               <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
@@ -4498,7 +4618,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-sm"
                 />
               </label>
-              {liveOperatorSurface ? assistButton("frame.text", "Frame question", frameLocked) : null}
+              {guideSurfaceEnabled ? assistButton("frame.text", "Frame question", frameLocked) : null}
 
               <div className="grid grid-cols-2 gap-2">
                 <label className="block text-xs text-nepsis-muted">
@@ -4556,7 +4676,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
               </label>
-              {liveOperatorSurface ? assistButton("frame.key_uncertainty", "Key uncertainty", frameLocked) : null}
+              {guideSurfaceEnabled ? assistButton("frame.key_uncertainty", "Key uncertainty", frameLocked) : null}
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="block text-xs text-nepsis-muted">
@@ -4573,7 +4693,7 @@ export default function EnginePage() {
                     rows={4}
                     className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                   />
-                  {liveOperatorSurface ? assistButton("frame.constraints_hard", "Hard constraints", frameLocked) : null}
+                  {guideSurfaceEnabled ? assistButton("frame.constraints_hard", "Hard constraints", frameLocked) : null}
                 </div>
                 <div className="block text-xs text-nepsis-muted">
                   <label htmlFor="frame-constraints-soft">Soft constraints (1/line)</label>
@@ -4589,7 +4709,7 @@ export default function EnginePage() {
                     rows={4}
                     className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                   />
-                  {liveOperatorSurface ? assistButton("frame.constraints_soft", "Soft constraints", frameLocked) : null}
+                  {guideSurfaceEnabled ? assistButton("frame.constraints_soft", "Soft constraints", frameLocked) : null}
                 </div>
               </div>
 
@@ -4603,7 +4723,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
               </label>
-              {liveOperatorSurface ? assistButton("frame.red_definition", "RED channel definition", frameLocked) : null}
+              {guideSurfaceEnabled ? assistButton("frame.red_definition", "RED channel definition", frameLocked) : null}
               <label className="block text-xs text-nepsis-muted">
                 Blue channel goals
                 <textarea
@@ -4614,7 +4734,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-xs"
                 />
               </label>
-              {liveOperatorSurface ? assistButton("frame.blue_goals", "BLUE channel goals", frameLocked) : null}
+              {guideSurfaceEnabled ? assistButton("frame.blue_goals", "BLUE channel goals", frameLocked) : null}
 
               <label className="block text-xs text-nepsis-muted">
                 Risk posture
@@ -4706,12 +4826,14 @@ export default function EnginePage() {
                   </div>
                 )}
               </div>
-              {showOperatorControls && (
-                <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
-                  {JSON.stringify(interpretationGateView.packet, null, 2)}
-                </pre>
-              )}
-            </div>
+            {showOperatorControls && (
+              <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
+                {JSON.stringify(interpretationGateView.packet, null, 2)}
+              </pre>
+            )}
+          </div>
+
+          {layerGuidePanel("interpretation", !frameLocked)}
 
             {userMode && reportLocked && currentStageStep > 2 ? (
               <div className="flex-1 space-y-3">
@@ -4904,12 +5026,14 @@ export default function EnginePage() {
                   </div>
                 )}
               </div>
-              {showOperatorControls && (
-                <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
-                  {JSON.stringify(thresholdGateView.packet, null, 2)}
-                </pre>
-              )}
-            </div>
+            {showOperatorControls && (
+              <pre className="mt-2 max-h-24 overflow-auto rounded border border-nepsis-border bg-black/30 p-2 text-[10px] text-nepsis-muted">
+                {JSON.stringify(thresholdGateView.packet, null, 2)}
+              </pre>
+            )}
+          </div>
+
+          {layerGuidePanel("threshold", !reportLocked)}
 
             <div className="flex-1 space-y-3">
               <div className="h-24 overflow-auto rounded-lg border border-nepsis-border bg-black/20 p-2 text-xs">
@@ -4993,7 +5117,7 @@ export default function EnginePage() {
                       placeholder="Required when decision is hold."
                       className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
                     />
-                    {liveOperatorSurface
+                    {guideSurfaceEnabled
                       ? assistButton("threshold.hold_reason", "Hold rationale", !reportLocked)
                       : null}
                   </label>
@@ -5097,7 +5221,7 @@ export default function EnginePage() {
                   className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5"
                 />
               </label>
-              {liveOperatorSurface ? assistButton("next_frame.text", "Next frame text", !reportLocked) : null}
+              {guideSurfaceEnabled ? assistButton("next_frame.text", "Next frame text", !reportLocked) : null}
 
               <label className="block text-xs text-nepsis-muted">
                 Rationale for change

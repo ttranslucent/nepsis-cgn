@@ -1151,7 +1151,7 @@ def test_http_operator_packet_lock_frame_records_guide_refusal_event(monkeypatch
     assert refused["guide_state"]["convergence"]["lock_refusal_count"] == 1
 
 
-def test_http_operator_packet_guide_turn_rejects_after_frame_lock(monkeypatch) -> None:
+def test_http_operator_packet_guide_turn_remains_available_after_frame_lock(monkeypatch) -> None:
     monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
     monkeypatch.setattr(api_server, "API", EngineApiService())
 
@@ -1165,7 +1165,7 @@ def test_http_operator_packet_guide_turn_rejects_after_frame_lock(monkeypatch) -
             {"packet": packet, "family": "safety", "frame": _operator_frame()},
         )
         assert status == 200
-        status, rejected = _post_json(
+        status, guided = _post_json(
             port,
             "/v1/operator-packet/guide",
             {
@@ -1178,10 +1178,12 @@ def test_http_operator_packet_guide_turn_rejects_after_frame_lock(monkeypatch) -
     finally:
         _stop_test_server(httpd, thread)
 
-    assert status == 409
-    assert rejected["schema_id"] == "nepsis.phase_rejection"
-    assert rejected["attempted_tool"] == "guide_turn"
-    assert rejected["failed_precondition"] == "guide_frame_draft_required"
+    assert status == 200
+    assert guided["schema_id"] == "nepsis.operator_packet"
+    assert guided["phase"] == "frame_locked"
+    assert guided["audit_trace"][-1]["event"] == "GUIDE_TURN"
+    assert guided["guide_state"]["last_turn"]["next_question"] == "What is still uncertain?"
+    assert "guide_turn" in guided["legal_next_tools"]
 
 
 def test_http_operator_packet_frame_rejects_assist_hash_mismatch(monkeypatch) -> None:

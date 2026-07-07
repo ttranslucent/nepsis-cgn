@@ -578,7 +578,7 @@ test("operator guided packet mode turns vague input into reviewable packet delta
   });
 
   await login(page);
-  await page.goto("/operator");
+  await expect(page).toHaveURL(/\/engine$/);
 
   await page.getByLabel("Domain adapter").selectOption("clinical");
   await page

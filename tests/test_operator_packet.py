@@ -13,6 +13,7 @@ from nepsis_cgn.api.operator_packet import (
     _read_rationale_segment,
     abandon_packet,
     commit_iteration,
+    guide_turn,
     lock_frame,
     lock_report,
     lock_v3_operator_layer,
@@ -280,12 +281,24 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
         frame=_operator_frame(),
         governance_costs={"c_fp": 1, "c_fn": 9},
     )
+    assert locked["legal_next_tools"] == [
+        "start_v3_layer_loop",
+        "guide_turn",
+        "run_report",
+        "abandon_packet",
+    ]
     reported = run_report(
         packet=locked,
         report_text="obs: critical signal present\nobs: no policy violation",
         sign={"critical_signal": True, "policy_violation": False},
         interpretation=_report_interpretation(),
     )
+    assert reported["legal_next_tools"] == [
+        "guide_turn",
+        "run_report",
+        "lock_report",
+        "abandon_packet",
+    ]
     report_locked = lock_report(packet=reported)
     threshold = set_threshold_decision(
         packet=report_locked,
@@ -343,6 +356,48 @@ def test_stateless_operator_packet_rejects_report_before_frame_lock() -> None:
         "lock_frame",
         "abandon_packet",
     ]
+
+
+def test_stateless_operator_packet_allows_guide_turn_after_frame_lock_and_report() -> None:
+    packet = start_operator_packet()
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+
+    guided_locked = guide_turn(
+        packet=locked,
+        user_message="What is the next reasoning move?",
+        domain_adapter="general",
+        guide={"next_question": "What discriminator would close the red hazard?"},
+    )
+
+    assert guided_locked["phase"] == "frame_locked"
+    assert guided_locked["audit_trace"][-1]["event"] == "GUIDE_TURN"
+    assert guided_locked["guide_state"]["last_turn"]["next_question"] == (
+        "What discriminator would close the red hazard?"
+    )
+    assert "guide_turn" in guided_locked["legal_next_tools"]
+
+    reported = run_report(
+        packet=guided_locked,
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={"critical_signal": True, "policy_violation": False},
+        interpretation=_report_interpretation(),
+    )
+    guided_report = guide_turn(
+        packet=reported,
+        user_message="Guide the report lock decision.",
+        domain_adapter="general",
+        guide={"next_question": "Which interpretation is still live?"},
+    )
+
+    assert guided_report["phase"] == "report_evaluated"
+    assert guided_report["audit_trace"][-1]["event"] == "GUIDE_TURN"
+    assert guided_report["guide_state"]["message_count"] == 2
+    assert "guide_turn" in guided_report["legal_next_tools"]
 
 
 def test_stateless_operator_packet_rejects_commit_before_threshold() -> None:

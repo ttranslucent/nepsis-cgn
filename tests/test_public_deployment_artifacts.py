@@ -450,6 +450,8 @@ def test_operator_guide_route_is_protected_and_packet_delta_scoped() -> None:
     )
     assert "Frame convergence" in operator_page
     assert "Discriminator queue" in operator_page
+    assert "Guide next move" in operator_page
+    assert "guideSurfaceEnabled" in operator_page
     assert "Accept low-consequence drafts" in operator_page
     assert "I confirm this patch may narrow" in operator_page
 

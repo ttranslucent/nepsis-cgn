@@ -109,11 +109,12 @@ _DEFAULT_FRAME = {
 _DEFAULT_GOVERNANCE = {"c_fp": 1.0, "c_fn": 9.0}
 _LEGAL_NEXT: dict[str, list[str]] = {
     "frame_draft": ["start_operator_packet", "guide_turn", "lock_frame", "abandon_packet"],
-    "frame_locked": ["run_report", "abandon_packet"],
-    "report_evaluated": ["run_report", "lock_report", "abandon_packet"],
-    "report_locked": ["set_threshold_decision", "abandon_packet"],
-    "threshold_set": ["commit_iteration", "abandon_packet"],
+    "frame_locked": ["guide_turn", "run_report", "abandon_packet"],
+    "report_evaluated": ["guide_turn", "run_report", "lock_report", "abandon_packet"],
+    "report_locked": ["guide_turn", "set_threshold_decision", "abandon_packet"],
+    "threshold_set": ["guide_turn", "commit_iteration", "abandon_packet"],
 }
+_GUIDE_TURN_PHASES = set(_LEGAL_NEXT)
 _STATEFUL_TO_STATELESS_TOOL = {
     "get_session_state": "start_operator_packet",
     "abandon_session": "abandon_packet",
@@ -167,14 +168,14 @@ def guide_turn(
 ) -> dict[str, Any]:
     _service_from_packet(packet)
     phase = _packet_phase(packet)
-    if phase != "frame_draft":
+    if phase not in _GUIDE_TURN_PHASES:
         return _local_rejection(
             attempted_tool="guide_turn",
             current_phase=phase,
-            failed_precondition="guide_frame_draft_required",
-            missing=["FRAME_DRAFT"],
+            failed_precondition="guide_active_operator_phase_required",
+            missing=["ACTIVE_OPERATOR_PHASE"],
             coach_prompts=[
-                "Operator-guided packet mode V1 can only update guide state before the frame is locked."
+                "Operator-guided packet mode requires an active operator packet."
             ],
         )
     turn = _normalize_guide_turn(
