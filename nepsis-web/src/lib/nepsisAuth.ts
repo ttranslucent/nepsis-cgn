@@ -4,10 +4,16 @@ import { envFlag, operatorSiteMode, publicSiteMode } from "@/lib/publicMode";
 import {
   NEPSIS_CSRF_COOKIE,
   NEPSIS_LOGIN_CHALLENGE_COOKIE,
+  NEPSIS_SUPABASE_OTP_SENT_COOKIE,
   NEPSIS_USER_COOKIE,
 } from "@/lib/securityConstants";
 
-export { NEPSIS_CSRF_COOKIE, NEPSIS_LOGIN_CHALLENGE_COOKIE, NEPSIS_USER_COOKIE };
+export {
+  NEPSIS_CSRF_COOKIE,
+  NEPSIS_LOGIN_CHALLENGE_COOKIE,
+  NEPSIS_SUPABASE_OTP_SENT_COOKIE,
+  NEPSIS_USER_COOKIE,
+};
 export const LOGIN_CODE_TTL_SECONDS = 10 * 60;
 export const LOGIN_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 export const LOGIN_SESSION_DAYS = 30;
@@ -23,6 +29,12 @@ const STALE_SUPABASE_OTP_MESSAGE =
 type LoginChallengePayload = {
   email: string;
   hash: string;
+  expiresAt: number;
+};
+
+type SupabaseOtpPendingPayload = {
+  email: string;
+  issuedAt: number;
   expiresAt: number;
 };
 
@@ -336,6 +348,26 @@ function decodeChallenge(token: string): LoginChallengePayload | null {
   return null;
 }
 
+function decodeSupabaseOtpPending(token: string): SupabaseOtpPendingPayload | null {
+  const parsed = decodeSignedPayload(token);
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    typeof (parsed as SupabaseOtpPendingPayload).email === "string" &&
+    typeof (parsed as SupabaseOtpPendingPayload).issuedAt === "number" &&
+    typeof (parsed as SupabaseOtpPendingPayload).expiresAt === "number" &&
+    Number.isFinite((parsed as SupabaseOtpPendingPayload).issuedAt) &&
+    Number.isFinite((parsed as SupabaseOtpPendingPayload).expiresAt)
+  ) {
+    return {
+      email: (parsed as SupabaseOtpPendingPayload).email,
+      issuedAt: (parsed as SupabaseOtpPendingPayload).issuedAt,
+      expiresAt: (parsed as SupabaseOtpPendingPayload).expiresAt,
+    };
+  }
+  return null;
+}
+
 function decodeSession(token: string): LoginSessionPayload | null {
   const parsed = decodeSignedPayload(token);
   if (
@@ -530,6 +562,36 @@ export function createLoginChallenge(email: string, code: string): string {
     hash: hashLoginCode(email, code),
     expiresAt: Date.now() + LOGIN_CODE_TTL_SECONDS * 1000,
   });
+}
+
+export function createSupabaseOtpPending(email: string): string {
+  const now = Date.now();
+  return encodeSignedPayload({
+    email,
+    issuedAt: now,
+    expiresAt: now + LOGIN_CODE_TTL_SECONDS * 1000,
+  });
+}
+
+export function readSupabaseOtpPendingFromCookieValue(
+  token: string | null | undefined,
+  email: string,
+): { expiresAt: number; remainingSeconds: number } | null {
+  if (!token) {
+    return null;
+  }
+  const pending = decodeSupabaseOtpPending(token);
+  if (!pending || pending.email !== email) {
+    return null;
+  }
+  const remainingMs = pending.expiresAt - Date.now();
+  if (remainingMs <= 0) {
+    return null;
+  }
+  return {
+    expiresAt: pending.expiresAt,
+    remainingSeconds: Math.max(Math.ceil(remainingMs / 1000), 1),
+  };
 }
 
 export function verifyLoginChallenge(

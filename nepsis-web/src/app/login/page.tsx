@@ -13,7 +13,7 @@ export default function LoginPage() {
   const trimmedEmail = email.trim();
   const normalizedCode = code.replace(/\D/g, "").slice(0, 6);
 
-  async function sendCode() {
+  async function sendCode(forceNewCode = false) {
     if (!trimmedEmail) {
       return;
     }
@@ -24,7 +24,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmedEmail }),
+        body: JSON.stringify({ email: trimmedEmail, forceNewCode }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -34,6 +34,12 @@ export default function LoginPage() {
         if (data.delivery === "preview" && typeof data.previewCode === "string") {
           setCode(data.previewCode);
           setMessage(`Email delivery is not configured here. Use this one-time code: ${data.previewCode}`);
+        } else if (data.reusedExistingCode === true) {
+          setCode("");
+          setMessage(
+            data.warning ||
+              "No new email was sent. Use the newest code already in your inbox; requesting again during this window would replace it.",
+          );
         } else {
           setCode("");
           setMessage(
@@ -170,12 +176,12 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => {
-                void sendCode();
+                void sendCode(true);
               }}
               disabled={loading}
               className="w-full rounded-full border border-nepsis-border py-2 text-sm transition hover:border-nepsis-accent disabled:opacity-60"
             >
-              Send a fresh code
+              Send a new email
             </button>
             <button
               type="button"

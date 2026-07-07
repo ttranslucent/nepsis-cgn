@@ -5,6 +5,7 @@ import {
   NEPSIS_CSRF_COOKIE,
   LOGIN_SESSION_TTL_SECONDS,
   NEPSIS_LOGIN_CHALLENGE_COOKIE,
+  NEPSIS_SUPABASE_OTP_SENT_COOKIE,
   NEPSIS_USER_COOKIE,
   checkLoginRateLimit,
   cookieOptions,
@@ -55,16 +56,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Code expired or not found" }, { status: 400 });
   }
 
-  if (supabaseOtpConfigured()) {
-    const verification = await verifySupabaseLoginCode(email, code);
-    if (!verification.ok) {
-      return NextResponse.json({ error: verification.error }, { status: verification.status });
-    }
-  } else {
-    const challenge = readCookieFromHeader(
-      req.headers.get("cookie") ?? "",
-      NEPSIS_LOGIN_CHALLENGE_COOKIE,
-    );
+  const challenge = readCookieFromHeader(
+    req.headers.get("cookie") ?? "",
+    NEPSIS_LOGIN_CHALLENGE_COOKIE,
+  );
+
+  if (challenge) {
     let verification: ReturnType<typeof verifyLoginChallenge>;
     try {
       verification = verifyLoginChallenge(challenge, email, code);
@@ -81,6 +78,13 @@ export async function POST(req: Request) {
       }
       return response;
     }
+  } else if (supabaseOtpConfigured()) {
+    const verification = await verifySupabaseLoginCode(email, code);
+    if (!verification.ok) {
+      return NextResponse.json({ error: verification.error }, { status: verification.status });
+    }
+  } else {
+    return NextResponse.json({ error: "Code expired or not found" }, { status: 400 });
   }
 
   let sessionToken: string;
@@ -105,5 +109,6 @@ export async function POST(req: Request) {
     csrfCookieOptions(rememberDevice ? LOGIN_SESSION_TTL_SECONDS : undefined),
   );
   response.cookies.set(NEPSIS_LOGIN_CHALLENGE_COOKIE, "", cookieOptions(0));
+  response.cookies.set(NEPSIS_SUPABASE_OTP_SENT_COOKIE, "", cookieOptions(0));
   return response;
 }

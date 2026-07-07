@@ -175,9 +175,16 @@ def test_operator_login_supports_supabase_otp_without_replacing_local_session() 
     assert "normalizeLoginCode" in auth_helper
     assert 'verifyOtp({ email, token: normalizedCode, type: "email" })' in auth_helper
     assert "replaced by a newer email" in auth_helper
+    assert "NEPSIS_SUPABASE_OTP_SENT_COOKIE" in auth_helper
+    assert "createSupabaseOtpPending" in auth_helper
+    assert "readSupabaseOtpPendingFromCookieValue" in auth_helper
     assert "requestSupabaseLoginCode" in request_route
+    assert "loginEmailConfigured()" in request_route
+    assert "reusedExistingCode: true" in request_route
+    assert "forceNewCode" in request_route
     assert "allowCodeEntry: delivery.status === 429" in request_route
     assert "verifySupabaseLoginCode" in verify_route
+    assert "NEPSIS_SUPABASE_OTP_SENT_COOKIE" in verify_route
     assert "createLoginSession" in verify_route
     assert "createCsrfToken" in verify_route
     assert "NEPSIS_USER_COOKIE" in verify_route
