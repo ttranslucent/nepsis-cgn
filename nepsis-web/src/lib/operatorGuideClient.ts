@@ -1,5 +1,5 @@
 import { withCsrfHeader } from "@/lib/csrfClient";
-import type { OperatorModelSuggestion } from "@/lib/operatorModelClient";
+import type { OperatorAssistTarget, OperatorModelSuggestion } from "@/lib/operatorModelClient";
 
 export type OperatorGuideDomainAdapter = "general" | "clinical" | "finance" | "legal" | "research";
 
@@ -9,6 +9,7 @@ export type OperatorGuideDiscriminator = {
   question: string;
   why_it_moves_decision: string;
   basis?: string;
+  target_field?: OperatorAssistTarget | "report.input" | "report.contradictions_status" | "report.contradictions_note";
 };
 
 export type OperatorGuideVisibleScaffold = {

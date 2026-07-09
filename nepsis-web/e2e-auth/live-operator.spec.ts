@@ -536,6 +536,7 @@ test("operator guided packet mode turns vague input into reviewable packet delta
             question: "Antibiotics, fluids, transfer, imaging, or observation?",
             why_it_moves_decision: "Separates safety action from diagnostic closure.",
             basis: "consequence asymmetry",
+            target_field: "frame.text",
           },
         ],
       }),
@@ -597,6 +598,10 @@ test("operator guided packet mode turns vague input into reviewable packet delta
   await expect(page.getByText("Decision frame", { exact: true })).toBeVisible();
   await expect(page.getByText("high consequence")).toBeVisible();
   await expect(page.getByText("low consequence")).toBeVisible();
+  await packetInstruments.getByRole("button", { name: /Open Frame question/i }).click();
+  await expect(page.getByRole("textbox", { name: /Frame question/i })).toBeFocused();
+  await packetInstruments.getByRole("button", { name: /Review patch/i }).click();
+  await expect(page.getByRole("region", { name: /Review patch Decision frame/i })).toBeFocused();
 
   await page.getByRole("button", { name: /Accept low-consequence drafts/i }).click();
   await expect(page.getByRole("textbox", { name: /Soft constraints/i })).toHaveValue(proposedSoftValue);
