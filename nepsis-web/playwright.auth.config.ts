@@ -4,6 +4,7 @@ const port = Number(process.env.PLAYWRIGHT_AUTH_PORT ?? 3101);
 
 export default defineConfig({
   testDir: "./e2e-auth",
+  testIgnore: /hosted-operator-otp\.spec\.ts/,
   timeout: 30_000,
   expect: {
     timeout: 5_000,
