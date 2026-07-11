@@ -27,6 +27,14 @@ const PATCH_TARGETS = new Set([
   "frame.red_definition",
   "frame.blue_goals",
 ]);
+const DISCRIMINATOR_TARGET_FIELDS = new Set([
+  ...PATCH_TARGETS,
+  "report.input",
+  "report.contradictions_status",
+  "report.contradictions_note",
+  "threshold.hold_reason",
+  "next_frame.text",
+]);
 
 function consequenceLevel(target: string): "low" | "high" {
   return target === "frame.constraints_soft" ? "low" : "high";
@@ -51,7 +59,8 @@ function systemPrompt(domainAdapter: string): string {
     "Convert vague reasoning into reviewable packet deltas; do not lock fields, commit state, or choose threshold decisions.",
     "Preserve RED before BLUE, keep STILL/ZeroBack obligations visible when relevant, and keep domain claims restrained.",
     `Domain adapter: ${domainAdapter}.`,
-    'Return compact JSON only with shape {"next_question":"","visible_scaffold":{"current_frame":"","open_constraint":"","red_concern":"","ready_to_lock":[]},"packet_delta_preview":{},"proposed_updates":[{"target":"","title":"","proposedValue":"","rationale":"","riskNote":""}],"fields_ready_to_lock":[],"blocking_uncertainties":[],"ranked_discriminators":[{"rank":1,"label":"","question":"","why_it_moves_decision":"","basis":""}]}',
+    `For ranked_discriminators.target_field use only one of: ${Array.from(DISCRIMINATOR_TARGET_FIELDS).join(", ")}.`,
+    'Return compact JSON only with shape {"next_question":"","visible_scaffold":{"current_frame":"","open_constraint":"","red_concern":"","ready_to_lock":[]},"packet_delta_preview":{},"proposed_updates":[{"target":"","title":"","proposedValue":"","rationale":"","riskNote":""}],"fields_ready_to_lock":[],"blocking_uncertainties":[],"ranked_discriminators":[{"rank":1,"label":"","question":"","why_it_moves_decision":"","basis":"","target_field":""}]}',
   ].join(" ");
 }
 
@@ -116,6 +125,10 @@ function normalizeDiscriminators(value: unknown) {
       question: boundedString(row.question, 700),
       why_it_moves_decision: boundedString(row.why_it_moves_decision, 1000),
       basis: boundedString(row.basis, 400),
+      target_field:
+        typeof row.target_field === "string" && DISCRIMINATOR_TARGET_FIELDS.has(row.target_field.trim())
+          ? row.target_field.trim()
+          : "",
     }))
     .filter((row) => row.label || row.question);
 }

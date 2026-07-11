@@ -183,6 +183,12 @@ type ModelComparisonSnapshot = {
 
 type GateStageId = "frame" | "interpretation" | "threshold";
 
+type GuideTargetField =
+  | OperatorAssistTarget
+  | "report.input"
+  | "report.contradictions_status"
+  | "report.contradictions_note";
+
 type UnresolvedGateItem = {
   key: string;
   stageId: GateStageId;
@@ -1054,6 +1060,74 @@ function guideRiskConcernLabel(adapter: OperatorGuideDomainAdapter): string {
   return "What could go wrong";
 }
 
+const GUIDE_TARGET_IDS: Record<GuideTargetField, string> = {
+  "frame.text": "frame-problem-statement",
+  "frame.key_uncertainty": "frame-key-uncertainty",
+  "frame.constraints_hard": "frame-constraints-hard",
+  "frame.constraints_soft": "frame-constraints-soft",
+  "frame.red_definition": "frame-catastrophic-outcome",
+  "frame.blue_goals": "frame-optimization-goal",
+  "threshold.hold_reason": "threshold-hold-reason",
+  "next_frame.text": "next-frame-text",
+  "report.input": "report-input",
+  "report.contradictions_status": "report-contradictions-status",
+  "report.contradictions_note": "report-contradictions-note",
+};
+
+const OPERATOR_ASSIST_TARGETS = new Set<OperatorAssistTarget>([
+  "frame.text",
+  "frame.key_uncertainty",
+  "frame.constraints_hard",
+  "frame.constraints_soft",
+  "frame.red_definition",
+  "frame.blue_goals",
+  "threshold.hold_reason",
+  "next_frame.text",
+]);
+
+function isOperatorAssistTarget(value: string): value is OperatorAssistTarget {
+  return OPERATOR_ASSIST_TARGETS.has(value as OperatorAssistTarget);
+}
+
+function isGuideTargetField(value: string | null): value is GuideTargetField {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(GUIDE_TARGET_IDS, value));
+}
+
+function readGuideTargetField(row: Record<string, unknown>): GuideTargetField | null {
+  const target = readString(row.target_field) ?? readString(row.targetField);
+  return isGuideTargetField(target) ? target : null;
+}
+
+function guideTargetId(target: GuideTargetField): string {
+  return GUIDE_TARGET_IDS[target];
+}
+
+function guideTargetLabel(target: GuideTargetField): string {
+  if (isOperatorAssistTarget(target)) {
+    return targetLabel(target);
+  }
+  const labels: Record<Exclude<GuideTargetField, OperatorAssistTarget>, string> = {
+    "report.input": "Report input",
+    "report.contradictions_status": "Contradiction status",
+    "report.contradictions_note": "Contradiction notes",
+  };
+  return labels[target];
+}
+
+function guideTargetStage(target: GuideTargetField): GateStageId {
+  if (target.startsWith("report.")) {
+    return "interpretation";
+  }
+  if (target.startsWith("threshold.") || target.startsWith("next_frame.")) {
+    return "threshold";
+  }
+  return "frame";
+}
+
+function guidePatchElementId(patchId: string): string {
+  return `guide-patch-${patchId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
 function coachMessage(coach: StageCoach): string {
   if (coach.prompts.length === 0) {
     return coach.summary;
@@ -1287,6 +1361,8 @@ function highlightAndScroll(targetId: string): void {
       target instanceof HTMLSelectElement ||
       target instanceof HTMLButtonElement
     ) {
+      target.focus();
+    } else if (target.getAttribute("tabindex") !== null) {
       target.focus();
     }
     pulseJumpTarget(target as HTMLElement);
@@ -1699,6 +1775,7 @@ export default function EnginePage() {
             question: readString(item.question) ?? "",
             why_it_moves_decision: readString(item.why_it_moves_decision) ?? readString(item.rationale) ?? "",
             basis: readString(item.basis) ?? "",
+            target_field: readGuideTargetField(item),
             resolution_status: readString(item.resolution_status) ?? "open",
           }))
       : [];
@@ -2446,6 +2523,31 @@ export default function EnginePage() {
       }
       pulseJumpTarget(target as HTMLElement);
     });
+  }
+
+  function jumpToGuideTarget(target: GuideTargetField) {
+    clearAllErrors();
+    const stage = guideTargetStage(target);
+    if (!showOperatorControls) {
+      if (stage === "frame") {
+        setFrameCollapsed(false);
+      }
+      if (stage === "interpretation" && !frameLocked) {
+        setLocalError(`Complete ${audienceLabels.stage1} first to access ${guideTargetLabel(target)}.`);
+        return;
+      }
+      if (stage === "threshold" && !reportLocked) {
+        setLocalError(`Complete ${audienceLabels.stage2} first to access ${guideTargetLabel(target)}.`);
+        return;
+      }
+    }
+    window.setTimeout(() => highlightAndScroll(guideTargetId(target)), 0);
+  }
+
+  function jumpToGuidePatch(patchId: string) {
+    clearAllErrors();
+    setModelAssistOpen(true);
+    window.setTimeout(() => highlightAndScroll(guidePatchElementId(patchId)), 0);
   }
 
   function appendFrameTimeline(
@@ -3771,8 +3873,15 @@ export default function EnginePage() {
               const confirmation = review.confirmationPrompt ?? assistConfirmationPrompt(review.target);
               const requiresEcho =
                 review.requiresEchoConfirmation ?? assistRequiresEchoConfirmation(review.target);
+              const patchAnchorId = guidePatchElementId(review.patch_id ?? review.id);
               return (
-                <div key={review.id} className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
+                <section
+                  key={review.id}
+                  id={patchAnchorId}
+                  tabIndex={-1}
+                  aria-label={`Review patch ${review.title}`}
+                  className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs"
+                >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <div className="font-semibold text-nepsis-text">{review.title}</div>
@@ -3848,7 +3957,7 @@ export default function EnginePage() {
                       Reject
                     </button>
                   </div>
-                </div>
+                </section>
               );
             })}
           </div>
@@ -4201,29 +4310,59 @@ export default function EnginePage() {
                     {guideRankedDiscriminators.length === 0 ? (
                       <div className="text-nepsis-text">No queue yet</div>
                     ) : (
-                      visibleGuideDiscriminators.map((row) => (
-                        <div
-                          key={`${row.rank}-${row.label}-${row.question}-${row.resolution_status}`}
-                          className={`rounded border p-2 ${
-                            row.rank === 1 ? "border-amber-400/50 bg-amber-500/10" : "border-nepsis-border bg-black/20"
-                          }`}
-                        >
-                          <div className="font-medium text-nepsis-text">
-                            {row.rank}. {row.label || row.question}
-                            {row.rank === 1 ? <span className="ml-2 text-[11px] text-amber-200">current</span> : null}
-                            {row.resolution_status === "mooted" ? (
-                              <span className="ml-2 text-[11px] text-nepsis-muted">mooted</span>
+                      visibleGuideDiscriminators.map((row) => {
+                        const targetField = row.target_field;
+                        const pendingPatch =
+                          targetField && isOperatorAssistTarget(targetField)
+                            ? assistReviews.find(
+                                (review) => review.uiStatus === "draft" && review.target === targetField,
+                              )
+                            : null;
+                        return (
+                          <div
+                            key={`${row.rank}-${row.label}-${row.question}-${row.resolution_status}-${targetField ?? ""}`}
+                            className={`rounded border p-2 ${
+                              row.rank === 1 ? "border-amber-400/50 bg-amber-500/10" : "border-nepsis-border bg-black/20"
+                            }`}
+                          >
+                            <div className="font-medium text-nepsis-text">
+                              {row.rank}. {row.label || row.question}
+                              {row.rank === 1 ? <span className="ml-2 text-[11px] text-amber-200">current</span> : null}
+                              {row.resolution_status === "mooted" ? (
+                                <span className="ml-2 text-[11px] text-nepsis-muted">mooted</span>
+                              ) : null}
+                            </div>
+                            {row.question ? <div className="mt-1 text-nepsis-text">{row.question}</div> : null}
+                            {row.why_it_moves_decision ? (
+                              <div className="mt-1 text-nepsis-muted">Rationale: {row.why_it_moves_decision}</div>
+                            ) : null}
+                            {"basis" in row && typeof row.basis === "string" && row.basis ? (
+                              <div className="mt-1 text-nepsis-muted">Basis: {row.basis}</div>
+                            ) : null}
+                            {targetField ? (
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-[11px] text-nepsis-muted">{targetField}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToGuideTarget(targetField)}
+                                  className="rounded-full border border-amber-400/50 px-2 py-0.5 text-[11px] text-amber-100 hover:border-amber-300"
+                                >
+                                  Open {guideTargetLabel(targetField)}
+                                </button>
+                                {pendingPatch ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => jumpToGuidePatch(pendingPatch.patch_id ?? pendingPatch.id)}
+                                    className="rounded-full border border-nepsis-border px-2 py-0.5 text-[11px] text-nepsis-muted hover:border-nepsis-accent hover:text-nepsis-text"
+                                  >
+                                    Review patch
+                                  </button>
+                                ) : null}
+                              </div>
                             ) : null}
                           </div>
-                          {row.question ? <div className="mt-1 text-nepsis-text">{row.question}</div> : null}
-                          {row.why_it_moves_decision ? (
-                            <div className="mt-1 text-nepsis-muted">Rationale: {row.why_it_moves_decision}</div>
-                          ) : null}
-                          {"basis" in row && typeof row.basis === "string" && row.basis ? (
-                            <div className="mt-1 text-nepsis-muted">Basis: {row.basis}</div>
-                          ) : null}
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                     {guideRankedDiscriminators.length > 3 ? (
                       <button
