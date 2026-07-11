@@ -276,6 +276,7 @@ def lock_frame(
     manifest_path: str | None = None,
     assist_acceptances: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    _validate_packet(packet)
     blockers = _guide_lock_blockers(packet)
     if blockers:
         arguments = _with_guide_event_chain(

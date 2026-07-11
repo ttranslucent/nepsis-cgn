@@ -545,6 +545,26 @@ def test_stateless_operator_packet_rejects_tampered_seal(monkeypatch) -> None:
         )
 
 
+def test_lock_frame_validates_integrity_before_guide_refusal(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET", "unit-test-packet-seal-secret"
+    )
+    packet = start_operator_packet()
+    guided = guide_turn(
+        packet=packet,
+        user_message="Can we lock this?",
+        domain_adapter="general",
+        guide={
+            "next_question": "What is still blocking?",
+            "blocking_uncertainties": ["downside is unbounded"],
+        },
+    )
+    guided["frame"]["text"] = "Tampered frame text."
+
+    with pytest.raises(ValueError, match="integrity seal verification failed"):
+        lock_frame(packet=guided, family="safety", frame=_operator_frame())
+
+
 def test_stateless_operator_packet_rejects_trace_over_configured_cap(
     monkeypatch,
 ) -> None:
