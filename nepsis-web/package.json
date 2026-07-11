@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
-    "test:e2e:auth": "playwright test --config=playwright.auth.config.ts"
+    "test:e2e:auth": "playwright test --config=playwright.auth.config.ts",
+    "test:e2e:auth:hosted": "playwright test --config=playwright.hosted-auth.config.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.106.2",

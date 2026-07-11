@@ -180,6 +180,11 @@ def test_operator_login_supports_supabase_otp_without_replacing_local_session() 
     assert "readSupabaseOtpPendingFromCookieValue" in auth_helper
     assert "requestSupabaseLoginCode" in request_route
     assert "loginEmailConfigured()" in request_route
+    assert "authSecretStatus" in request_route
+    assert "Operator login is unavailable until NEPSIS_AUTH_SECRET is configured." in request_route
+    assert request_route.index("const sessionSigningStatus = authSecretStatus();") < request_route.index(
+        "if (supabaseOtpConfigured())"
+    )
     assert "reusedExistingCode: true" in request_route
     assert "forceNewCode" in request_route
     assert "allowCodeEntry: delivery.status === 429" in request_route

@@ -6,6 +6,7 @@ import {
   LOGIN_CODE_TTL_SECONDS,
   NEPSIS_LOGIN_CHALLENGE_COOKIE,
   NEPSIS_SUPABASE_OTP_SENT_COOKIE,
+  authSecretStatus,
   checkLoginRateLimit,
   cookieOptions,
   createLoginChallenge,
@@ -85,6 +86,14 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: rateLimit.error, retryAfterSeconds: rateLimit.retryAfterSeconds },
       { status: 429 },
+    );
+  }
+
+  const sessionSigningStatus = authSecretStatus();
+  if (!sessionSigningStatus.ready) {
+    return NextResponse.json(
+      { error: "Operator login is unavailable until NEPSIS_AUTH_SECRET is configured." },
+      { status: 503 },
     );
   }
 
