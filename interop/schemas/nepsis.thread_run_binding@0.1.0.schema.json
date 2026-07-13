@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.thread_run_binding@0.1.0.schema.json",
+  "title": "NepsisMC append-only Codex thread to CGN run binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "adapter_version",
+    "binding_generation",
+    "binding_id",
+    "created_at",
+    "last_verified_head_event_hash",
+    "last_verified_head_sequence",
+    "owner_id",
+    "previous_binding_hash",
+    "run_id",
+    "status",
+    "thread_id",
+    "thread_run_binding_schema_version"
+  ],
+  "properties": {
+    "account_fingerprint": { "$ref": "#/$defs/nonEmptyString" },
+    "adapter_version": { "$ref": "#/$defs/nonEmptyString" },
+    "binding_generation": { "type": "integer", "minimum": 1 },
+    "binding_id": { "$ref": "#/$defs/nonEmptyString" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "last_verified_head_event_hash": { "$ref": "#/$defs/sha256" },
+    "last_verified_head_sequence": { "type": "integer", "minimum": 0 },
+    "owner_id": { "$ref": "#/$defs/nonEmptyString" },
+    "previous_binding_hash": { "$ref": "#/$defs/hashOrEmpty" },
+    "revocation_reason": { "$ref": "#/$defs/nonEmptyString" },
+    "revoked_at": { "$ref": "#/$defs/timestamp" },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "status": { "enum": ["active", "revoked"] },
+    "thread_id": { "$ref": "#/$defs/nonEmptyString" },
+    "thread_run_binding_schema_version": {
+      "const": "nepsis.thread_run_binding@0.1.0"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "revoked" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["revocation_reason", "revoked_at"] }
+    }
+  ],
+  "$defs": {
+    "hashOrEmpty": { "type": "string", "pattern": "^(|[0-9a-f]{64})$" },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

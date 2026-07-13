@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.zeroback_state@0.1.0.schema.json",
+  "title": "Canonical ZeroBack preservation record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "count",
+    "performed_at",
+    "preserved_evidence_root_hash",
+    "preserved_observation_root_hash",
+    "preserved_population_root_hash",
+    "preserved_unresolved_contradiction_hashes",
+    "preserved_unresolved_red_hazard_hashes",
+    "prior_frame_root_hash",
+    "replacement_frame_root_hash",
+    "zeroback_intent_hash",
+    "zeroback_state_schema_version"
+  ],
+  "properties": {
+    "count": { "type": "integer", "minimum": 1 },
+    "performed_at": { "$ref": "#/$defs/timestamp" },
+    "preserved_evidence_root_hash": { "$ref": "#/$defs/sha256" },
+    "preserved_observation_root_hash": { "$ref": "#/$defs/sha256" },
+    "preserved_population_root_hash": { "$ref": "#/$defs/sha256" },
+    "preserved_unresolved_contradiction_hashes": { "$ref": "#/$defs/hashArray" },
+    "preserved_unresolved_red_hazard_hashes": { "$ref": "#/$defs/hashArray" },
+    "prior_frame_root_hash": { "$ref": "#/$defs/sha256" },
+    "replacement_frame_root_hash": { "$ref": "#/$defs/sha256" },
+    "zeroback_intent_hash": { "$ref": "#/$defs/sha256" },
+    "zeroback_state_schema_version": {
+      "const": "nepsis.zeroback_state@0.1.0"
+    }
+  },
+  "$defs": {
+    "hashArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    }
+  }
+}

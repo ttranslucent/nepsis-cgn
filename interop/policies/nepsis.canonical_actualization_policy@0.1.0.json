@@ -1,0 +1,25 @@
+{
+  "accepted_proposal_application": "validator_only_at_decision_commit",
+  "actualization_policy_schema_version": "nepsis.canonical_actualization_policy@0.1.0",
+  "commit_requires": [
+    "accepted_exact_proposal",
+    "released_still",
+    "no_denominator_collapse",
+    "no_unresolved_contradictions",
+    "no_unresolved_red_hazards"
+  ],
+  "packet_patch_projection": "fields_by_governed_target_path",
+  "still_release_actor": "operator",
+  "supported_actions": [
+    "perform_zeroback",
+    "release_still",
+    "request_decision_commit"
+  ],
+  "zeroback_preserves": [
+    "evidence_root_hash",
+    "observation_root_hash",
+    "population_root_hash",
+    "unresolved_contradiction_hashes",
+    "unresolved_red_hazard_hashes"
+  ]
+}

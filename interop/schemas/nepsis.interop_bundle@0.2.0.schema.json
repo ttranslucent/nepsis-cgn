@@ -1,0 +1,442 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.interop_bundle@0.2.0.schema.json",
+  "title": "Nepsis neutral interop bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "export_attestation",
+    "interop_bundle_version",
+    "subject",
+    "subject_hash"
+  ],
+  "properties": {
+    "export_attestation": { "$ref": "#/$defs/exportAttestation" },
+    "interop_bundle_version": { "const": "nepsis.interop_bundle@0.2.0" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "subject_hash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashOrEmpty": {
+      "type": "string",
+      "pattern": "^(|[0-9a-f]{64})$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256Array": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nonEmptyString" },
+      "uniqueItems": true
+    },
+    "auditEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor",
+        "created_at",
+        "event_hash",
+        "event_schema_version",
+        "event_type",
+        "payload_hash",
+        "prev_event_hash",
+        "provenance_class",
+        "sequence",
+        "session_id"
+      ],
+      "properties": {
+        "actor": { "$ref": "#/$defs/nonEmptyString" },
+        "created_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+        },
+        "event_hash": { "$ref": "#/$defs/sha256" },
+        "event_schema_version": { "const": "nepsis.audit_event@0.1.0" },
+        "event_type": { "$ref": "#/$defs/nonEmptyString" },
+        "idempotency_key": { "$ref": "#/$defs/nonEmptyString" },
+        "payload": { "type": "object" },
+        "payload_hash": { "$ref": "#/$defs/sha256" },
+        "prev_event_hash": { "$ref": "#/$defs/sha256" },
+        "provenance_class": {
+          "enum": ["model", "operator", "system", "validator"]
+        },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "session_id": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "exportAttestationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_root",
+        "intent_hash",
+        "interop_bundle_version",
+        "markdown_hash",
+        "profile",
+        "redact_artifact_hashes",
+        "redact_sequences",
+        "subject_audit_end_sequence",
+        "subject_audit_tip",
+        "subject_hash"
+      ],
+      "properties": {
+        "artifact_root": { "$ref": "#/$defs/sha256" },
+        "intent_hash": { "$ref": "#/$defs/sha256" },
+        "interop_bundle_version": { "const": "nepsis.interop_bundle@0.2.0" },
+        "markdown_hash": { "$ref": "#/$defs/sha256" },
+        "profile": { "enum": ["full", "redacted"] },
+        "redact_artifact_hashes": { "$ref": "#/$defs/sha256Array" },
+        "redact_sequences": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "uniqueItems": true
+        },
+        "subject_audit_end_sequence": { "type": "integer", "minimum": 0 },
+        "subject_audit_tip": { "$ref": "#/$defs/sha256" },
+        "subject_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "exportAttestation": {
+      "allOf": [
+        { "$ref": "#/$defs/auditEvent" },
+        {
+          "type": "object",
+          "required": ["idempotency_key", "payload"],
+          "properties": {
+            "actor": { "const": "validator:nepsis.interop_bundle@0.2.0" },
+            "event_type": { "const": "export_created" },
+            "payload": { "$ref": "#/$defs/exportAttestationPayload" },
+            "provenance_class": { "const": "validator" }
+          }
+        }
+      ]
+    },
+    "artifactRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_hash", "included", "roles", "schema_version"],
+      "properties": {
+        "artifact": { "type": "object" },
+        "artifact_hash": { "$ref": "#/$defs/sha256" },
+        "included": { "type": "boolean" },
+        "roles": { "$ref": "#/$defs/stringArray" },
+        "schema_version": { "$ref": "#/$defs/nonEmptyString" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "included": { "const": true } },
+            "required": ["included"]
+          },
+          "then": { "required": ["artifact"] },
+          "else": { "not": { "required": ["artifact"] } }
+        }
+      ]
+    },
+    "auditRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["end_sequence", "start_sequence", "tip_event_hash"],
+      "properties": {
+        "end_sequence": { "type": "integer", "minimum": 0 },
+        "start_sequence": { "const": 0 },
+        "tip_event_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "canonicalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_hash", "version"],
+      "properties": {
+        "policy_hash": { "$ref": "#/$defs/sha256" },
+        "version": { "const": "nepsis.canonical_json@0.1.0" }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_id", "version"],
+      "properties": {
+        "contract_id": { "$ref": "#/$defs/nonEmptyString" },
+        "version": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_hash", "policy_id", "version"],
+      "properties": {
+        "policy_hash": { "$ref": "#/$defs/sha256" },
+        "policy_id": { "$ref": "#/$defs/nonEmptyString" },
+        "version": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producer_id", "producer_version"],
+      "properties": {
+        "producer_id": { "const": "nepsismc" },
+        "producer_version": { "const": "0.1.0" }
+      }
+    },
+    "decisionProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actualization_contract_version",
+        "calibration_acceptance_hash",
+        "calibration_cycle_id",
+        "calibration_generation",
+        "calibration_parent_population_hashes",
+        "committed_action_id",
+        "credible_mass_ppm",
+        "current_population_hash",
+        "decision_id",
+        "frame_hash",
+        "frame_lineage_hash",
+        "governance_decision_hash",
+        "governance_status",
+        "initialized",
+        "last_sequence",
+        "minimum_absolute_fit_ppm",
+        "next_discriminator_id",
+        "observation_hashes",
+        "particle_lineage_hash",
+        "population_history",
+        "predictions_hash",
+        "pretest_population_hash",
+        "proposed_action_id",
+        "resample_ess_threshold_ppm",
+        "seed",
+        "stale_artifact_hashes",
+        "status",
+        "update_hash",
+        "unresolved_contradictions",
+        "zeroback_count"
+      ],
+      "properties": {
+        "actualization_contract_version": { "const": "nepsis.actualization_contract@0.2.0" },
+        "calibration_acceptance_hash": { "$ref": "#/$defs/hashOrEmpty" },
+        "calibration_cycle_id": { "$ref": "#/$defs/nonEmptyString" },
+        "calibration_generation": { "type": "integer", "minimum": 0 },
+        "calibration_parent_population_hashes": { "$ref": "#/$defs/sha256Array" },
+        "committed_action_id": { "type": "string" },
+        "credible_mass_ppm": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "current_population_hash": { "$ref": "#/$defs/hashOrEmpty" },
+        "decision_id": { "$ref": "#/$defs/nonEmptyString" },
+        "frame_hash": { "$ref": "#/$defs/sha256" },
+        "frame_lineage_hash": { "$ref": "#/$defs/sha256" },
+        "governance_decision_hash": { "$ref": "#/$defs/hashOrEmpty" },
+        "governance_status": { "type": "string" },
+        "initialized": { "const": true },
+        "last_sequence": { "type": "integer", "minimum": 0 },
+        "minimum_absolute_fit_ppm": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "next_discriminator_id": { "type": "string" },
+        "observation_hashes": { "$ref": "#/$defs/sha256Array" },
+        "particle_lineage_hash": { "$ref": "#/$defs/sha256" },
+        "population_history": { "$ref": "#/$defs/sha256Array" },
+        "predictions_hash": { "$ref": "#/$defs/hashOrEmpty" },
+        "pretest_population_hash": { "$ref": "#/$defs/hashOrEmpty" },
+        "proposed_action_id": { "type": "string" },
+        "resample_ess_threshold_ppm": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "seed": { "$ref": "#/$defs/nonEmptyString" },
+        "stale_artifact_hashes": { "$ref": "#/$defs/sha256Array" },
+        "status": { "$ref": "#/$defs/nonEmptyString" },
+        "update_hash": { "$ref": "#/$defs/hashOrEmpty" },
+        "unresolved_contradictions": { "$ref": "#/$defs/stringArray" },
+        "zeroback_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "phaseProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_hold",
+        "gates",
+        "hold",
+        "last_sequence",
+        "locked_gates",
+        "phase_machine_version",
+        "projected_phase",
+        "unlocked_gates"
+      ],
+      "properties": {
+        "active_hold": { "type": "boolean" },
+        "gates": { "type": "array", "items": { "type": "object" } },
+        "hold": { "type": "object" },
+        "last_sequence": { "type": "integer", "minimum": 0 },
+        "locked_gates": { "$ref": "#/$defs/stringArray" },
+        "phase_machine_version": { "const": "nepsis.phase_machine@0.3.0" },
+        "projected_phase": {
+          "enum": [
+            "intake",
+            "frame_draft",
+            "constraint_context",
+            "red_review",
+            "blue_options",
+            "synthesis",
+            "decision_ready",
+            "exported"
+          ]
+        },
+        "unlocked_gates": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_root",
+        "artifact_rows",
+        "audit_events",
+        "audit_range",
+        "canonicalization",
+        "contracts",
+        "decision_projection",
+        "frame_lineage_root",
+        "guarantee_level",
+        "markdown_hash",
+        "markdown_included",
+        "particle_lineage_root",
+        "phase_projection",
+        "policies",
+        "producer",
+        "profile",
+        "redacted_artifact_hashes",
+        "redacted_sequences",
+        "session_id",
+        "verification_claims"
+      ],
+      "properties": {
+        "artifact_root": { "$ref": "#/$defs/sha256" },
+        "artifact_rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactRow" },
+          "minItems": 1
+        },
+        "audit_events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/auditEvent" },
+          "minItems": 1
+        },
+        "audit_range": { "$ref": "#/$defs/auditRange" },
+        "canonicalization": { "$ref": "#/$defs/canonicalization" },
+        "contracts": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "allOf": [
+                { "$ref": "#/$defs/contract" },
+                {
+                  "properties": {
+                    "contract_id": { "const": "foundation" },
+                    "version": { "const": "nepsis.foundation_contract@0.1.0" }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/contract" },
+                {
+                  "properties": {
+                    "contract_id": { "const": "actualization" },
+                    "version": { "const": "nepsis.actualization_contract@0.2.0" }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "decision_projection": { "$ref": "#/$defs/decisionProjection" },
+        "frame_lineage_root": { "$ref": "#/$defs/sha256" },
+        "guarantee_level": { "enum": ["full_reconstruction", "integrity_only"] },
+        "markdown": { "type": "string" },
+        "markdown_hash": { "$ref": "#/$defs/sha256" },
+        "markdown_included": { "type": "boolean" },
+        "particle_lineage_root": { "$ref": "#/$defs/sha256" },
+        "phase_projection": { "$ref": "#/$defs/phaseProjection" },
+        "policies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/policy" },
+          "minItems": 7,
+          "maxItems": 7
+        },
+        "producer": { "$ref": "#/$defs/producer" },
+        "profile": { "enum": ["full", "redacted"] },
+        "redacted_artifact_hashes": { "$ref": "#/$defs/sha256Array" },
+        "redacted_sequences": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "uniqueItems": true
+        },
+        "session_id": { "$ref": "#/$defs/nonEmptyString" },
+        "verification_claims": { "$ref": "#/$defs/stringArray" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "profile": { "const": "full" } },
+            "required": ["profile"]
+          },
+          "then": {
+            "required": ["markdown"],
+            "properties": {
+              "artifact_rows": {
+                "items": {
+                  "properties": { "included": { "const": true } },
+                  "required": ["included"]
+                }
+              },
+              "guarantee_level": { "const": "full_reconstruction" },
+              "markdown_included": { "const": true },
+              "redacted_artifact_hashes": { "maxItems": 0 },
+              "redacted_sequences": { "maxItems": 0 },
+              "verification_claims": {
+                "const": [
+                  "artifact_integrity",
+                  "audit_chain_integrity",
+                  "calibration_integrity",
+                  "decision_journey_reconstructable",
+                  "lineage_integrity",
+                  "markdown_integrity"
+                ]
+              }
+            }
+          },
+          "else": {
+            "not": { "required": ["markdown"] },
+            "properties": {
+              "guarantee_level": { "const": "integrity_only" },
+              "markdown_included": { "const": false },
+              "verification_claims": {
+                "const": [
+                  "audit_chain_integrity",
+                  "included_artifact_integrity",
+                  "sealed_but_absent_attestation"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

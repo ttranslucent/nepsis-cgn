@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.canonical_run@0.1.0.schema.json",
+  "title": "Nepsis canonical private operator run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "canonical_run_schema_version",
+    "created_at",
+    "head_event_hash",
+    "head_sequence",
+    "operator_governance_profile_hash",
+    "owner_id",
+    "packet_projection_hash",
+    "run_id",
+    "session_governance_snapshot_hash",
+    "status",
+    "system_policy_bindings"
+  ],
+  "properties": {
+    "canonical_run_schema_version": { "const": "nepsis.canonical_run@0.1.0" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "fork_provenance": { "$ref": "#/$defs/forkProvenance" },
+    "head_event_hash": { "$ref": "#/$defs/sha256" },
+    "head_sequence": { "type": "integer", "minimum": 0 },
+    "migration_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["import_receipt_hash", "source_root_hash", "source_system"],
+      "properties": {
+        "import_receipt_hash": { "$ref": "#/$defs/sha256" },
+        "source_root_hash": { "$ref": "#/$defs/sha256" },
+        "source_system": { "const": "nepsismc" }
+      }
+    },
+    "operator_governance_profile_hash": { "$ref": "#/$defs/sha256" },
+    "owner_id": { "$ref": "#/$defs/nonEmptyString" },
+    "packet_projection_hash": { "$ref": "#/$defs/sha256" },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "session_governance_snapshot_hash": { "$ref": "#/$defs/sha256" },
+    "status": { "enum": ["active", "read_only", "sealed", "corrupt"] },
+    "system_policy_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/policyBinding" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "forkProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fork_reason",
+        "forked_from_run_id",
+        "inherited_evidence_root_hashes",
+        "parent_head_event_hash",
+        "policy_diff_artifact_hash"
+      ],
+      "properties": {
+        "fork_reason": { "$ref": "#/$defs/nonEmptyString" },
+        "forked_from_run_id": { "$ref": "#/$defs/nonEmptyString" },
+        "inherited_evidence_root_hashes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sha256" },
+          "uniqueItems": true
+        },
+        "parent_head_event_hash": { "$ref": "#/$defs/sha256" },
+        "policy_diff_artifact_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "fullVersion": {
+      "type": "string",
+      "pattern": "^nepsis\\.[a-z0-9_.-]+@[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "policyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_hash", "policy_id", "policy_version"],
+      "properties": {
+        "policy_hash": { "$ref": "#/$defs/sha256" },
+        "policy_id": { "$ref": "#/$defs/nonEmptyString" },
+        "policy_version": { "$ref": "#/$defs/fullVersion" }
+      }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

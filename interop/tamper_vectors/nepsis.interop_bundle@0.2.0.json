@@ -1,0 +1,48 @@
+{
+  "interop_bundle_version": "nepsis.interop_bundle@0.2.0",
+  "golden_bundle": "../golden/nepsis.interop_bundle@0.2.0.json",
+  "vectors": [
+    {
+      "vector_id": "audit_payload_mutation",
+      "target": "subject.audit_events[1].payload",
+      "mutation": "replace one decision field while retaining recorded payload_hash",
+      "expected_result": "refused"
+    },
+    {
+      "vector_id": "artifact_content_mutation",
+      "target": "subject.artifact_rows[*].artifact",
+      "mutation": "replace session_id while retaining artifact_hash",
+      "expected_result": "refused"
+    },
+    {
+      "vector_id": "artifact_root_mutation",
+      "target": "subject.artifact_root",
+      "mutation": "replace digest with sixty-four zeroes",
+      "expected_result": "refused"
+    },
+    {
+      "vector_id": "lineage_binding_mutation",
+      "target": "included particle lineage node",
+      "mutation": "replace one node artifact hash without updating the lineage artifact hash",
+      "expected_result": "refused"
+    },
+    {
+      "vector_id": "calibration_acceptance_mutation",
+      "target": "included calibration acceptance selected prior",
+      "mutation": "replace one selected weight while retaining the acceptance artifact hash",
+      "expected_result": "refused"
+    },
+    {
+      "vector_id": "subject_projection_mutation",
+      "target": "subject.decision_projection.status",
+      "mutation": "replace committed status while retaining subject_hash",
+      "expected_result": "refused"
+    },
+    {
+      "vector_id": "attestation_mutation",
+      "target": "export_attestation.event_hash",
+      "mutation": "replace digest with sixty-four zeroes",
+      "expected_result": "refused"
+    }
+  ]
+}

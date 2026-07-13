@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.proposal_application@0.1.0.schema.json",
+  "title": "Validator-owned canonical proposal application",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "applied_at",
+    "application_intent_hash",
+    "base_event_hash",
+    "effective_tier",
+    "field_id",
+    "operation_type",
+    "operator_confirmation_hash",
+    "operator_visible_proposal_hash",
+    "proposal_application_schema_version",
+    "requested_change_hash",
+    "target_path"
+  ],
+  "properties": {
+    "applied_at": { "$ref": "#/$defs/timestamp" },
+    "application_intent_hash": { "$ref": "#/$defs/sha256" },
+    "base_event_hash": { "$ref": "#/$defs/sha256" },
+    "effective_tier": { "enum": ["T1", "T2", "T3", "T4"] },
+    "field_id": { "type": "string", "pattern": "^field_[0-9a-f]{20}$" },
+    "operation_type": { "enum": ["extract", "replace"] },
+    "operator_confirmation_hash": { "$ref": "#/$defs/sha256" },
+    "operator_visible_proposal_hash": { "$ref": "#/$defs/sha256" },
+    "proposal_application_schema_version": {
+      "const": "nepsis.proposal_application@0.1.0"
+    },
+    "requested_change_hash": { "$ref": "#/$defs/sha256" },
+    "target_path": { "$ref": "#/$defs/nonEmptyString" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    }
+  }
+}

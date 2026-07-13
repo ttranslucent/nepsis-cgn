@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.action_request@0.1.0.schema.json",
+  "title": "Nepsis canonical run action request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_request_schema_version",
+    "action_type",
+    "artifact_hashes",
+    "capability",
+    "capability_id",
+    "created_at",
+    "effective_policy_hash",
+    "expected_head_event_hash",
+    "expected_head_sequence",
+    "idempotency_key",
+    "intent_hash",
+    "operator_governance_profile_hash",
+    "payload",
+    "payload_hash",
+    "run_id",
+    "session_governance_snapshot_hash",
+    "trusted_adapter_intent_id"
+  ],
+  "properties": {
+    "action_request_schema_version": {
+      "const": "nepsis.action_request@0.1.0"
+    },
+    "action_type": { "$ref": "#/$defs/nonEmptyString" },
+    "artifact_hashes": { "$ref": "#/$defs/hashArray" },
+    "capability": {
+      "enum": [
+        "create_run",
+        "submit_model_candidate",
+        "submit_operator_disposition",
+        "release_still",
+        "perform_zeroback",
+        "request_decision_commit"
+      ]
+    },
+    "capability_id": { "$ref": "#/$defs/nonEmptyString" },
+    "context_manifest_hash": { "$ref": "#/$defs/sha256" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "effective_policy_hash": { "$ref": "#/$defs/sha256" },
+    "expected_head_event_hash": { "$ref": "#/$defs/sha256" },
+    "expected_head_sequence": { "type": "integer", "minimum": 0 },
+    "external_codex_ref_hash": { "$ref": "#/$defs/sha256" },
+    "idempotency_key": { "$ref": "#/$defs/nonEmptyString" },
+    "intent_hash": { "$ref": "#/$defs/sha256" },
+    "operator_confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confirmed",
+        "confirmed_at",
+        "consequence_acknowledged",
+        "rationale"
+      ],
+      "properties": {
+        "confirmed": { "const": true },
+        "confirmed_at": { "$ref": "#/$defs/timestamp" },
+        "consequence_acknowledged": { "const": true },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "operator_governance_profile_hash": { "$ref": "#/$defs/sha256" },
+    "operator_visible_proposal_hash": { "$ref": "#/$defs/sha256" },
+    "payload": { "type": "object" },
+    "payload_hash": { "$ref": "#/$defs/sha256" },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "session_governance_snapshot_hash": { "$ref": "#/$defs/sha256" },
+    "trusted_adapter_intent_id": { "$ref": "#/$defs/nonEmptyString" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "capability": { "const": "submit_model_candidate" } },
+        "required": ["capability"]
+      },
+      "then": {
+        "required": [
+          "context_manifest_hash",
+          "external_codex_ref_hash",
+          "operator_visible_proposal_hash"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "capability": {
+            "enum": [
+              "submit_operator_disposition",
+              "release_still",
+              "perform_zeroback",
+              "request_decision_commit"
+            ]
+          }
+        },
+        "required": ["capability"]
+      },
+      "then": { "required": ["operator_confirmation"] }
+    },
+    {
+      "if": {
+        "properties": {
+          "capability": { "const": "submit_operator_disposition" }
+        },
+        "required": ["capability"]
+      },
+      "then": { "required": ["operator_visible_proposal_hash"] }
+    }
+  ],
+  "$defs": {
+    "hashArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "jsonschema>=4.22.0",
     "black",
     "ruff",
     "mypy",
@@ -35,6 +36,8 @@ nepsiscgn = "nepsis_cgn.cli.main:entrypoint"
 nepsiscgn-api = "nepsis_cgn.api.server:entrypoint"
 nepsiscgn-api-asgi = "nepsis_cgn.api.asgi:entrypoint"
 nepsiscgn-mcp = "nepsis_cgn.mcp.stdio:entrypoint"
+nepsiscgn-private-runs = "nepsis_cgn.canonical_runs.private_runtime:main"
+nepsiscgn-revoke-receipt-anchor = "nepsis_cgn.canonical_runs.trust_anchor_registry:main"
 
 [tool.vercel]
 entrypoint = "app:app"

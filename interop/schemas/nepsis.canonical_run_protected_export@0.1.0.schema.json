@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.canonical_run_protected_export@0.1.0.schema.json",
+  "title": "Nepsis signed protected canonical run export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_receipts",
+    "artifacts",
+    "effective_policy_hash",
+    "events",
+    "export_root_hash",
+    "export_schema_version",
+    "outcomes",
+    "packet_projection",
+    "postcondition",
+    "protected_export_schema_version",
+    "receipt_trust_anchor",
+    "run"
+  ],
+  "properties": {
+    "action_receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "nepsis.action_receipt@0.1.0.schema.json"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "nepsis.canonical_run_artifact@0.1.0.schema.json"
+      }
+    },
+    "effective_policy_hash": { "$ref": "#/$defs/sha256" },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "nepsis.canonical_run_event@0.1.0.schema.json"
+      }
+    },
+    "export_root_hash": { "$ref": "#/$defs/sha256" },
+    "export_schema_version": {
+      "const": "nepsis.canonical_run_store_export@0.1.0"
+    },
+    "outcomes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "minProperties": 1
+      }
+    },
+    "packet_projection": { "type": "object" },
+    "postcondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_hold",
+        "governance_status",
+        "packet_projection_hash",
+        "phase"
+      ],
+      "properties": {
+        "active_hold": { "type": "boolean" },
+        "governance_status": { "$ref": "#/$defs/nonEmptyString" },
+        "packet_projection_hash": { "$ref": "#/$defs/sha256" },
+        "phase": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "protected_export_schema_version": {
+      "const": "nepsis.canonical_run_protected_export@0.1.0"
+    },
+    "receipt_trust_anchor": {
+      "$ref": "nepsis.action_receipt_trust_anchor@0.1.0.schema.json"
+    },
+    "run": {
+      "$ref": "nepsis.canonical_run@0.1.0.schema.json"
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
