@@ -86,6 +86,12 @@ event, active-profile projection, idempotency result, and receipt commit or roll
 back atomically. Two concurrent activations targeting the same expected profile
 head cannot both succeed.
 
+The private operator surface may read the locked constitution, current profile
+head, active profile, and an exact immutable revision. These reads require the
+same operator identity and `revise_operator_profile` capability as profile
+writes; revision reads exist so a stored idempotent result can be verified even
+after a later head advances.
+
 ## 4. V0 Operator Defaults
 
 V0 is deliberately limited to typed fields with explicit comparison rules.
@@ -305,6 +311,15 @@ styled as tone/mood preferences.
 
 Profile review leads with the human-readable claim and its effect. Technical
 hashes, run IDs, and provenance live under audit disclosure.
+
+The private operator API exposes two read-only inputs for the versioned editor:
+
+- `GET /v1/operator-profiles/constitution` returns the exact locked
+  constitution, its hash and version, the comparator policy hash and version,
+  the profile schema version, and the authenticated operator ID.
+- `GET /v1/operator-profiles/{profile_id}/head` returns that operator's latest
+  immutable revision and lifecycle state, including an unactivated draft. A
+  missing profile and a profile owned by another operator both return not found.
 
 ## 10. Acceptance Tests
 

@@ -304,6 +304,12 @@ def test_profile_routes_are_present_only_when_injected_and_require_auth() -> Non
     )
     http = TestClient(app)
     assert http.get("/v1/operator-profiles/active").status_code == 401
+    assert http.get("/v1/operator-profiles/constitution").status_code == 401
+    assert http.get("/v1/operator-profiles/profile-local/head").status_code == 401
+    assert (
+        http.get("/v1/operator-profiles/profile-local/revisions/1").status_code
+        == 401
+    )
     assert (
         http.post(
             "/v1/operator-profiles/profile-local/revisions", json={}
@@ -317,6 +323,108 @@ def test_profile_routes_are_present_only_when_injected_and_require_auth() -> Non
         == 401
     )
     assert fake.calls == []
+
+
+def test_profile_read_routes_bind_the_authenticated_operator() -> None:
+    class ProfileReads:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str | None]] = []
+
+        def constitution_contract(self, *, operator_id: str) -> dict[str, Any]:
+            self.calls.append(("constitution", operator_id, None))
+            return {
+                "constitution": {"constitution_version": "test"},
+                "constitution_hash": "a" * 64,
+                "constitution_version": "nepsis.system_constitution@0.1.0",
+                "governance_comparator_policy_hash": "b" * 64,
+                "governance_comparator_policy_version": (
+                    "nepsis.governance_comparator_policy@0.1.0"
+                ),
+                "operator_governance_profile_schema_version": (
+                    "nepsis.operator_governance_profile@0.1.0"
+                ),
+                "operator_id": operator_id,
+            }
+
+        def profile_head(
+            self, profile_id: str, *, operator_id: str
+        ) -> dict[str, Any] | None:
+            self.calls.append(("head", operator_id, profile_id))
+            if profile_id != "profile-local":
+                return None
+            return {
+                "profile": {"profile_id": profile_id, "profile_revision": 2},
+                "profile_hash": "c" * 64,
+                "profile_id": profile_id,
+                "profile_revision": 2,
+                "state": "draft",
+            }
+
+        def profile_revision(
+            self, profile_id: str, revision: int, *, operator_id: str
+        ) -> dict[str, Any] | None:
+            self.calls.append(("revision", operator_id, f"{profile_id}:{revision}"))
+            if profile_id != "profile-local" or revision != 1:
+                return None
+            return {
+                "profile": {"profile_id": profile_id, "profile_revision": revision},
+                "profile_hash": "d" * 64,
+                "profile_id": profile_id,
+                "profile_revision": revision,
+                "state": "active",
+            }
+
+    profiles = ProfileReads()
+    app = create_private_operator_run_app(
+        service=FakeService(),
+        resolve_token=resolver,
+        resolve_operator_validator=lambda capability, action_type: None,
+        config=config(),
+        profile_registry=profiles,  # type: ignore[arg-type]
+    )
+    http = TestClient(app)
+
+    constitution = http.get(
+        "/v1/operator-profiles/constitution",
+        headers=auth("operator-token"),
+    )
+    head = http.get(
+        "/v1/operator-profiles/profile-local/head",
+        headers=auth("operator-token"),
+    )
+    missing = http.get(
+        "/v1/operator-profiles/profile-missing/head",
+        headers=auth("operator-token"),
+    )
+    revision = http.get(
+        "/v1/operator-profiles/profile-local/revisions/1",
+        headers=auth("operator-token"),
+    )
+    missing_revision = http.get(
+        "/v1/operator-profiles/profile-local/revisions/99",
+        headers=auth("operator-token"),
+    )
+    forbidden = http.get(
+        "/v1/operator-profiles/constitution",
+        headers=auth("model-token"),
+    )
+
+    assert constitution.status_code == 200
+    assert constitution.json()["operator_id"] == "operator:local"
+    assert head.status_code == 200
+    assert head.json()["state"] == "draft"
+    assert missing.status_code == 404
+    assert revision.status_code == 200
+    assert revision.json()["state"] == "active"
+    assert missing_revision.status_code == 404
+    assert forbidden.status_code == 403
+    assert profiles.calls == [
+        ("constitution", "operator:local", None),
+        ("head", "operator:local", "profile-local"),
+        ("head", "operator:local", "profile-missing"),
+        ("revision", "operator:local", "profile-local:1"),
+        ("revision", "operator:local", "profile-local:99"),
+    ]
 
 
 @pytest.mark.parametrize(

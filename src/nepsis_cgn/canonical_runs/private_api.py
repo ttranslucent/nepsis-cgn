@@ -420,6 +420,49 @@ def create_private_operator_run_app(
                 raise HTTPException(status_code=404, detail="Active profile not found")
             return active
 
+        @profile_router.get("/constitution")
+        async def read_profile_constitution(request: Request) -> Mapping[str, Any]:
+            actor = _actor_from_request(request)
+            _require_provenance(actor, {"operator"})
+            _require_http_capability(actor, "revise_operator_profile")
+            return _call_profile(
+                profile_registry.constitution_contract,
+                operator_id=actor.actor_id,
+            )
+
+        @profile_router.get("/{profile_id}/head")
+        async def read_profile_head(
+            profile_id: str, request: Request
+        ) -> Mapping[str, Any]:
+            actor = _actor_from_request(request)
+            _require_provenance(actor, {"operator"})
+            _require_http_capability(actor, "revise_operator_profile")
+            head = _call_profile(
+                profile_registry.profile_head,
+                profile_id,
+                operator_id=actor.actor_id,
+            )
+            if head is None:
+                raise HTTPException(status_code=404, detail="Profile head not found")
+            return head
+
+        @profile_router.get("/{profile_id}/revisions/{revision}")
+        async def read_profile_revision(
+            profile_id: str, revision: int, request: Request
+        ) -> Mapping[str, Any]:
+            actor = _actor_from_request(request)
+            _require_provenance(actor, {"operator"})
+            _require_http_capability(actor, "revise_operator_profile")
+            profile = _call_profile(
+                profile_registry.profile_revision,
+                profile_id,
+                revision,
+                operator_id=actor.actor_id,
+            )
+            if profile is None:
+                raise HTTPException(status_code=404, detail="Profile revision not found")
+            return profile
+
         @profile_router.post("/{profile_id}/revisions")
         async def create_profile_revision(
             profile_id: str, body: dict[str, Any], request: Request

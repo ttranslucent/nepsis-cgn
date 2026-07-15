@@ -405,6 +405,87 @@ class GovernanceProfileRegistry:
         ).fetchone()
         return self._revision_result(row) if row else None
 
+    def constitution_contract(self, *, operator_id: str) -> dict[str, Any]:
+        """Return the exact locked contract needed to construct a profile revision."""
+
+        return {
+            "constitution": deepcopy(_SYSTEM_CONSTITUTION),
+            "constitution_hash": SYSTEM_CONSTITUTION_HASH,
+            "constitution_version": SYSTEM_CONSTITUTION_VERSION,
+            "governance_comparator_policy_hash": comparator_policy_hash(),
+            "governance_comparator_policy_version": (
+                GOVERNANCE_COMPARATOR_POLICY_VERSION
+            ),
+            "operator_governance_profile_schema_version": PROFILE_SCHEMA_VERSION,
+            "operator_id": _nonempty_string(operator_id, "operator_id"),
+        }
+
+    def profile_head(
+        self, profile_id: str, *, operator_id: str
+    ) -> dict[str, Any] | None:
+        """Return an operator-owned profile's latest immutable revision, if present."""
+
+        row = self._db.execute(
+            """
+            SELECT r.profile_id, r.profile_revision, r.profile_hash, r.profile_json,
+                   p.state
+            FROM governance_profile_heads AS h
+            JOIN governance_profile_revisions AS r
+              ON r.profile_id = h.profile_id
+             AND r.profile_revision = h.head_revision
+             AND r.profile_hash = h.head_hash
+            JOIN governance_profile_projection AS p
+              ON p.profile_id = r.profile_id
+             AND p.profile_revision = r.profile_revision
+            WHERE h.profile_id = ?
+              AND r.operator_id = ?
+              AND p.operator_id = ?
+            """,
+            (
+                _nonempty_string(profile_id, "profile_id"),
+                _nonempty_string(operator_id, "operator_id"),
+                operator_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            **self._revision_result(row),
+            "state": str(row["state"]),
+        }
+
+    def profile_revision(
+        self, profile_id: str, revision: int, *, operator_id: str
+    ) -> dict[str, Any] | None:
+        """Return one exact operator-owned immutable revision and lifecycle state."""
+
+        row = self._db.execute(
+            """
+            SELECT r.profile_id, r.profile_revision, r.profile_hash, r.profile_json,
+                   p.state
+            FROM governance_profile_revisions AS r
+            JOIN governance_profile_projection AS p
+              ON p.profile_id = r.profile_id
+             AND p.profile_revision = r.profile_revision
+            WHERE r.profile_id = ?
+              AND r.profile_revision = ?
+              AND r.operator_id = ?
+              AND p.operator_id = ?
+            """,
+            (
+                _nonempty_string(profile_id, "profile_id"),
+                _integer(revision, "profile_revision"),
+                _nonempty_string(operator_id, "operator_id"),
+                operator_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            **self._revision_result(row),
+            "state": str(row["state"]),
+        }
+
     def get_revision(self, profile_id: str, revision: int) -> dict[str, Any]:
         row = self._db.execute(
             """
@@ -1550,6 +1631,7 @@ __all__ = [
     "ActorContext",
     "GovernanceProfileRegistry",
     "IdempotencyConflict",
+    "PROFILE_SCHEMA_VERSION",
     "ProfileHeadConflict",
     "ProfileRegistryError",
     "SYSTEM_CONSTITUTION_HASH",

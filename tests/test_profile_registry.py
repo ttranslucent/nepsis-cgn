@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from nepsis_cgn.canonical_runs.profile_registry import (
     GovernanceProfileRegistry,
     IdempotencyConflict,
+    PROFILE_SCHEMA_VERSION,
     ProfileHeadConflict,
     ProfileRegistryError,
     SYSTEM_CONSTITUTION_HASH,
@@ -220,6 +221,111 @@ def test_create_is_append_only_cas_guarded_and_idempotent(
         )
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         connection.execute("DELETE FROM governance_profile_lifecycle_events")
+
+
+def test_constitution_contract_is_exact_versioned_and_operator_scoped(
+    registry: GovernanceProfileRegistry,
+) -> None:
+    contract = registry.constitution_contract(operator_id=OPERATOR.actor_id)
+
+    assert set(contract) == {
+        "constitution",
+        "constitution_hash",
+        "constitution_version",
+        "governance_comparator_policy_hash",
+        "governance_comparator_policy_version",
+        "operator_governance_profile_schema_version",
+        "operator_id",
+    }
+    assert contract["operator_id"] == OPERATOR.actor_id
+    assert contract["constitution_version"] == SYSTEM_CONSTITUTION_VERSION
+    assert contract["constitution_hash"] == SYSTEM_CONSTITUTION_HASH
+    assert canonical_hash(contract["constitution"]) == SYSTEM_CONSTITUTION_HASH
+    assert contract["governance_comparator_policy_version"] == (
+        GOVERNANCE_COMPARATOR_POLICY_VERSION
+    )
+    assert contract["governance_comparator_policy_hash"] == comparator_policy_hash()
+    assert contract["operator_governance_profile_schema_version"] == (
+        PROFILE_SCHEMA_VERSION
+    )
+
+    contract["constitution"]["baseline_constraints"].clear()
+    reread = registry.constitution_contract(operator_id=OPERATOR.actor_id)
+    assert canonical_hash(reread["constitution"]) == SYSTEM_CONSTITUTION_HASH
+
+
+def test_profile_head_recovers_latest_draft_and_enforces_operator_ownership(
+    registry: GovernanceProfileRegistry,
+) -> None:
+    created, _ = _create_and_activate(registry)
+    second_profile = _profile(
+        2,
+        parent={
+            "parent_profile_revision": 1,
+            "parent_profile_hash": created["profile_hash"],
+        },
+    )
+    second_profile["created_at"] = "2026-07-12T12:02:00.000Z"
+    second = registry.create_revision(
+        second_profile,
+        actor=OPERATOR,
+        expected_head_revision=1,
+        idempotency_key="create_head_draft",
+    )
+
+    head = registry.profile_head(
+        "profile_local",
+        operator_id=OPERATOR.actor_id,
+    )
+    assert head == {
+        "profile": second_profile,
+        "profile_hash": second["profile_hash"],
+        "profile_id": "profile_local",
+        "profile_revision": 2,
+        "state": "draft",
+    }
+    assert registry.active_profile(operator_id=OPERATOR.actor_id)[
+        "profile_revision"
+    ] == 1
+    assert (
+        registry.profile_head(
+            "profile_local",
+            operator_id="operator:someone-else",
+        )
+        is None
+    )
+    assert (
+        registry.profile_head(
+            "profile_missing",
+            operator_id=OPERATOR.actor_id,
+        )
+        is None
+    )
+
+    first = registry.profile_revision(
+        "profile_local",
+        1,
+        operator_id=OPERATOR.actor_id,
+    )
+    assert first is not None
+    assert first["profile_revision"] == 1
+    assert first["state"] == "active"
+    assert (
+        registry.profile_revision(
+            "profile_local",
+            1,
+            operator_id="operator:someone-else",
+        )
+        is None
+    )
+    assert (
+        registry.profile_revision(
+            "profile_local",
+            99,
+            operator_id=OPERATOR.actor_id,
+        )
+        is None
+    )
 
 
 def test_profile_contract_rules_fail_closed(registry: GovernanceProfileRegistry) -> None:
