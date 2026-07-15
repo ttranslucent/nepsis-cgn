@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.external_codex_ref@0.1.0.schema.json",
+  "title": "Nepsis external Codex reference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "adapter_version",
+    "actor_id",
+    "capability",
+    "capability_id",
+    "created_at",
+    "external_codex_ref_schema_version",
+    "host_type",
+    "model_configuration_epoch",
+    "model_id",
+    "operator_visible_proposal_hash",
+    "provenance_class",
+    "run_id",
+    "thread_id",
+    "tool_call_id",
+    "turn_id"
+  ],
+  "properties": {
+    "account_fingerprint": { "$ref": "#/$defs/nonEmptyString" },
+    "adapter_version": { "$ref": "#/$defs/nonEmptyString" },
+    "actor_id": { "type": "string", "pattern": "^model:[a-z0-9._@-]+$" },
+    "capability": { "const": "submit_model_candidate" },
+    "capability_id": { "$ref": "#/$defs/nonEmptyString" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "external_codex_ref_schema_version": {
+      "const": "nepsis.external_codex_ref@0.1.0"
+    },
+    "host_type": { "const": "codex_app_server" },
+    "model_configuration_epoch": { "$ref": "#/$defs/nonEmptyString" },
+    "model_id": { "$ref": "#/$defs/nonEmptyString" },
+    "operator_visible_proposal_hash": { "$ref": "#/$defs/sha256" },
+    "provenance_class": { "const": "model" },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "thread_id": { "$ref": "#/$defs/nonEmptyString" },
+    "tool_call_id": { "$ref": "#/$defs/nonEmptyString" },
+    "transcript_export_ref": { "$ref": "#/$defs/nonEmptyString" },
+    "turn_id": { "$ref": "#/$defs/nonEmptyString" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

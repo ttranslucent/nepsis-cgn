@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.operator_proposal_state@0.1.0.schema.json",
+  "title": "Nepsis operator-visible proposal lifecycle projection",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/pending"
+    },
+    {
+      "$ref": "#/$defs/disposed"
+    }
+  ],
+  "$defs": {
+    "pending": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "candidate_created_at",
+        "candidate_intent_hash",
+        "operator_proposal_state_schema_version",
+        "operator_visible_proposal_hash",
+        "policy_hash",
+        "policy_version",
+        "status"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "nepsis.operator_disposition_adapter@0.1.0"
+        },
+        "candidate_created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "candidate_intent_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "operator_proposal_state_schema_version": {
+          "const": "nepsis.operator_proposal_state@0.1.0"
+        },
+        "operator_visible_proposal_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "policy_hash": {
+          "const": "9b8538bd48776d15dcb83c3cc3f36dafeb4c453c6f43def523d181270afe5e17"
+        },
+        "policy_version": {
+          "const": "nepsis.operator_disposition_policy@0.1.0"
+        },
+        "status": {
+          "const": "pending"
+        }
+      }
+    },
+    "disposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_version",
+        "candidate_created_at",
+        "candidate_intent_hash",
+        "disposed_at",
+        "disposition_intent_hash",
+        "operator_confirmation_hash",
+        "operator_proposal_state_schema_version",
+        "operator_visible_proposal_hash",
+        "policy_hash",
+        "policy_version",
+        "status"
+      ],
+      "properties": {
+        "adapter_version": {
+          "const": "nepsis.operator_disposition_adapter@0.1.0"
+        },
+        "candidate_created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "candidate_intent_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "disposed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "disposition_intent_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "operator_confirmation_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "operator_proposal_state_schema_version": {
+          "const": "nepsis.operator_proposal_state@0.1.0"
+        },
+        "operator_visible_proposal_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "policy_hash": {
+          "const": "9b8538bd48776d15dcb83c3cc3f36dafeb4c453c6f43def523d181270afe5e17"
+        },
+        "policy_version": {
+          "const": "nepsis.operator_disposition_policy@0.1.0"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "deferred",
+            "rejected"
+          ]
+        }
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # NepsisCGN Public MVP v0.4
 
-Last verified: 2026-06-22
+Last verified: 2026-07-13
 
 NepsisCGN is a governance-first reasoning engine that runs sidecar to LLMs. It enforces structured reasoning under uncertainty with distinct RED/BLUE decision spaces, STILL checkpoints, contradiction monitoring, denominator collapse detection, ZeroBack repair, consequence-weighted commitment, state feedback scaffolding, and audit packets.
 
@@ -50,6 +50,24 @@ artifacts showing the governance architecture, not autonomous model conclusions.
 | Engine/session/LLM flows | Experimental | Keep behind auth and do not treat as the MVP proof path. |
 
 See [docs/runtime-matrix.md](docs/runtime-matrix.md) for the smoke path and deployment notes.
+
+## Private canonical-run evaluation stack
+
+The private ledger, detached verifier, read-only import pilot, and loopback-only
+runtime are implemented as inactive adoption-gate components. They are not
+part of the public runtime. The private adapter can record an exact proposal's
+accept/reject/defer disposition, release the resulting STILL interlock, invoke
+ZeroBack while preserving protected context roots, and request validator-owned
+application of the exact accepted proposal. The commit event is validator-
+authored and remains bound to the requesting operator; arbitrary UI patches
+and model-authored commitment remain impossible. Atomic run forking freezes
+the predecessor before creating a lineage-bound successor. See
+[canonical operator run contract](docs/canonical-operator-run-contract.md),
+[operator governance profile contract](docs/governance-profile-contract.md),
+and the pinned [neutral interop contracts](interop/README.md). The CGN writer
+must remain non-authoritative until its adoption gate passes and a separately
+signed cutover marker is activated; this implementation does not activate that
+marker. `/mvp` remains deterministic, model-free, and unchanged.
 
 ## Quickstart
 

@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.operator_governance_profile@0.1.0.schema.json",
+  "title": "Nepsis immutable operator governance profile revision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "baseline_constraints",
+    "constitution_hash",
+    "constitution_version",
+    "created_at",
+    "created_by",
+    "governance_comparator_policy_hash",
+    "governance_comparator_policy_version",
+    "operator_defaults",
+    "operator_governance_profile_schema_version",
+    "profile_id",
+    "profile_revision",
+    "risk_dimensions",
+    "ruin_criteria"
+  ],
+  "properties": {
+    "baseline_constraints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/constraint" },
+      "uniqueItems": true
+    },
+    "constitution_hash": { "$ref": "#/$defs/sha256" },
+    "constitution_version": { "$ref": "#/$defs/fullVersion" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "created_by": {
+      "type": "string",
+      "pattern": "^operator:[a-z0-9._@-]+$"
+    },
+    "governance_comparator_policy_hash": { "$ref": "#/$defs/sha256" },
+    "governance_comparator_policy_version": {
+      "const": "nepsis.governance_comparator_policy@0.1.0"
+    },
+    "operator_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clarification_budget",
+        "data_scope",
+        "evidence_floor",
+        "proposal_mode",
+        "uncertainty_display",
+        "unresolved_optional_policy"
+      ],
+      "properties": {
+        "clarification_budget": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "data_scope": { "const": "operator_cleared_non_phi" },
+        "evidence_floor": {
+          "enum": ["operator_attestation", "one_source", "corroborated"]
+        },
+        "proposal_mode": { "enum": ["one_at_a_time", "grouped_low_risk"] },
+        "uncertainty_display": {
+          "enum": ["ranges", "bands", "narrative_with_status"]
+        },
+        "unresolved_optional_policy": { "enum": ["hold", "explicitly_defer"] }
+      }
+    },
+    "operator_governance_profile_schema_version": {
+      "const": "nepsis.operator_governance_profile@0.1.0"
+    },
+    "parent_profile_hash": { "$ref": "#/$defs/sha256" },
+    "parent_profile_revision": { "type": "integer", "minimum": 1 },
+    "profile_id": { "$ref": "#/$defs/nonEmptyString" },
+    "profile_revision": { "type": "integer", "minimum": 1 },
+    "risk_dimensions": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/riskDimension" }
+    },
+    "ruin_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/ruinCriterion" },
+      "uniqueItems": true
+    }
+  },
+  "dependentRequired": {
+    "parent_profile_hash": ["parent_profile_revision"],
+    "parent_profile_revision": ["parent_profile_hash"]
+  },
+  "$defs": {
+    "constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_on_breach",
+        "applicability",
+        "constraint_id",
+        "evaluability_type",
+        "label",
+        "override_mode",
+        "rationale",
+        "source_refs",
+        "strength"
+      ],
+      "properties": {
+        "action_on_breach": { "enum": ["block", "still", "zeroback"] },
+        "applicability": { "$ref": "#/$defs/nonEmptyString" },
+        "constraint_id": { "$ref": "#/$defs/nonEmptyString" },
+        "evaluability_type": { "$ref": "#/$defs/evaluabilityType" },
+        "label": { "$ref": "#/$defs/nonEmptyString" },
+        "override_mode": { "$ref": "#/$defs/overrideMode" },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" },
+        "source_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmptyString" },
+          "uniqueItems": true
+        },
+        "strength": { "enum": ["soft", "hard", "ruin"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "strength": { "enum": ["hard", "ruin"] } },
+            "required": ["strength"]
+          },
+          "then": { "properties": { "override_mode": { "const": "locked" } } }
+        }
+      ]
+    },
+    "evaluabilityType": {
+      "enum": ["deterministic_boolean", "ordinal_evidence", "operator_attestation"]
+    },
+    "fullVersion": {
+      "type": "string",
+      "pattern": "^nepsis\\.[a-z0-9_.-]+@[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "overrideMode": { "enum": ["locked", "tighten_only", "replaceable"] },
+    "riskDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_response",
+        "dimension",
+        "evaluability_type",
+        "evidence_requirement",
+        "loss_posture",
+        "maximum_tolerated_severity",
+        "reversibility_requirement"
+      ],
+      "properties": {
+        "default_response": { "enum": ["block", "still", "zeroback"] },
+        "dimension": {
+          "enum": [
+            "human_harm",
+            "data_security_privacy",
+            "legal_authority_commitment",
+            "operational_recoverability",
+            "resource_financial_loss",
+            "epistemic_integrity"
+          ]
+        },
+        "evaluability_type": { "$ref": "#/$defs/evaluabilityType" },
+        "evidence_requirement": { "enum": ["standard", "elevated", "strict"] },
+        "loss_posture": { "enum": ["balanced", "downside_weighted", "ruin_averse"] },
+        "maximum_tolerated_severity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "reversibility_requirement": { "enum": ["none", "preferred", "required"] }
+      }
+    },
+    "ruinCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actions_made_inadmissible",
+        "applicability",
+        "category",
+        "evaluability_type",
+        "override_mode",
+        "protected",
+        "rationale",
+        "response",
+        "ruin_id",
+        "source_refs",
+        "unwanted_outcome",
+        "waivable"
+      ],
+      "properties": {
+        "actions_made_inadmissible": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nonEmptyString" },
+          "uniqueItems": true
+        },
+        "applicability": { "$ref": "#/$defs/nonEmptyString" },
+        "category": { "$ref": "#/$defs/nonEmptyString" },
+        "evaluability_type": { "$ref": "#/$defs/evaluabilityType" },
+        "override_mode": { "const": "locked" },
+        "protected": { "const": true },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" },
+        "response": { "enum": ["block", "still", "zeroback"] },
+        "ruin_id": { "$ref": "#/$defs/nonEmptyString" },
+        "source_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmptyString" },
+          "uniqueItems": true
+        },
+        "unwanted_outcome": { "$ref": "#/$defs/nonEmptyString" },
+        "waivable": { "const": false }
+      }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

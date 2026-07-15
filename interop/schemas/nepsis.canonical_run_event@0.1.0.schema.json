@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.canonical_run_event@0.1.0.schema.json",
+  "title": "Nepsis canonical private run event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "actor_id",
+    "canonical_run_event_schema_version",
+    "caused_by_artifact_hashes",
+    "caused_by_event_hashes",
+    "created_at",
+    "event_hash",
+    "event_type",
+    "payload",
+    "payload_hash",
+    "prev_event_hash",
+    "provenance_class",
+    "run_id",
+    "sequence"
+  ],
+  "properties": {
+    "actor_id": { "$ref": "#/$defs/nonEmptyString" },
+    "canonical_run_event_schema_version": {
+      "const": "nepsis.canonical_run_event@0.1.0"
+    },
+    "caused_by_artifact_hashes": { "$ref": "#/$defs/hashArray" },
+    "caused_by_event_hashes": { "$ref": "#/$defs/hashArray" },
+    "context_manifest_hash": { "$ref": "#/$defs/sha256" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "event_hash": { "$ref": "#/$defs/sha256" },
+    "event_type": { "$ref": "#/$defs/nonEmptyString" },
+    "idempotency_key": { "$ref": "#/$defs/nonEmptyString" },
+    "intent_hash": { "$ref": "#/$defs/sha256" },
+    "payload": { "type": "object" },
+    "payload_hash": { "$ref": "#/$defs/sha256" },
+    "prev_event_hash": { "$ref": "#/$defs/sha256" },
+    "provenance_class": { "enum": ["model", "operator", "validator", "system"] },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "trusted_adapter_intent_id": { "$ref": "#/$defs/nonEmptyString" }
+  },
+  "$defs": {
+    "hashArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

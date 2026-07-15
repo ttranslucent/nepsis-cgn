@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.import_receipt@0.1.0.schema.json",
+  "title": "Nepsis read-only MC import-pilot receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_root",
+    "authenticity",
+    "bundle_hash",
+    "import_pilot_version",
+    "import_receipt_schema_version",
+    "imported_at",
+    "imported_run_id",
+    "read_only",
+    "receipt_id",
+    "signature",
+    "signed_at",
+    "source_audit_tip",
+    "source_session_id",
+    "subject_hash",
+    "verification_scope"
+  ],
+  "properties": {
+    "artifact_root": { "$ref": "#/$defs/sha256" },
+    "authenticity": { "const": "unanchored_self_consistency" },
+    "bundle_hash": { "$ref": "#/$defs/sha256" },
+    "import_pilot_version": { "const": "nepsis.cgn_import_pilot@0.1.0" },
+    "import_receipt_schema_version": { "const": "nepsis.import_receipt@0.1.0" },
+    "imported_at": { "$ref": "#/$defs/timestamp" },
+    "imported_run_id": { "type": "string", "pattern": "^imported-mc:[0-9a-f]{64}$" },
+    "read_only": { "const": true },
+    "receipt_id": { "$ref": "#/$defs/nonEmptyString" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "key_id": { "$ref": "#/$defs/nonEmptyString" },
+        "value": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+      }
+    },
+    "signed_at": { "$ref": "#/$defs/timestamp" },
+    "source_audit_tip": { "$ref": "#/$defs/sha256" },
+    "source_session_id": { "$ref": "#/$defs/nonEmptyString" },
+    "subject_hash": { "$ref": "#/$defs/sha256" },
+    "verification_scope": { "$ref": "#/$defs/nonEmptyString" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.context_manifest@0.1.0.schema.json",
+  "title": "Nepsis CGN-generated context manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "active_hold",
+    "context_manifest_schema_version",
+    "data_classification",
+    "denominator_collapse_active",
+    "effective_policy_hash",
+    "evidence_root_hash",
+    "frame_root_hash",
+    "generated_at",
+    "generator",
+    "manifest_id",
+    "observation_root_hash",
+    "operator_governance_profile_hash",
+    "packet_projection_hash",
+    "population_root_hash",
+    "relevant_artifact_revisions",
+    "remote_inference_authorized",
+    "run_head_event_hash",
+    "run_head_sequence",
+    "run_id",
+    "session_governance_snapshot_hash",
+    "unresolved_contradiction_hashes",
+    "unresolved_red_hazard_hashes"
+  ],
+  "properties": {
+    "active_hold": { "type": "boolean" },
+    "context_manifest_schema_version": {
+      "const": "nepsis.context_manifest@0.1.0"
+    },
+    "data_classification": {
+      "enum": ["operator_cleared_non_phi", "synthetic"]
+    },
+    "denominator_collapse_active": { "type": "boolean" },
+    "effective_policy_hash": { "$ref": "#/$defs/sha256" },
+    "evidence_root_hash": { "$ref": "#/$defs/sha256" },
+    "frame_root_hash": { "$ref": "#/$defs/sha256" },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_id", "authority", "generator_version", "provenance_class"],
+      "properties": {
+        "actor_id": { "type": "string", "pattern": "^validator:[a-z0-9._@-]+$" },
+        "authority": { "const": "nepsis_cgn" },
+        "generator_version": { "$ref": "#/$defs/nonEmptyString" },
+        "provenance_class": { "const": "validator" }
+      }
+    },
+    "manifest_id": { "$ref": "#/$defs/nonEmptyString" },
+    "observation_root_hash": { "$ref": "#/$defs/sha256" },
+    "operator_governance_profile_hash": { "$ref": "#/$defs/sha256" },
+    "packet_projection_hash": { "$ref": "#/$defs/sha256" },
+    "population_root_hash": { "$ref": "#/$defs/sha256" },
+    "relevant_artifact_revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_hash", "artifact_schema_version", "revision", "role"],
+        "properties": {
+          "artifact_hash": { "$ref": "#/$defs/sha256" },
+          "artifact_schema_version": { "$ref": "#/$defs/fullVersion" },
+          "revision": { "type": "integer", "minimum": 0 },
+          "role": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      },
+      "uniqueItems": true
+    },
+    "remote_inference_authorized": { "type": "boolean" },
+    "run_head_event_hash": { "$ref": "#/$defs/sha256" },
+    "run_head_sequence": { "type": "integer", "minimum": 0 },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "session_governance_snapshot_hash": { "$ref": "#/$defs/sha256" },
+    "unresolved_contradiction_hashes": { "$ref": "#/$defs/hashArray" },
+    "unresolved_red_hazard_hashes": { "$ref": "#/$defs/hashArray" }
+  },
+  "$defs": {
+    "hashArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "fullVersion": {
+      "type": "string",
+      "pattern": "^nepsis\\.[a-z0-9_.-]+@[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

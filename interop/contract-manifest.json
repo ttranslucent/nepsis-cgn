@@ -1,0 +1,157 @@
+{
+  "assets": [
+    {
+      "artifact_version": "nepsis.interop_bundle@0.2.0",
+      "path": "golden/nepsis.interop_bundle@0.2.0.json",
+      "role": "golden",
+      "sha256": "abc3474d24274b3832cdf9acc97ff7a3b405e29a28bb2d60f7791d1e6a3e7bcf"
+    },
+    {
+      "artifact_version": "nepsis.action_receipt@0.1.0",
+      "path": "schemas/nepsis.action_receipt@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "262e27e4ee5526dda1b463fdf0b83b6f2efe1ee68688bc13be79d5408c317380"
+    },
+    {
+      "artifact_version": "nepsis.action_receipt_trust_anchor@0.1.0",
+      "path": "schemas/nepsis.action_receipt_trust_anchor@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "1995de2a44f32132269cc49c9a57d5b8b804cd7b286ea45c8bb64119c3035280"
+    },
+    {
+      "artifact_version": "nepsis.action_receipt_trust_anchor_lifecycle_event@0.1.0",
+      "path": "schemas/nepsis.action_receipt_trust_anchor_lifecycle_event@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "852aeaeb19502961a9493472bf79e5098e6433a442c4f38266e2895fe6a3e945"
+    },
+    {
+      "artifact_version": "nepsis.action_request@0.1.0",
+      "path": "schemas/nepsis.action_request@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "10b411b93944fb124ea386850e03897685b4da9ae405928f009d13ff7559ade9"
+    },
+    {
+      "artifact_version": "nepsis.canonical_run@0.1.0",
+      "path": "schemas/nepsis.canonical_run@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "b9d33ac3d7db1a782a90e67770666ea1acd5472e142cf399c7fca30c1008a267"
+    },
+    {
+      "artifact_version": "nepsis.canonical_run_artifact@0.1.0",
+      "path": "schemas/nepsis.canonical_run_artifact@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "dd48d37c69b501e8b715e65c54d5035f66d189ecbc9639a41376b2f67cf0b94d"
+    },
+    {
+      "artifact_version": "nepsis.canonical_run_event@0.1.0",
+      "path": "schemas/nepsis.canonical_run_event@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "0a8dc6c5aef3c95e4b39ede456d465f47a2adbecf9cb1faa8c9881dee9f7fc53"
+    },
+    {
+      "artifact_version": "nepsis.canonical_run_protected_export@0.1.0",
+      "path": "schemas/nepsis.canonical_run_protected_export@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "92ae18ad724170620d9d16dbafc13af681f3c496bbba4c3fe5293f04134a0304"
+    },
+    {
+      "artifact_version": "nepsis.context_manifest@0.1.0",
+      "path": "schemas/nepsis.context_manifest@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "abf25f951137bdd9b88e97bd23ba9872b73be0a21d86594d171f9f64e7373972"
+    },
+    {
+      "artifact_version": "nepsis.external_codex_ref@0.1.0",
+      "path": "schemas/nepsis.external_codex_ref@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "32ec5a44e9282a3552ee20d483eb331b187994777bdc6a6681cf2a3dccaf798b"
+    },
+    {
+      "artifact_version": "nepsis.import_receipt@0.1.0",
+      "path": "schemas/nepsis.import_receipt@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "e4af5db35a2135d9d011714bf2f92063ccdc972ea0badf2b943a0f3e597cf694"
+    },
+    {
+      "artifact_version": "nepsis.interop_bundle@0.2.0",
+      "path": "schemas/nepsis.interop_bundle@0.2.0.schema.json",
+      "role": "schema",
+      "sha256": "b26991a921ac49006f85a1537e17e51743577b301a06f8e474b518ccf2e68826"
+    },
+    {
+      "artifact_version": "nepsis.canonical_actualization_policy@0.1.0",
+      "path": "policies/nepsis.canonical_actualization_policy@0.1.0.json",
+      "role": "policy",
+      "sha256": "729a33108ac0bde5990a663fae956de0236cccd5eb3700801547c396e6a6582b"
+    },
+    {
+      "artifact_version": "nepsis.operator_disposition_policy@0.1.0",
+      "path": "policies/nepsis.operator_disposition_policy@0.1.0.json",
+      "role": "policy",
+      "sha256": "7671b16429667a20180e59784dee0fb4f16f6c278f42afce5e2363a5f790f2ee"
+    },
+    {
+      "artifact_version": "nepsis.operator_visible_proposal@0.1.0",
+      "path": "schemas/nepsis.operator_visible_proposal@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "3d2fc1658656070d12e58895dcf47a455942aa368b469565a1861a0f4e545a6e"
+    },
+    {
+      "artifact_version": "nepsis.operator_proposal_state@0.1.0",
+      "path": "schemas/nepsis.operator_proposal_state@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "aff2ff55685392bc4c7b3e0accefd476ee42167efb53938cfa82385fc6ec369e"
+    },
+    {
+      "artifact_version": "nepsis.operator_governance_profile@0.1.0",
+      "path": "schemas/nepsis.operator_governance_profile@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "db250feed73d131b050c76a3dec47dbc403c2d3e1ea75a129f9a9c949ebd46f0"
+    },
+    {
+      "artifact_version": "nepsis.proposal_application@0.1.0",
+      "path": "schemas/nepsis.proposal_application@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "91d0f1d8fce4b3d2507518e567530adf81ae2ba7e3c497f40bd26219773e1558"
+    },
+    {
+      "artifact_version": "nepsis.run_snapshot_attestation@0.1.0",
+      "path": "schemas/nepsis.run_snapshot_attestation@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "37b5581e0b6baca0705cb7537c232ca1f235466ca7cd00894e71018fffce7b39"
+    },
+    {
+      "artifact_version": "nepsis.session_governance_snapshot@0.1.0",
+      "path": "schemas/nepsis.session_governance_snapshot@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "63401cd75b364aa424434671a94eeb4a2939b60cbd400bc592e894e524cb1562"
+    },
+    {
+      "artifact_version": "nepsis.thread_run_binding@0.1.0",
+      "path": "schemas/nepsis.thread_run_binding@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "7f1aaf0127dd032f0ae2bbee7f92a454b865e9c3f5af42396e72cb9b0d1e4c8b"
+    },
+    {
+      "artifact_version": "nepsis.verification_report@0.1.0",
+      "path": "schemas/nepsis.verification_report@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "63864f58e632ba906d6faa2a4c741f966b43989e985101297b89e6988357f1f4"
+    },
+    {
+      "artifact_version": "nepsis.zeroback_state@0.1.0",
+      "path": "schemas/nepsis.zeroback_state@0.1.0.schema.json",
+      "role": "schema",
+      "sha256": "f05df8d885cec665c706d5b4e1c5c3f6f6ed8f915b352fddf2da3526131c0d6d"
+    },
+    {
+      "artifact_version": "nepsis.interop_bundle@0.2.0",
+      "path": "tamper_vectors/nepsis.interop_bundle@0.2.0.json",
+      "role": "tamper_declarations",
+      "sha256": "dd57cf4c7a94ff86f45dbfdde8616d2645fdc00b7b737a1e1181db09e7852d5b"
+    }
+  ],
+  "canonical_json_policy_hash": "1b943aa6f8e536224e82c680fda4fdaa12a6815b1f4695f46628cb772bf2ec87",
+  "canonical_json_version": "nepsis.canonical_json@0.1.0",
+  "contract_manifest_version": "nepsis.interop_contract_manifest@0.1.0"
+}

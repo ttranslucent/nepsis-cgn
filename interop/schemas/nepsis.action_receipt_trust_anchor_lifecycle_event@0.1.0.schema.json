@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.action_receipt_trust_anchor_lifecycle_event@0.1.0.schema.json",
+  "title": "Nepsis receipt trust-anchor lifecycle event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "actor_id",
+    "created_at",
+    "event_hash",
+    "event_type",
+    "idempotency_key",
+    "payload",
+    "payload_hash",
+    "prev_event_hash",
+    "provenance_class",
+    "sequence",
+    "trust_anchor_lifecycle_event_schema_version"
+  ],
+  "properties": {
+    "actor_id": {
+      "const": "system:nepsis.receipt_trust_anchor_registry@0.1.0"
+    },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "event_hash": { "$ref": "#/$defs/sha256" },
+    "event_type": {
+      "enum": ["trust_anchor_activated", "trust_anchor_revoked"]
+    },
+    "idempotency_key": { "$ref": "#/$defs/nonEmptyString" },
+    "payload": {
+      "oneOf": [
+        { "$ref": "#/$defs/activation" },
+        { "$ref": "#/$defs/revocation" }
+      ]
+    },
+    "payload_hash": { "$ref": "#/$defs/sha256" },
+    "prev_event_hash": { "$ref": "#/$defs/sha256" },
+    "provenance_class": { "const": "system" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "trust_anchor_lifecycle_event_schema_version": {
+      "const": "nepsis.action_receipt_trust_anchor_lifecycle_event@0.1.0"
+    }
+  },
+  "$defs": {
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activation_id",
+        "action_receipt_trust_anchor_activation_schema_version",
+        "trust_anchor",
+        "trust_anchor_hash"
+      ],
+      "properties": {
+        "activation_id": { "$ref": "#/$defs/nonEmptyString" },
+        "action_receipt_trust_anchor_activation_schema_version": {
+          "const": "nepsis.action_receipt_trust_anchor_activation@0.1.0"
+        },
+        "trust_anchor": {
+          "$ref": "nepsis.action_receipt_trust_anchor@0.1.0.schema.json"
+        },
+        "trust_anchor_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_receipt_trust_anchor_revocation_schema_version",
+        "key_id",
+        "reason",
+        "revocation_id",
+        "revoked_at",
+        "trust_anchor_hash"
+      ],
+      "properties": {
+        "action_receipt_trust_anchor_revocation_schema_version": {
+          "const": "nepsis.action_receipt_trust_anchor_revocation@0.1.0"
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^ed25519:[0-9a-f]{64}$"
+        },
+        "reason": { "$ref": "#/$defs/nonEmptyString" },
+        "revocation_id": { "$ref": "#/$defs/nonEmptyString" },
+        "revoked_at": { "$ref": "#/$defs/timestamp" },
+        "trust_anchor_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}

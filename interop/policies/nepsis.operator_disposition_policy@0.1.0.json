@@ -1,0 +1,13 @@
+{
+  "action_type": "record_operator_disposition",
+  "allowed_dispositions": [
+    "accept",
+    "defer",
+    "reject"
+  ],
+  "capability": "submit_operator_disposition",
+  "confirmation_required": true,
+  "operator_disposition_policy_schema_version": "nepsis.operator_disposition_policy@0.1.0",
+  "pending_cardinality": "one_exact_hash_bound_proposal",
+  "requested_change_application": "prohibited"
+}

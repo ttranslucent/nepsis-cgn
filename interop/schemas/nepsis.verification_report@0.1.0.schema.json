@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nepsis.local/schemas/nepsis.verification_report@0.1.0.schema.json",
+  "title": "Nepsis detached verification report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_receipt_hashes",
+    "adoption_eligible",
+    "authenticity_status",
+    "export_root_hash",
+    "generated_at",
+    "report_id",
+    "unverified_claims",
+    "valid",
+    "verification_report_schema_version",
+    "verified_checks",
+    "verifier_version"
+  ],
+  "properties": {
+    "action_receipt_hashes": { "$ref": "#/$defs/hashArray" },
+    "adoption_eligible": { "type": "boolean" },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor_id", "anchor_type", "anchor_value"],
+      "properties": {
+        "anchor_id": { "$ref": "#/$defs/nonEmptyString" },
+        "anchor_type": { "$ref": "#/$defs/nonEmptyString" },
+        "anchor_value": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "authenticity_status": {
+      "enum": ["unanchored_self_consistency", "externally_anchored", "invalid"]
+    },
+    "export_root_hash": { "$ref": "#/$defs/sha256" },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "report_id": { "$ref": "#/$defs/nonEmptyString" },
+    "unverified_claims": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nonEmptyString" },
+      "uniqueItems": true
+    },
+    "valid": { "type": "boolean" },
+    "verification_report_schema_version": {
+      "const": "nepsis.verification_report@0.1.0"
+    },
+    "verified_checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nonEmptyString" },
+      "uniqueItems": true
+    },
+    "verifier_version": { "$ref": "#/$defs/fullVersion" }
+  },
+  "$defs": {
+    "fullVersion": {
+      "type": "string",
+      "pattern": "^nepsis\\.[a-z0-9_.-]+@[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "hashArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    }
+  }
+}
