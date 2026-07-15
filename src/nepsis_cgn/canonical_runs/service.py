@@ -673,6 +673,13 @@ class CanonicalRunService:
         self, *, result: Any, actor: ActorContext
     ) -> ServiceActionResult:
         record = dict(result.record)
+        if not result.persisted:
+            detail = record.get("detail")
+            raise CanonicalRunServiceError(
+                detail
+                if isinstance(detail, str) and detail
+                else "canonical action outcome was not persisted"
+            )
         persisted = self._store.get_outcome(
             run_id=str(record["run_id"]),
             actor_id=actor.actor_id,

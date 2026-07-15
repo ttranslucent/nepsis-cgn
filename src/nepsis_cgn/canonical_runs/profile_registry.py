@@ -161,6 +161,9 @@ _SYSTEM_CONSTITUTION = {
     ),
 }
 SYSTEM_CONSTITUTION_HASH = canonical_hash(_SYSTEM_CONSTITUTION)
+_CONSTITUTIONAL_DATA_SCOPES = {
+    "operator_cleared_non_phi": frozenset({"operator_cleared_non_phi"})
+}
 _SYSTEM_RISKS_BY_DIMENSION = {
     row["dimension"]: row for row in _SYSTEM_CONSTITUTION["risk_dimensions"]
 }
@@ -214,7 +217,15 @@ class GovernanceProfileRegistry:
         database_path = str(self._db.execute("PRAGMA database_list").fetchone()[2])
         if database_path:
             self._db.execute("PRAGMA journal_mode = WAL")
-        self._data_scopes = dict(data_scopes or {})
+        configured_data_scopes = {
+            name: frozenset(values)
+            for name, values in (data_scopes or _CONSTITUTIONAL_DATA_SCOPES).items()
+        }
+        if configured_data_scopes != _CONSTITUTIONAL_DATA_SCOPES:
+            raise ProfileRegistryError(
+                "data scopes must match the constitutional remote-data boundary"
+            )
+        self._data_scopes = dict(_CONSTITUTIONAL_DATA_SCOPES)
         self._initialize_schema()
 
     @classmethod
@@ -822,7 +833,11 @@ class GovernanceProfileRegistry:
         budget = _integer(defaults.get("clarification_budget"), "clarification_budget")
         if not 0 <= budget <= 5:
             raise ProfileRegistryError("clarification_budget must be 0 through 5")
-        _nonempty_string(defaults.get("data_scope"), "data_scope")
+        data_scope = _nonempty_string(defaults.get("data_scope"), "data_scope")
+        if data_scope not in self._data_scopes:
+            raise ProfileRegistryError(
+                "data_scope exceeds the constitutional remote-data boundary"
+            )
         _enum(
             defaults.get("evidence_floor"),
             "evidence_floor",

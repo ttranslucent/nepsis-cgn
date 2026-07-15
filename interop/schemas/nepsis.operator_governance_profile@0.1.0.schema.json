@@ -49,7 +49,7 @@
       ],
       "properties": {
         "clarification_budget": { "type": "integer", "minimum": 0, "maximum": 5 },
-        "data_scope": { "$ref": "#/$defs/nonEmptyString" },
+        "data_scope": { "const": "operator_cleared_non_phi" },
         "evidence_floor": {
           "enum": ["operator_attestation", "one_source", "corroborated"]
         },

@@ -106,7 +106,7 @@
       "artifact_version": "nepsis.operator_governance_profile@0.1.0",
       "path": "schemas/nepsis.operator_governance_profile@0.1.0.schema.json",
       "role": "schema",
-      "sha256": "75f0ccb23f8083de04e1a3db2a483f627296dbfd21309b5e6bd6c83b1fdaabab"
+      "sha256": "db250feed73d131b050c76a3dec47dbc403c2d3e1ea75a129f9a9c949ebd46f0"
     },
     {
       "artifact_version": "nepsis.proposal_application@0.1.0",

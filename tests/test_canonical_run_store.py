@@ -384,6 +384,7 @@ def test_fork_atomically_freezes_parent_and_binds_distinct_successor() -> None:
     )
     assert refused.outcome == "invalid_request"
     assert refused.record["reason_code"] == "run_not_active"
+    assert refused.persisted is False
     assert len(store.export_run("run-001")["events"]) == parent_event_count
     assert len(store.export_run("run-001")["outcomes"]) == parent_outcome_count
 

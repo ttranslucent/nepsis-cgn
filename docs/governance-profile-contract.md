@@ -97,8 +97,9 @@ V0 is deliberately limited to typed fields with explicit comparison rules.
 - `evidence_floor`: `operator_attestation`, `one_source`, or `corroborated`;
 - `proposal_mode`: `one_at_a_time` or `grouped_low_risk`;
 - `uncertainty_display`: `ranges`, `bands`, or `narrative_with_status`; and
-- `data_scope`: a named scope no broader than the constitutional remote-data
-  boundary.
+- `data_scope`: `operator_cleared_non_phi`, the only V0 scope. It permits remote
+  inference only for operator-cleared non-PHI content without direct identifiers
+  or secrets. Adding another named scope requires a versioned contract change.
 
 ### 4.2 Baseline constraints
 

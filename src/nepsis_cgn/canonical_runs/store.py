@@ -168,6 +168,7 @@ class AdmissionDecision:
 class AppendResult:
     record: Mapping[str, Any]
     replayed: bool = False
+    persisted: bool = True
 
     @property
     def outcome(self) -> str:
@@ -808,7 +809,8 @@ class CanonicalRunStore:
                         detail=(
                             "canonical run is read-only and cannot accept new actions"
                         ),
-                    )
+                    ),
+                    persisted=False,
                 )
             if (
                 expected_sequence != int(run["head_sequence"])

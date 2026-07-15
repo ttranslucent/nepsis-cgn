@@ -6,7 +6,7 @@ import sqlite3
 import threading
 
 import pytest
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 
 from nepsis_cgn.canonical_runs.profile_registry import (
     GovernanceProfileRegistry,
@@ -223,6 +223,22 @@ def test_create_is_append_only_cas_guarded_and_idempotent(
 
 
 def test_profile_contract_rules_fail_closed(registry: GovernanceProfileRegistry) -> None:
+    widened_scope = _profile()
+    widened_scope["operator_defaults"]["data_scope"] = (
+        "allow_phi_direct_identifiers_and_secrets"
+    )
+    with pytest.raises(ProfileRegistryError, match="constitutional remote-data"):
+        registry.create_revision(
+            widened_scope,
+            actor=OPERATOR,
+            expected_head_revision=0,
+            idempotency_key="widened_scope",
+        )
+    with pytest.raises(ValidationError):
+        _validate_schema(
+            "nepsis.operator_governance_profile@0.1.0", widened_scope
+        )
+
     too_few_dimensions = _profile()
     too_few_dimensions["risk_dimensions"] = too_few_dimensions["risk_dimensions"][:4]
     with pytest.raises(ProfileRegistryError, match="exactly six"):
@@ -297,6 +313,20 @@ def test_profile_contract_rules_fail_closed(registry: GovernanceProfileRegistry)
                 expected_head_revision=0,
                 idempotency_key=f"invalid_ruin_{field}",
             )
+
+
+def test_registry_rejects_runtime_data_scope_widening() -> None:
+    with pytest.raises(ProfileRegistryError, match="constitutional remote-data"):
+        GovernanceProfileRegistry.in_memory(
+            data_scopes={
+                "operator_cleared_non_phi": frozenset(
+                    {"operator_cleared_non_phi"}
+                ),
+                "allow_phi_direct_identifiers_and_secrets": frozenset(
+                    {"phi", "direct_identifiers", "secrets"}
+                ),
+            }
+        )
 
 
 def test_activation_is_idempotent_and_keeps_one_active_revision(

@@ -116,6 +116,65 @@ def service_and_store() -> tuple[CanonicalRunService, CanonicalRunStore]:
     return service, store
 
 
+def fork_parent_run(
+    service: CanonicalRunService, store: CanonicalRunStore
+) -> None:
+    parent = store.get_snapshot("run-001")
+    reason = "The predecessor Codex thread is irrecoverable."
+    policy_diff = {
+        "changes": [],
+        "child_run_id": "run-002",
+        "fork_reason": reason,
+        "from_effective_policy_hash": EFFECTIVE_POLICY_HASH,
+        "governance_policy_diff_schema_version": GOVERNANCE_POLICY_DIFF_VERSION,
+        "operator_confirmation": {
+            "confirmed": True,
+            "confirmed_at": ACTION_AT,
+            "consequence_acknowledged": True,
+            "rationale": "Freeze the predecessor and create a distinct successor.",
+        },
+        "parent_run_id": "run-001",
+        "to_effective_policy_hash": EFFECTIVE_POLICY_HASH,
+    }
+    artifact_envelope = {
+        "artifact": policy_diff,
+        "artifact_schema_version": GOVERNANCE_POLICY_DIFF_VERSION,
+        "roles": ["policy_diff"],
+    }
+    provenance = {
+        "fork_reason": reason,
+        "forked_from_run_id": "run-001",
+        "inherited_evidence_root_hashes": [],
+        "parent_head_event_hash": parent["head_event_hash"],
+        "policy_diff_artifact_hash": canonical_hash(policy_diff),
+    }
+    result = service.create_run(
+        actor=operator_actor("create_run"),
+        run_id="run-002",
+        owner_id="operator:local",
+        created_at=ACTION_AT,
+        idempotency_key="create-002",
+        operator_governance_profile_hash=PROFILE_HASH,
+        session_governance_snapshot_hash=hashlib.sha256(
+            b"snapshot-child"
+        ).hexdigest(),
+        effective_policy_hash=EFFECTIVE_POLICY_HASH,
+        system_policy_bindings=[
+            {
+                "policy_hash": POLICY_HASH,
+                "policy_id": "canonical-run",
+                "policy_version": "nepsis.canonical_run_policy@0.1.0",
+            },
+            OPERATOR_DISPOSITION_POLICY_BINDING,
+        ],
+        initial_packet_projection=parent["packet_projection"],
+        initial_postcondition=parent["postcondition"],
+        fork_provenance=provenance,
+        fork_policy_diff_artifact=artifact_envelope,
+    )
+    assert service.verify_receipt(result.receipt)
+
+
 def test_active_writer_refuses_a_revoked_receipt_anchor() -> None:
     anchor = build_trust_anchor(
         PRIVATE_KEY.public_key(),
@@ -598,6 +657,63 @@ def test_operator_action_enforces_client_pinned_head_and_replays_exactly() -> No
     assert stale.receipt["outcome"] == "stale_head"
     assert stale.receipt["advanced_head"] is False
     assert len(store.export_run("run-001")["events"]) == 2
+
+
+def test_post_fork_action_refuses_before_receipt_signing_without_mutation() -> None:
+    service, store = service_and_store()
+    fork_parent_run(service, store)
+    parent = store.get_snapshot("run-001")
+    before = store.export_run("run-001")
+    validator_called = False
+
+    def validator(
+        request: dict[str, object], snapshot: dict[str, object]
+    ) -> AdmissionDecision:
+        nonlocal validator_called
+        validator_called = True
+        return AdmissionDecision.accept()
+
+    with pytest.raises(
+        CanonicalRunServiceError,
+        match="canonical run is read-only and cannot accept new actions",
+    ):
+        service.submit_operator_action(
+            actor=operator_actor("perform_zeroback"),
+            capability="perform_zeroback",
+            action_type="perform_zeroback",
+            payload={
+                "run_id": "run-001",
+                "replacement_frame_root_hash": hashlib.sha256(
+                    b"replacement-frame-after-fork"
+                ).hexdigest(),
+            },
+            confirmation={
+                "confirmed": True,
+                "confirmed_at": ACTION_AT,
+                "consequence_acknowledged": True,
+                "rationale": "Exercise the frozen predecessor refusal path.",
+            },
+            created_at=ACTION_AT,
+            effective_policy_hash=EFFECTIVE_POLICY_HASH,
+            expected_head_event_hash=parent["head_event_hash"],
+            expected_head_sequence=parent["head_sequence"],
+            idempotency_key="operator-after-fork",
+            operator_governance_profile_hash=PROFILE_HASH,
+            session_governance_snapshot_hash=SNAPSHOT_HASH,
+            trusted_adapter_intent_id="operator-after-fork-intent",
+            validator=validator,
+        )
+
+    assert validator_called is False
+    assert store.export_run("run-001") == before
+    assert (
+        store.get_outcome(
+            run_id="run-001",
+            actor_id="operator:local",
+            idempotency_key="operator-after-fork",
+        )
+        is None
+    )
 
 
 def _validate_schema(schema_version: str, value: dict[str, object]) -> None:
