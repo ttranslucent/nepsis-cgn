@@ -4,7 +4,11 @@ from copy import deepcopy
 
 import pytest
 
+from nepsis_cgn.canonical_runs.store import CanonicalRunStore
 from nepsis_cgn.contracts.canonical_run import (
+    CANONICAL_EVENT_APPEND_ACTOR_ID,
+    CANONICAL_EVENT_APPEND_CAPABILITY,
+    CANONICAL_EVENT_APPEND_CAPABILITY_ID,
     CANONICAL_RUN_GENESIS_HASH,
     ActorContext,
     CanonicalRunContractError,
@@ -83,3 +87,100 @@ def test_capability_check_uses_trusted_context() -> None:
     require_capability(MODEL, "submit_model_candidate")
     with pytest.raises(CapabilityRefusal):
         require_capability(MODEL, "submit_operator_disposition")
+
+
+@pytest.mark.parametrize(
+    (
+        "actor_id",
+        "provenance_class",
+        "capability_id",
+        "baseline_capabilities",
+        "legitimate_capability",
+    ),
+    [
+        (
+            "model:codex-app-server",
+            "model",
+            "capability:model:codex-app-server",
+            frozenset({"read_snapshot", "submit_model_candidate"}),
+            "submit_model_candidate",
+        ),
+        (
+            "system:nepsismc-host",
+            "system",
+            "capability:system:nepsismc-host",
+            frozenset({"read_snapshot"}),
+            "read_snapshot",
+        ),
+        (
+            "validator:detached-local",
+            "validator",
+            "capability:validator:detached-local",
+            frozenset({"export_run", "read_snapshot", "verify_run"}),
+            "verify_run",
+        ),
+        (
+            "validator:mc-import-pilot",
+            "validator",
+            "cap-import-pilot",
+            frozenset({"import_sealed_bundle"}),
+            "import_sealed_bundle",
+        ),
+    ],
+    ids=("codex", "mc", "shadow", "import"),
+)
+def test_codex_mc_shadow_and_import_cannot_acquire_canonical_event_append(
+    actor_id: str,
+    provenance_class: str,
+    capability_id: str,
+    baseline_capabilities: frozenset[str],
+    legitimate_capability: str,
+) -> None:
+    legitimate_actor = ActorContext(
+        actor_id=actor_id,
+        provenance_class=provenance_class,
+        capability_id=capability_id,
+        capabilities=baseline_capabilities,
+    )
+    require_capability(legitimate_actor, legitimate_capability)
+
+    with pytest.raises(
+        CanonicalRunContractError, match=r"canonical_event\.append is reserved"
+    ):
+        ActorContext(
+            actor_id=actor_id,
+            provenance_class=provenance_class,
+            capability_id=capability_id,
+            capabilities=baseline_capabilities
+            | frozenset({CANONICAL_EVENT_APPEND_CAPABILITY}),
+        )
+
+
+def test_internal_canonical_store_alone_acquires_canonical_event_append() -> None:
+    actor = CanonicalRunStore._validator_actor()
+
+    assert actor.actor_id == CANONICAL_EVENT_APPEND_ACTOR_ID
+    assert actor.capability_id == CANONICAL_EVENT_APPEND_CAPABILITY_ID
+    assert actor.capabilities == frozenset({CANONICAL_EVENT_APPEND_CAPABILITY})
+    require_capability(actor, CANONICAL_EVENT_APPEND_CAPABILITY)
+
+    with pytest.raises(
+        CanonicalRunContractError, match=r"canonical_event\.append is reserved"
+    ):
+        ActorContext(
+            actor_id=CANONICAL_EVENT_APPEND_ACTOR_ID,
+            provenance_class="validator",
+            capability_id="forged",
+            capabilities=frozenset({CANONICAL_EVENT_APPEND_CAPABILITY}),
+        )
+    with pytest.raises(
+        CanonicalRunContractError, match=r"canonical_event\.append is reserved"
+    ):
+        ActorContext(
+            actor_id=CANONICAL_EVENT_APPEND_ACTOR_ID,
+            provenance_class="validator",
+            capability_id=CANONICAL_EVENT_APPEND_CAPABILITY_ID,
+            capabilities=frozenset(
+                {CANONICAL_EVENT_APPEND_CAPABILITY, "verify_run"}
+            ),
+        )

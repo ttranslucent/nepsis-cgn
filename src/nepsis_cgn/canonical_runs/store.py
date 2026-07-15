@@ -18,6 +18,9 @@ from nepsis_cgn.contracts.canonical_json import (
 )
 from nepsis_cgn.contracts.canonical_run import (
     ActorContext,
+    CANONICAL_EVENT_APPEND_ACTOR_ID,
+    CANONICAL_EVENT_APPEND_CAPABILITY,
+    CANONICAL_EVENT_APPEND_CAPABILITY_ID,
     CANONICAL_RUN_GENESIS_HASH,
     build_event,
     require_capability,
@@ -1934,10 +1937,10 @@ class CanonicalRunStore:
     @staticmethod
     def _validator_actor() -> ActorContext:
         return ActorContext(
-            actor_id="validator:nepsis.canonical_run_store@0.1.0",
+            actor_id=CANONICAL_EVENT_APPEND_ACTOR_ID,
             provenance_class="validator",
-            capability_id="internal:canonical_run_store",
-            capabilities=frozenset({"append_validator_event"}),
+            capability_id=CANONICAL_EVENT_APPEND_CAPABILITY_ID,
+            capabilities=frozenset({CANONICAL_EVENT_APPEND_CAPABILITY}),
         )
 
 

@@ -13,6 +13,11 @@ CANONICAL_RUN_EVENT_VERSION = "nepsis.canonical_run_event@0.1.0"
 CANONICAL_RUN_GENESIS_HASH = hashlib.sha256(
     b"nepsis.canonical_run.genesis@0.1.0"
 ).hexdigest()
+CANONICAL_EVENT_APPEND_CAPABILITY = "append_validator_event"
+CANONICAL_EVENT_APPEND_ACTOR_ID = (
+    "validator:nepsis.canonical_run_store@0.1.0"
+)
+CANONICAL_EVENT_APPEND_CAPABILITY_ID = "internal:canonical_run_store"
 
 _ACTOR_RE = re.compile(r"^(model|operator|validator|system):[a-z0-9._@-]+$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -32,7 +37,7 @@ _CAPABILITIES_BY_PROVENANCE = {
     ),
     "validator": frozenset(
         {
-            "append_validator_event",
+            CANONICAL_EVENT_APPEND_CAPABILITY,
             "export_run",
             "import_sealed_bundle",
             "read_snapshot",
@@ -72,6 +77,15 @@ class ActorContext:
             raise CanonicalRunContractError("capability_id is required")
         if not isinstance(self.capabilities, frozenset) or not self.capabilities:
             raise CanonicalRunContractError("capabilities must be a non-empty frozenset")
+        if CANONICAL_EVENT_APPEND_CAPABILITY in self.capabilities and (
+            self.actor_id != CANONICAL_EVENT_APPEND_ACTOR_ID
+            or self.capability_id != CANONICAL_EVENT_APPEND_CAPABILITY_ID
+            or self.capabilities != frozenset({CANONICAL_EVENT_APPEND_CAPABILITY})
+        ):
+            raise CanonicalRunContractError(
+                "canonical_event.append is reserved for the authoritative "
+                "canonical-run store actor"
+            )
         allowed = _CAPABILITIES_BY_PROVENANCE.get(self.provenance_class)
         if allowed is None or not self.capabilities <= allowed:
             raise CanonicalRunContractError(

@@ -38,6 +38,11 @@ The authority rule is:
 6. Models cannot accept, reject, defer, override, release, seal, or commit.
 7. Actor identity is assigned by the authenticated capability boundary; input
    payloads cannot declare or elevate their own actor.
+   Contract capability `canonical_event.append` is bound in CGN as
+   `append_validator_event` and is reserved to the exact internal
+   `validator:nepsis.canonical_run_store@0.1.0` identity with no additional
+   capabilities. Codex, NepsisMC, detached-shadow, and import identities cannot
+   acquire it.
 8. Stale expected heads cannot mutate canonical state.
 9. Event, artifact, projection, idempotency, and head updates are one atomic
    transaction.
