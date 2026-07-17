@@ -37,6 +37,7 @@ nepsiscgn-api = "nepsis_cgn.api.server:entrypoint"
 nepsiscgn-api-asgi = "nepsis_cgn.api.asgi:entrypoint"
 nepsiscgn-mcp = "nepsis_cgn.mcp.stdio:entrypoint"
 nepsiscgn-private-runs = "nepsis_cgn.canonical_runs.private_runtime:main"
+nepsiscgn-init-private-runs = "nepsis_cgn.canonical_runs.private_runtime_init:main"
 nepsiscgn-revoke-receipt-anchor = "nepsis_cgn.canonical_runs.trust_anchor_registry:main"
 
 [tool.vercel]

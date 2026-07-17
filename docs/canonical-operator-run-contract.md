@@ -134,13 +134,16 @@ current private evaluation surface. It requires all of the following:
 - `NEPSIS_CANONICAL_RUNS_PORT`, which defaults to `8789`;
 - distinct absolute, non-temporary database paths in
   `NEPSIS_CANONICAL_RUNS_STORE_PATH` and
-  `NEPSIS_GOVERNANCE_PROFILE_STORE_PATH`;
+  `NEPSIS_GOVERNANCE_PROFILE_STORE_PATH`, plus an explicitly initialized
+  append-only trust ledger in
+  `NEPSIS_RECEIPT_TRUST_ANCHOR_LEDGER_PATH`;
 - an existing Ed25519 PEM key at
   `NEPSIS_CANONICAL_RUNS_SIGNING_KEY_PATH`, with group and other permissions
   denied, plus `NEPSIS_CANONICAL_RUNS_SIGNING_KEY_ACTIVATED_AT`; and
-- distinct model, operator, and validator bearer tokens of at least 32
+- distinct model, operator, profile-only, and validator bearer tokens of at least 32
   characters in `NEPSIS_CANONICAL_RUNS_MODEL_TOKEN`,
-  `NEPSIS_CANONICAL_RUNS_OPERATOR_TOKEN`, and
+  `NEPSIS_CANONICAL_RUNS_OPERATOR_TOKEN`,
+  `NEPSIS_CANONICAL_RUNS_PROFILE_TOKEN`, and
   `NEPSIS_CANONICAL_RUNS_VALIDATOR_TOKEN`.
 
 Missing, disabled, non-loopback, temporary-storage, weak-token, duplicate-token,
@@ -154,6 +157,29 @@ preconditions pass. ZeroBack replaces only the frame root and records the
 protected roots it preserves. Both policy bindings are immutable run-genesis
 inputs. Enabling any other action requires a deterministic adapter and adoption
 step, not an environment toggle.
+
+Initialize one durable loopback state root before the first start:
+
+```bash
+nepsiscgn-init-private-runs \
+  --state-root /absolute/non-temporary/path/to/private-cgn \
+  --profile-id profile-local
+```
+
+The initializer refuses relative, temporary, existing, or partial targets. It
+creates a mode-`0700` root, three distinct SQLite stores, a mode-`0600`
+Ed25519 PKCS8 key, four distinct 256-bit capability tokens, a canonical public
+trust-anchor record, and the first append-only anchor activation. It writes
+separate mode-`0600` `cgn-runtime.env` and `mc-profile.env` files so an MC
+profile-only client receives a distinct profile-revision capability, not the
+broader operator, model, or validator capabilities. That credential cannot
+create, inspect, actualize, commit, or export canonical runs. The command never
+prints tokens and never overwrites or rotates existing state.
+
+Source `cgn-runtime.env` only into the private CGN process, then run
+`nepsiscgn-private-runs`. Source `mc-profile.env` only into the local MC
+process. The latter explicitly preserves `NEPSISMC_RUNTIME_MODE=legacy`; it
+does not create a cutover marker or authorize the CGN writer.
 
 ## 5. Canonical Object Set
 

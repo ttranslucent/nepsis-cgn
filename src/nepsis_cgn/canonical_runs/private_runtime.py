@@ -50,6 +50,7 @@ class PrivateRuntimeSettings:
     signing_key_activated_at: str
     model_token: str
     operator_token: str
+    profile_token: str
     validator_token: str
 
 
@@ -82,6 +83,7 @@ def load_private_runtime_settings(
         ),
         model_token=_required(values, "NEPSIS_CANONICAL_RUNS_MODEL_TOKEN"),
         operator_token=_required(values, "NEPSIS_CANONICAL_RUNS_OPERATOR_TOKEN"),
+        profile_token=_required(values, "NEPSIS_CANONICAL_RUNS_PROFILE_TOKEN"),
         validator_token=_required(values, "NEPSIS_CANONICAL_RUNS_VALIDATOR_TOKEN"),
     )
     validate_private_runtime_settings(settings)
@@ -133,6 +135,7 @@ def validate_private_runtime_settings(settings: PrivateRuntimeSettings) -> None:
     tokens = (
         settings.model_token,
         settings.operator_token,
+        settings.profile_token,
         settings.validator_token,
     )
     if any(len(token) < 32 for token in tokens):
@@ -141,7 +144,7 @@ def validate_private_runtime_settings(settings: PrivateRuntimeSettings) -> None:
         )
     if len(set(tokens)) != len(tokens):
         raise PrivateRuntimeConfigurationError(
-            "model, operator, and validator tokens must be distinct"
+            "model, operator, profile, and validator tokens must be distinct"
         )
 
 
@@ -191,9 +194,7 @@ def build_private_runtime_app(
                 actor_id="model:codex-app-server",
                 provenance_class="model",
                 capability_id="capability:model:codex-app-server",
-                capabilities=frozenset(
-                    {"read_snapshot", "submit_model_candidate"}
-                ),
+                capabilities=frozenset({"read_snapshot", "submit_model_candidate"}),
             ),
         ),
         (
@@ -217,14 +218,21 @@ def build_private_runtime_app(
             ),
         ),
         (
+            settings.profile_token,
+            ActorContext(
+                actor_id="operator:local",
+                provenance_class="operator",
+                capability_id="capability:operator-profile:local",
+                capabilities=frozenset({"revise_operator_profile"}),
+            ),
+        ),
+        (
             settings.validator_token,
             ActorContext(
                 actor_id="validator:detached-local",
                 provenance_class="validator",
                 capability_id="capability:validator:detached-local",
-                capabilities=frozenset(
-                    {"export_run", "read_snapshot", "verify_run"}
-                ),
+                capabilities=frozenset({"export_run", "read_snapshot", "verify_run"}),
             ),
         ),
     )

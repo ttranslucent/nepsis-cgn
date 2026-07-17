@@ -36,6 +36,7 @@ def settings() -> PrivateRuntimeSettings:
         signing_key_activated_at="2026-07-01T00:00:00.000Z",
         model_token="m" * 32,
         operator_token="o" * 32,
+        profile_token="p" * 32,
         validator_token="v" * 32,
     )
 
@@ -48,6 +49,7 @@ def settings() -> PrivateRuntimeSettings:
         ({"port": 0}, "port"),
         ({"operator_token": "short"}, "32"),
         ({"operator_token": "m" * 32}, "distinct"),
+        ({"profile_token": "o" * 32}, "distinct"),
         ({"trust_anchor_ledger_path": settings().canonical_store_path}, "distinct"),
     ],
 )
@@ -73,9 +75,7 @@ def test_runtime_refuses_missing_trust_ledger_without_recreating_it() -> None:
                 configured,
                 store=CanonicalRunStore.in_memory(),
                 profile_registry=GovernanceProfileRegistry.in_memory(),
-                private_key=Ed25519PrivateKey.from_private_bytes(
-                    bytes(range(1, 33))
-                ),
+                private_key=Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33))),
             )
         assert not ledger_path.exists()
     finally:
@@ -153,6 +153,57 @@ def test_injected_runtime_enables_private_actualization_without_public_mvp() -> 
     assert incomplete_actualization.status_code == 400
 
 
+def test_profile_token_cannot_cross_into_canonical_run_authority() -> None:
+    app = build_private_runtime_app(
+        settings(),
+        store=CanonicalRunStore.in_memory(),
+        profile_registry=GovernanceProfileRegistry.in_memory(),
+        trust_anchor_registry=ReceiptTrustAnchorRegistry.in_memory(),
+        private_key=Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33))),
+    )
+    http = TestClient(app)
+    headers = {"Authorization": f"Bearer {'p' * 32}"}
+
+    assert (
+        http.get("/v1/operator-profiles/constitution", headers=headers).status_code
+        == 200
+    )
+    assert (
+        http.post(
+            "/v1/operator-runs/run-profile-token", headers=headers, json={}
+        ).status_code
+        == 403
+    )
+    assert (
+        http.get(
+            "/v1/operator-runs/run-profile-token/snapshot", headers=headers
+        ).status_code
+        == 403
+    )
+    assert (
+        http.get(
+            "/v1/operator-runs/run-profile-token/export", headers=headers
+        ).status_code
+        == 403
+    )
+    for capability, action_type in (
+        ("release_still", "release_still"),
+        ("request_decision_commit", "request_decision_commit"),
+        ("perform_zeroback", "perform_zeroback"),
+    ):
+        response = http.post(
+            "/v1/operator-runs/run-profile-token/operator-actions",
+            headers=headers,
+            json={
+                "action_type": action_type,
+                "capability": capability,
+                "capability_id": "capability:operator-profile:local",
+                "run_id": "run-profile-token",
+            },
+        )
+        assert response.status_code == 403
+
+
 def test_runtime_startup_pins_registry_and_refuses_revocation_or_replacement() -> None:
     registry = ReceiptTrustAnchorRegistry.in_memory()
     key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
@@ -168,7 +219,9 @@ def test_runtime_startup_pins_registry_and_refuses_revocation_or_replacement() -
     )
 
     replacement_key = Ed25519PrivateKey.from_private_bytes(bytes(range(2, 34)))
-    with pytest.raises(PrivateRuntimeConfigurationError, match="rotation is unsupported"):
+    with pytest.raises(
+        PrivateRuntimeConfigurationError, match="rotation is unsupported"
+    ):
         build_private_runtime_app(
             settings(),
             store=CanonicalRunStore.in_memory(),
