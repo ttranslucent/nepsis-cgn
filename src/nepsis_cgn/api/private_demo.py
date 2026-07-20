@@ -46,11 +46,11 @@ def build_private_demo_runtime_packet(body: dict[str, Any]) -> dict[str, Any]:
     reported = run_report(
         packet=locked,
         report_text=report_text,
-        sign={
-            "critical_signal": True,
-            "policy_violation": False,
-            "notes": f"Private demo no-PHI prompt hash {_prompt_hash(prompt)}.",
-        },
+        sign=_runtime_sign(
+            prompt=prompt,
+            case_id=case_id,
+            case_reasoning=case_reasoning,
+        ),
         interpretation=_interpretation(
             prompt=prompt,
             case_id=case_id,
@@ -188,6 +188,31 @@ def _interpretation(
             else ""
         ),
         "contradiction_density": 0.2 if contradiction_declared else 0.0,
+    }
+
+
+def _runtime_sign(
+    *,
+    prompt: str,
+    case_id: str,
+    case_reasoning: dict[str, Any],
+) -> dict[str, Any]:
+    validated_open = (
+        case_reasoning.get("compiler_valid") is True
+        and case_reasoning.get("current_red_status") == "open"
+    )
+    prompt_hash = _prompt_hash(prompt)
+    return {
+        # Only a validated open assessment is represented as an observed RED
+        # signal. Uncertain/invalid assessments still hold at the compiler gate;
+        # they are not promoted into direct-hazard evidence.
+        "critical_signal": validated_open,
+        "policy_violation": False,
+        "notes": (
+            f"Private demo no-PHI prompt hash {prompt_hash}; "
+            f"compiler RED status {case_reasoning.get('current_red_status', 'unknown')}."
+        ),
+        "evidence_id": f"private-demo:{case_id}:{prompt_hash}",
     }
 
 

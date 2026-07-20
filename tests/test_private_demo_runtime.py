@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from nepsis_cgn.api import asgi
+from nepsis_cgn.api.private_demo import build_private_demo_runtime_packet
 
 
 def test_asgi_private_demo_runtime_returns_operator_audit_packet(monkeypatch) -> None:
@@ -50,6 +51,27 @@ def test_asgi_private_demo_runtime_returns_operator_audit_packet(monkeypatch) ->
         "LOCK_REPORT",
         "SET_THRESHOLD_DECISION",
     ]
+
+
+def test_private_demo_uncertain_assessment_holds_without_claiming_direct_red(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "NEPSIS_OPERATOR_PACKET_SEAL_SECRET",
+        "unit-test-packet-seal-secret",
+    )
+
+    packet = build_private_demo_runtime_packet(
+        {
+            "prompt": "No PHI. Consider a bounded ambiguous scenario without a specified hazard.",
+            "no_phi_acknowledged": True,
+        }
+    )
+
+    assert packet["case_reasoning_compiler"]["current_red_status"] == "uncertain"
+    threshold = packet["latest_audit"]["threshold"]["packet"]
+    assert threshold["red_veto_active"] is False
+    assert packet["audit_trace"][-1]["arguments"]["decision"] == "hold"
 
 
 def test_asgi_private_demo_runtime_requires_token(monkeypatch) -> None:

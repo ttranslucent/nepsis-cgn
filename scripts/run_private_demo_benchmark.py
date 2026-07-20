@@ -117,6 +117,9 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
             or (expected_threshold_action != "deescalate" and threshold_decision == "hold")
         )
     )
+    expected_runtime_red_veto = expected_red_status == "open"
+    runtime_red_veto_active = threshold_packet.get("red_veto_active")
+    runtime_veto_matches = runtime_red_veto_active is expected_runtime_red_veto
     latest_audit_passed = all(status == "PASS" for status in latest_audit_statuses.values())
     return {
         "case_id": packet.get("case_id"),
@@ -134,6 +137,7 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
         "expected_threshold_action": expected_threshold_action,
         "threshold_decision": threshold_decision,
         "threshold_recommendation": threshold_packet.get("recommendation"),
+        "runtime_red_veto_active": runtime_red_veto_active,
         "hold_reason": threshold_args.get("hold_reason", ""),
         "compiler_schema_id": compiler.get("schema_id"),
         "compiler_valid": compiler.get("compiler_valid"),
@@ -154,6 +158,7 @@ def _run_case(case: dict[str, Any], *, required_events: list[str]) -> dict[str, 
             and required_events_present
             and compiler_matches
             and threshold_matches
+            and runtime_veto_matches
             and latest_audit_passed
         ),
     }

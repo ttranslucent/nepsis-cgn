@@ -104,3 +104,19 @@ response packet is generated only from locked artifacts and includes:
 BLUE wins cannot erase RED ruin. A recommendation with unresolved ruin blocks
 finalization until the artifact is revised and locked again through a valid
 packet branch.
+
+The governing target is that RED ruin cannot erase the best-supported
+explanation merely because its consequence is severe. Before V3 can be treated
+as RED-authoritative, a future versioned RED artifact contract must follow the
+[RED authority and anti-capture contract](red-authority-contract.md): keep
+applicability falsifiable, scope blocked actions, expose safeguard burden, and
+name a safe discriminator plus release or narrowing criteria. Repeated locking
+of the same unresolved RED claim without evidence or scope change is a capture
+signal, not additional confirmation.
+
+The current V3 validator does not require those richer fields. It validates the
+existing RED section (`triggers`, `ruin_paths`, `constraints`, and
+`safety_blockers`) and the shared layer contract. Current proposal validation,
+locking, and sealing therefore must not be described as full RED anti-capture
+enforcement or typed action-scoped enforcement; the richer lifecycle remains an
+adoption requirement.

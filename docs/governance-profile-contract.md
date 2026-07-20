@@ -24,12 +24,14 @@ laws that make the instrument trustworthy.
 
 ### 2.1 System constitution
 
-The system constitution is locked and versioned. It includes:
+The executable system constitution is locked and versioned. The following are
+target constitutional requirements for canonical-authority adoption:
 
 - canonical truth comes only from the packet, artifacts, and audit chain;
 - Codex and other models propose only;
 - required operator disposition precedes deterministic commitment;
-- RED precedes BLUE and ruin is non-compensatory;
+- RED precedes BLUE and qualified ruin is non-compensatory for the named unsafe
+  actions; severity does not establish hypothesis truth;
 - STILL, gate transitions, ZeroBack, sealing, and commitment are explicit legal
   actions;
 - stale state, contradictions, denominator collapse, uncertainty, host loss,
@@ -39,8 +41,18 @@ The system constitution is locked and versioned. It includes:
   content without direct identifiers or secrets; and
 - a profile cannot grant external-action authority to a model.
 
+These target requirements do not amend the currently pinned
+`nepsis.system_constitution@0.1.0` constitution or hash. Encoding them into the
+executable constitution requires a separately versioned constitution and its
+own adoption proof.
+
 Every profile pins `constitution_version` and `constitution_hash`. A user or
 session override cannot modify a constitutional field.
+
+The [RED authority and anti-capture contract](red-authority-contract.md)
+defines the target distinction between a locked ruin criterion, its case-level
+applicability claim, its scoped veto, and the protective response. The current
+profile schema does not by itself prove that richer case-level lifecycle.
 
 ### 2.2 Operator profile
 
@@ -175,11 +187,22 @@ Each ruin criterion records:
 - rationale and source references.
 
 Any applicable unresolved ruin criterion enters RED regardless of aggregate
-utility or normalized probability. BLUE cannot trade it away.
+utility or normalized probability. BLUE cannot trade away the scoped veto, but
+the best-supported BLUE explanation and evidence against RED applicability must
+remain visible.
 
 Every ruin criterion is constitutionally protected, non-waivable, and
 `locked`; the profile may add criteria or tighten their responses but cannot
 remove or relax a system criterion.
+
+The criterion definition is locked; the claim that it applies in a particular
+frame is not permanently true by definition. Applicability must remain
+evidence-linked, falsifiable, scoped to named actions, and paired with review and
+release or narrowing criteria. The protective response is also subject to
+governance for burden, delay, induced harm, reversibility, and information loss.
+The current `@0.1.0` profile schema does not yet represent the complete case-level
+assessment; canonical adoption requires the typed assessment and supersession
+transition defined by the RED authority contract.
 
 ## 5. Evaluability
 

@@ -20,6 +20,20 @@ class SafetySign:
     critical_signal: bool
     policy_violation: bool = False
     notes: Optional[str] = None
+    evidence_id: Optional[str] = None
+    independent_observation: bool = False
+
+    def direct_ruin_criterion_observed(self) -> bool:
+        return self.critical_signal or self.policy_violation
+
+    def red_applicability_fingerprint_payload(self) -> Dict[str, bool]:
+        return {
+            "critical_signal": self.critical_signal,
+            "policy_violation": self.policy_violation,
+        }
+
+    def red_release_assessed_negative(self) -> bool:
+        return not self.critical_signal and not self.policy_violation
 
     def to_state(self) -> "SafetyState":
         return SafetyState(
@@ -57,6 +71,7 @@ class NoCriticalSignal(Constraint):
                     message="Critical signal detected; route to red channel.",
                     code="critical_signal_present",
                     severity="error",
+                    metadata={"red_boundary": True},
                 )
             ]
         return []
@@ -73,6 +88,7 @@ class RequiresCriticalSignal(Constraint):
                 message="No critical signal; red channel likely mismatch.",
                 code="missing_critical_signal",
                 severity="error",
+                metadata={"governance_role": "manifold_mismatch"},
             )
         ]
 
@@ -87,6 +103,7 @@ class NoPolicyViolation(Constraint):
                     message="Policy violation detected.",
                     code="policy_violation",
                     severity="error",
+                    metadata={"red_boundary": True},
                 )
             ]
         return []
@@ -102,6 +119,7 @@ class EscalationNotice(Constraint):
                     message="Context notes present; review carefully.",
                     code="context_notes",
                     severity="warning",
+                    metadata={"governance_role": "informational_context"},
                 )
             ]
         return []
@@ -188,7 +206,10 @@ def build_red_blue_hypotheses() -> List[InterpretantHypothesis[SafetySign, Safet
             description="Red channel for critical signals; policy violation is ruin.",
             manifold_factory=lambda _: RedChannelManifold(),
             prior=0.4,
-            likelihood_fn=lambda sign: 2.0 if getattr(sign, "critical_signal", False) else 1.0,
+            likelihood_fn=lambda sign: 2.0
+            if getattr(sign, "critical_signal", False)
+            or getattr(sign, "policy_violation", False)
+            else 0.4,
             catastrophic=True,
         ),
     ]

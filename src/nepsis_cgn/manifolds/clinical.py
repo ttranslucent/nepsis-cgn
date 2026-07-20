@@ -22,13 +22,60 @@ class ClinicalSign:
 
     radicular_pain: bool
     spasm_present: bool
-    saddle_anesthesia: bool = False
-    bladder_dysfunction: bool = False
-    bilateral_weakness: bool = False
+    saddle_anesthesia: Optional[bool] = None
+    bladder_dysfunction: Optional[bool] = None
+    bilateral_weakness: Optional[bool] = None
     progression: bool = False
     fever: bool = False
     notes: Optional[str] = None
     followup: Optional[Dict[str, Any]] = None
+    evidence_id: Optional[str] = None
+    independent_observation: bool = False
+
+    def __post_init__(self) -> None:
+        if self.followup is not None and not isinstance(self.followup, dict):
+            raise ValueError("followup must be an object when provided.")
+        for key in (
+            "saddle_anesthesia",
+            "bladder_dysfunction",
+            "bilateral_weakness",
+        ):
+            if self.followup and key in self.followup:
+                value = self.followup[key]
+                if value is not None and not isinstance(value, bool):
+                    raise ValueError(
+                        f"followup.{key} must be boolean or null when provided."
+                    )
+
+    def effective_red_flags(self) -> tuple[Optional[bool], Optional[bool], Optional[bool]]:
+        values: Dict[str, Optional[bool]] = {
+            "saddle_anesthesia": self.saddle_anesthesia,
+            "bladder_dysfunction": self.bladder_dysfunction,
+            "bilateral_weakness": self.bilateral_weakness,
+        }
+        if self.followup:
+            for key in values:
+                if key in self.followup:
+                    values[key] = self.followup[key]
+        return (
+            values["saddle_anesthesia"],
+            values["bladder_dysfunction"],
+            values["bilateral_weakness"],
+        )
+
+    def red_release_assessed_negative(self) -> bool:
+        return all(value is False for value in self.effective_red_flags())
+
+    def direct_ruin_criterion_observed(self) -> bool:
+        return any(value is True for value in self.effective_red_flags())
+
+    def red_applicability_fingerprint_payload(self) -> Dict[str, Optional[bool]]:
+        saddle, bladder, weakness = self.effective_red_flags()
+        return {
+            "saddle_anesthesia": saddle,
+            "bladder_dysfunction": bladder,
+            "bilateral_weakness": weakness,
+        }
 
     def to_state(self) -> "ClinicalState":
         return ClinicalState(
@@ -50,9 +97,9 @@ class ClinicalState(CGNState):
 
     radicular_pain: bool
     spasm_present: bool
-    saddle_anesthesia: bool = False
-    bladder_dysfunction: bool = False
-    bilateral_weakness: bool = False
+    saddle_anesthesia: Optional[bool] = None
+    bladder_dysfunction: Optional[bool] = None
+    bilateral_weakness: Optional[bool] = None
     progression: bool = False
     fever: bool = False
     notes: Optional[str] = None
@@ -105,6 +152,7 @@ class RequiresRadicularPain(Constraint):
                 message="No radicular pain present; manifold mismatch.",
                 code="missing_radicular",
                 severity="error",
+                metadata={"governance_role": "manifold_mismatch"},
             )
         ]
 
@@ -120,6 +168,7 @@ class RequiresSpasm(Constraint):
                 message="Spasm not present; consider alternative manifold.",
                 code="missing_spasm",
                 severity="warning",
+                metadata={"governance_role": "manifold_mismatch"},
             )
         ]
 
@@ -141,7 +190,7 @@ class NoRedFlags(Constraint):
                 message=f"Red flags present: {', '.join(offenders)}.",
                 code="red_flag_present",
                 severity="error",
-                metadata={"flags": offenders},
+                metadata={"flags": offenders, "red_boundary": True},
             )
         ]
 
@@ -157,6 +206,7 @@ class RedFlagsRequired(Constraint):
                 message="No red flags detected; cauda equina manifold likely mismatch.",
                 code="missing_red_flags",
                 severity="error",
+                metadata={"governance_role": "manifold_mismatch"},
             )
         ]
 
@@ -204,7 +254,11 @@ def _followup_transform(state: ClinicalState) -> ClinicalState:
 
 
 def _ruin_on_red_flags(state: ClinicalState) -> bool:
-    return bool(state.saddle_anesthesia or state.bladder_dysfunction)
+    return bool(
+        state.saddle_anesthesia
+        or state.bladder_dysfunction
+        or state.bilateral_weakness
+    )
 
 
 class RadicularSpasmManifold(Manifold[ClinicalState]):
@@ -244,7 +298,13 @@ class CaudaEquinaManifold(Manifold[ClinicalState]):
     def __init__(self) -> None:
         super().__init__(
             constraint_set=build_cauda_constraint_set(),
-            ruin_nodes=[],
+            ruin_nodes=[
+                RuinNode(
+                    name="red_flag_ruin",
+                    predicate=_ruin_on_red_flags,
+                    description="Immediate escalation if cauda-equina red flags appear.",
+                )
+            ],
             transformation_rules=[
                 TransformationRule(
                     name="apply_followup",
@@ -275,12 +335,19 @@ def build_clinical_hypotheses() -> List[InterpretantHypothesis[ClinicalSign, Cli
             description="Red-channel manifold for cauda equina red flags.",
             manifold_factory=lambda _: CaudaEquinaManifold(),
             prior=0.4,
-            likelihood_fn=lambda sign: 2.0
-            if getattr(sign, "saddle_anesthesia", False) or getattr(sign, "bladder_dysfunction", False)
-            else 1.0,
+            likelihood_fn=_cauda_equina_likelihood,
             catastrophic=True,
         ),
     ]
+
+
+def _cauda_equina_likelihood(sign: ClinicalSign) -> float:
+    red_flags = sign.effective_red_flags()
+    if any(value is True for value in red_flags):
+        return 2.0
+    if all(value is False for value in red_flags):
+        return 0.4
+    return 1.0
 
 
 def demo_radicular_vs_cauda(sign: Optional[ClinicalSign] = None) -> Dict[str, Any]:

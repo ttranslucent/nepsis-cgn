@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generic, List, Literal, Mapping, Optional, Sequence, Tuple, TypeVar
 
@@ -85,6 +86,9 @@ RUIN_CHANNEL = ChannelSemantics(
     invariants=(
         "Catastrophic miss is a boundary condition, not a utility term.",
         "Prefer protective friction over false-negative ruin when the boundary is near or crossed.",
+        "Severity grants authority over unsafe commitment, not authority over which hypothesis is true.",
+        "RED applicability remains falsifiable and competing explanations remain visible.",
+        "Protective action must be the least-burdensome reversible response that preserves the boundary.",
     ),
 )
 
@@ -220,7 +224,19 @@ class InterpretantManager(Generic[SignT, StateT]):
         if not hypotheses:
             raise ValueError("At least one hypothesis is required.")
         self._hypotheses = {hyp.id: hyp for hyp in hypotheses}
-        self._posterior: Dict[str, float] = {hyp.id: float(hyp.prior) for hyp in hypotheses}
+        initial_weights = {hyp.id: float(hyp.prior) for hyp in hypotheses}
+        if any(
+            not math.isfinite(weight) or weight < 0.0
+            for weight in initial_weights.values()
+        ):
+            raise ValueError("Hypothesis priors must be finite and non-negative.")
+        normalizer = sum(initial_weights.values())
+        if normalizer <= 0.0:
+            raise ValueError("Hypothesis priors must have positive total weight.")
+        self._posterior: Dict[str, float] = {
+            hypothesis_id: weight / normalizer
+            for hypothesis_id, weight in initial_weights.items()
+        }
 
     def update(self, sign: SignT) -> Dict[str, float]:
         weights: Dict[str, float] = {}
@@ -236,14 +252,38 @@ class InterpretantManager(Generic[SignT, StateT]):
             self._posterior = {key: value / normalizer for key, value in weights.items()}
         return dict(self._posterior)
 
-    def select_manifold(self, sign: SignT) -> Manifold[StateT]:
-        self.update(sign)
+    def select_manifold(
+        self,
+        sign: SignT,
+        *,
+        update_posterior: bool = True,
+    ) -> Manifold[StateT]:
+        if update_posterior:
+            self.update(sign)
         best_id = max(self._posterior, key=self._posterior.get)
         hypothesis = self._hypotheses[best_id]
         return hypothesis.manifold_factory(sign)
 
     def posterior(self) -> Dict[str, float]:
         return dict(self._posterior)
+
+    def restore_posterior(self, posterior: Mapping[str, float]) -> None:
+        if set(posterior) != set(self._hypotheses):
+            raise ValueError(
+                "Checkpoint posterior hypotheses do not match the active registry."
+            )
+        restored: Dict[str, float] = {}
+        for hypothesis_id, raw_weight in posterior.items():
+            weight = float(raw_weight)
+            if not math.isfinite(weight) or weight < 0.0:
+                raise ValueError(
+                    "Checkpoint posterior weights must be finite and non-negative."
+                )
+            restored[hypothesis_id] = weight
+        total = sum(restored.values())
+        if total <= 0.0 or not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError("Checkpoint posterior weights must sum to 1.")
+        self._posterior = restored
 
     def ruin_mass(self, posterior: Optional[Dict[str, float]] = None) -> float:
         if posterior is None:
@@ -263,6 +303,11 @@ class InterpretantManager(Generic[SignT, StateT]):
 class WordPuzzleSign:
     letters: str
     candidate: str
+
+    def direct_ruin_latch_requires_qualified_release(self) -> bool:
+        """Puzzle constraints are fully re-evaluated from each complete sign."""
+
+        return False
 
     def to_raw_sign(self) -> Sign:
         return Sign(text=f"{self.letters}|{self.candidate}", data={"letters": self.letters, "candidate": self.candidate})

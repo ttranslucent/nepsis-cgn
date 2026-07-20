@@ -58,6 +58,20 @@ def test_governance_calibration_probability_increases_with_violation_pressure() 
     assert high > low
 
 
+def test_default_calibration_does_not_convert_uncertainty_into_hazard_evidence() -> None:
+    calibration = GovernanceCalibration(prior_pi=0.1)
+
+    probability = calibration.probability(
+        violation_pressure=0.0,
+        ambiguity_pressure=1.0,
+        contradiction_density=0.0,
+        posterior_entropy_norm=1.0,
+        top_margin=0.0,
+    )
+
+    assert probability == pytest.approx(0.1)
+
+
 def test_iteration_state_machine_happy_path() -> None:
     sm = IterationStateMachine()
     assert sm.stage == "draft"
@@ -74,7 +88,7 @@ def test_iteration_state_machine_invalid_transition() -> None:
         sm.apply("COMMIT")
 
 
-def test_policy_red_override_when_cost_gate_crossed() -> None:
+def test_policy_cost_gate_requests_review_without_acquiring_red_veto() -> None:
     metrics = GovernanceMetrics(
         p_bad=0.3,
         ruin_mass=0.1,
@@ -85,10 +99,95 @@ def test_policy_red_override_when_cost_gate_crossed() -> None:
     )
     costs = GovernanceCosts(c_fp=1.0, c_fn=9.0)  # theta=0.1
     decision = evaluate_governance_policy(metrics, costs)
-    assert decision.posture == "red_override"
-    assert decision.warning_level == "red"
-    assert decision.recommended_action == "escalate_red"
+    assert decision.posture == "cost_review"
+    assert decision.warning_level == "yellow"
+    assert decision.recommended_action == "review_protective_action"
+    assert decision.red_veto_active is False
     assert "COST_GATE_CROSSED" in decision.trigger_codes
+
+
+def test_policy_ruin_only_contains_and_discriminates_without_releasing_veto() -> None:
+    metrics = GovernanceMetrics(
+        p_bad=0.05,
+        ruin_mass=0.3,
+        contradiction_density=0.1,
+        posterior_entropy_norm=0.3,
+        top_margin=0.3,
+        top_p=0.7,
+    )
+    costs = GovernanceCosts(c_fp=1.0, c_fn=9.0)  # theta=0.1
+
+    decision = evaluate_governance_policy(metrics, costs)
+
+    assert decision.posture == "red_override"
+    assert decision.red_veto_active is True
+    assert decision.recommended_action == "contain_and_discriminate"
+    assert decision.loss_treat > decision.loss_notreat
+    assert decision.trigger_codes == ("RUIN_MASS_HIGH",)
+
+
+def test_policy_cost_threshold_equality_does_not_count_as_crossed() -> None:
+    metrics = GovernanceMetrics(
+        p_bad=0.1,
+        ruin_mass=0.24,
+        contradiction_density=0.0,
+        posterior_entropy_norm=0.2,
+        top_margin=0.3,
+        top_p=0.7,
+    )
+
+    decision = evaluate_governance_policy(
+        metrics,
+        GovernanceCosts(c_fp=1.0, c_fn=9.0),
+    )
+
+    assert decision.posture == "continue"
+    assert decision.red_veto_active is False
+    assert "RUIN_MASS_HIGH" not in decision.trigger_codes
+    assert "COST_GATE_CROSSED" not in decision.trigger_codes
+
+
+def test_policy_ruin_threshold_equality_preserves_red_veto() -> None:
+    metrics = GovernanceMetrics(
+        p_bad=0.05,
+        ruin_mass=0.25,
+        contradiction_density=0.0,
+        posterior_entropy_norm=0.2,
+        top_margin=0.3,
+        top_p=0.7,
+    )
+
+    decision = evaluate_governance_policy(
+        metrics,
+        GovernanceCosts(c_fp=1.0, c_fn=9.0),
+    )
+
+    assert decision.posture == "red_override"
+    assert decision.red_veto_active is True
+    assert decision.recommended_action == "contain_and_discriminate"
+    assert decision.trigger_codes == ("RUIN_MASS_HIGH",)
+
+
+def test_persistent_red_zerobacks_without_releasing_ruin_veto() -> None:
+    metrics = GovernanceMetrics(
+        p_bad=0.05,
+        ruin_mass=0.3,
+        contradiction_density=0.1,
+        posterior_entropy_norm=0.3,
+        top_margin=0.3,
+        top_p=0.7,
+    )
+    costs = GovernanceCosts(c_fp=1.0, c_fn=9.0)
+    context = GovernanceContext(red_override_dwell_iters=3)
+
+    decision = evaluate_governance_policy(metrics, costs, context=context)
+
+    assert decision.posture == "red_review"
+    assert decision.warning_level == "red"
+    assert decision.recommended_action == "review_red_applicability"
+    assert decision.red_veto_active is True
+    assert "RUIN_MASS_HIGH" in decision.trigger_codes
+    assert "RED_CAPTURE_REVIEW" in decision.trigger_codes
 
 
 def test_policy_mixture_mode_for_margin_and_entropy() -> None:
@@ -153,7 +252,7 @@ def test_policy_zeroback_on_recurrence_pattern() -> None:
     context = GovernanceContext(contradiction_streak=3, mixture_dwell_iters=4)
     decision = evaluate_governance_policy(metrics, costs, context=context)
     assert decision.posture == "zeroback"
-    assert decision.recommended_action == "reset_priors"
+    assert decision.recommended_action == "perform_zeroback"
     assert "RECURRENCE_PATTERN" in decision.trigger_codes
 
 
@@ -211,10 +310,10 @@ def test_ruin_mass_uses_catastrophic_hypotheses() -> None:
     assert ruin_mass == pytest.approx(posterior["red_channel"])
 
 
-def test_interpretant_manager_uses_sequential_posteriors() -> None:
+def test_interpretant_manager_allows_negative_evidence_to_lower_red_posterior() -> None:
     manager = InterpretantManager(hypotheses=build_red_blue_hypotheses())
     first = manager.update(SafetySign(critical_signal=True))
     second = manager.update(SafetySign(critical_signal=False))
     assert first["red_channel"] > 0.5
-    assert second["red_channel"] == pytest.approx(first["red_channel"])
-    assert second["blue_channel"] == pytest.approx(first["blue_channel"])
+    assert second["red_channel"] < first["red_channel"]
+    assert second["blue_channel"] > first["blue_channel"]

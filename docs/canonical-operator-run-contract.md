@@ -32,24 +32,27 @@ The authority rule is:
 1. Exactly one canonical append boundary exists for a run.
 2. RED completes before BLUE may rank an action.
 3. BLUE utility cannot compensate for an unresolved RED blocker.
-4. STILL is a commitment interlock, not a display state.
-5. ZeroBack preserves evidence, contradictions, protected constraints, and
+4. RED governs the admissibility of scoped actions, not which hypothesis is
+   true; applicability remains falsifiable under the
+   [RED authority contract](red-authority-contract.md).
+5. STILL is a commitment interlock, not a display state.
+6. ZeroBack preserves evidence, contradictions, protected constraints, and
    lineage while reopening the frame or hypothesis class.
-6. Models cannot accept, reject, defer, override, release, seal, or commit.
-7. Actor identity is assigned by the authenticated capability boundary; input
+7. Models cannot accept, reject, defer, override, release, seal, or commit.
+8. Actor identity is assigned by the authenticated capability boundary; input
    payloads cannot declare or elevate their own actor.
    Contract capability `canonical_event.append` is bound in CGN as
    `append_validator_event` and is reserved to the exact internal
    `validator:nepsis.canonical_run_store@0.1.0` identity with no additional
    capabilities. Codex, NepsisMC, detached-shadow, and import identities cannot
    acquire it.
-8. Stale expected heads cannot mutate canonical state.
-9. Event, artifact, projection, idempotency, and head updates are one atomic
+9. Stale expected heads cannot mutate canonical state.
+10. Event, artifact, projection, idempotency, and head updates are one atomic
    transaction.
-10. A packet projection is reconstructable from canonical events and artifacts.
-11. A conversation, UI cache, provider response, or model claim is never
+11. A packet projection is reconstructable from canonical events and artifacts.
+12. A conversation, UI cache, provider response, or model claim is never
     canonical state.
-12. No private ledger, authentication state, or model-facing behavior is added
+13. No private ledger, authentication state, or model-facing behavior is added
     to the public `/mvp` runtime.
 
 ## 3. Ownership Topology
@@ -296,6 +299,14 @@ operator-authored and the event records the exact `requested_by_actor_id`.
 places an active hold, and records a `nepsis.zeroback_state@0.1.0` proof that
 evidence, observation, population, contradiction, and RED-hazard roots were
 preserved. It cannot be used as a hidden proposal-application path.
+
+Preservation is lineage preservation, not permanent applicability. The current
+`@0.1.0` actualization policy has no typed RED-hazard assessment or governed
+supersession transition, so a nonempty unresolved-hazard set can remain a
+hold that is indefinitely unresolvable within that run. This fail-closed gap is
+an adoption blocker: canonical authority must remain inactive until scoped
+hazard assessments can be recorded, reviewed, narrowed, contained, resolved, or
+superseded without deleting their history.
 
 ### 5.6 Context manifest
 
@@ -558,8 +569,11 @@ The CGN writer may become authoritative only after tests prove:
 22. context manifests are CGN-generated and cannot be selectively omitted or
     model-authored;
 23. proposal-artifact omission or tampering is refused;
-24. Ed25519 receipt signing, rotation, revocation-time, and anchor reporting; and
-25. NepsisMC has no canonical write path for a CGN-owned run after cutover.
+24. Ed25519 receipt signing, rotation, revocation-time, and anchor reporting;
+25. NepsisMC has no canonical write path for a CGN-owned run after cutover; and
+26. a typed RED-hazard assessment, named action-scoped blocker derivation,
+    governed narrowing/resolution/supersession transition, independent verifier,
+    and regression proof that every transition preserves prior hazard history.
 
 Failure of any gate leaves NepsisMC as the canonical writer and CGN as verifier
 or experimental pilot. It does not justify weakening the contract.

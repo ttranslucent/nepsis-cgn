@@ -184,6 +184,12 @@ def test_tools_list_advertises_auth_requirement_and_run_mvp_aliases() -> None:
         "sea_ivdu",
         "wirecard",
     ]
+    threshold_tool = next(
+        tool for tool in tools if tool["name"] == "set_threshold_decision"
+    )
+    threshold_properties = threshold_tool["inputSchema"]["properties"]
+    assert threshold_properties["cost_review_acknowledged"]["type"] == "boolean"
+    assert threshold_properties["cost_review_rationale"]["type"] == "string"
     tool_names = {tool["name"] for tool in tools}
     assert {
         "start_v3_orchestration",
@@ -320,6 +326,63 @@ def test_set_threshold_decision_rejects_non_string_hold_reason() -> None:
     assert response is not None
     assert response["error"]["code"] == -32602
     assert "hold_reason" in response["error"]["message"]
+
+
+def test_set_threshold_decision_rejects_non_boolean_cost_review_acknowledgment() -> None:
+    packet = _report_locked_packet()
+
+    response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "set_threshold_decision",
+                "arguments": {
+                    "packet": packet,
+                    "decision": "hold",
+                    "cost_review_acknowledged": "yes",
+                },
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    assert "cost_review_acknowledged" in response["error"]["message"]
+
+
+def test_set_threshold_decision_records_cost_review_disposition() -> None:
+    packet = _report_locked_packet()
+    rationale = "Expected-loss tradeoff reviewed before holding."
+
+    response = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "set_threshold_decision",
+                "arguments": {
+                    "packet": packet,
+                    "decision": "hold",
+                    "hold_reason": "Collect one more discriminator before recommendation.",
+                    "cost_review_acknowledged": True,
+                    "cost_review_rationale": rationale,
+                },
+            },
+        },
+        require_capability_token=False,
+        server_name="nepsis-cgn-local",
+    )
+
+    assert response is not None
+    payload = _tool_payload(response)
+    threshold_args = payload["audit_trace"][-1]["arguments"]
+    assert threshold_args["cost_review_acknowledged"] is True
+    assert threshold_args["cost_review_rationale"] == rationale
 
 
 def test_v3_mcp_tools_execute_packet_in_packet_out() -> None:

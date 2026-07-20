@@ -87,13 +87,24 @@ def test_cli_can_emit_iteration_packet(capsys) -> None:
 
 
 def test_cli_can_emit_committed_stage(capsys) -> None:
-    code = main(["--json", "--emit-packet", "--commit", "safety", "--critical-signal"])
+    code = main(["--json", "--emit-packet", "--commit", "safety"])
     assert code == 0
     out = capsys.readouterr().out.strip()
     payload = json.loads(out)
     packet = payload["iteration_packet"]
     assert packet["stage"] == "committed"
     assert packet["stage_events"] == ["CALL", "REPORT", "EVALUATE", "COMMIT"]
+
+
+def test_cli_critical_signal_cannot_emit_committed_stage(capsys) -> None:
+    code = main(["--json", "--emit-packet", "--commit", "safety", "--critical-signal"])
+    assert code == 0
+    out = capsys.readouterr().out.strip()
+    packet = json.loads(out)["iteration_packet"]
+    assert packet["stage"] == "evaluated"
+    assert packet["commit_request"]["requested"] is True
+    assert packet["commit_request"]["admitted"] is False
+    assert "direct_ruin_criterion_active" in packet["commit_request"]["blocked_by"]
 
 
 def test_cli_continue_override_requires_reason() -> None:

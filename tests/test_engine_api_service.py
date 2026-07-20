@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from nepsis_cgn.api.service import EngineApiService
+from nepsis_cgn.api.service import EngineApiService, _build_threshold_stage_packet
 
 
 def _passing_operator_frame() -> dict[str, object]:
@@ -59,6 +61,82 @@ def test_create_and_step_safety_session_with_governance() -> None:
     assert step["iteration_packet"]["manifold"]["channel"]["space"] == "ruin"
     assert step["iteration_packet"]["meta"]["session_id"] == sid
     assert step["session"]["packet_count"] == 1
+
+
+def test_no_cost_direct_red_latch_is_visible_and_blocks_commit_until_qualified_release() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(family="safety")
+    sid = created["session_id"]
+    svc.step_session(
+        sid,
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "direct-hazard",
+        },
+    )
+
+    blocked = svc.step_session(
+        sid,
+        sign={
+            "critical_signal": False,
+            "policy_violation": False,
+            "evidence_id": "ordinary-negative",
+        },
+        commit=True,
+    )
+
+    assert blocked["red_veto_active"] is True
+    assert blocked["direct_ruin_criterion_active"] is True
+    assert blocked["stage"] == "evaluated"
+    assert blocked["iteration_packet"]["commit_request"]["admitted"] is False
+    assert "direct_ruin_criterion_active" in blocked["iteration_packet"]["still"][
+        "finalization_blockers"
+    ]
+
+    released = svc.step_session(
+        sid,
+        sign={
+            "critical_signal": False,
+            "policy_violation": False,
+            "evidence_id": "independent-negative",
+            "independent_observation": True,
+        },
+        commit=True,
+    )
+    assert released["red_veto_active"] is False
+    assert released["direct_ruin_criterion_active"] is False
+    assert released["stage"] == "committed"
+
+
+def test_no_cost_operator_audit_inherits_authoritative_still_red_veto() -> None:
+    svc = EngineApiService()
+    locked = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs=None,
+    )
+    result = svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "no-cost-operator-red",
+        },
+        interpretation=_passing_operator_report_context(),
+    )
+
+    latest_packet = result["step"]["iteration_packet"]
+    assert "governance" not in latest_packet
+    assert "direct_ruin_criterion_active" in latest_packet["still"][
+        "finalization_blockers"
+    ]
+    threshold = svc.stage_audit_session(locked["session_id"])["threshold"][
+        "packet"
+    ]
+    assert threshold["red_veto_active"] is True
+    assert threshold["gate_crossed"] is True
+    assert threshold["cost_review_required"] is False
 
 
 def test_operator_run_report_before_lock_frame_returns_phase_rejection() -> None:
@@ -151,7 +229,75 @@ def test_operator_threshold_recommend_rejected_when_red_override_active() -> Non
     assert result["current_phase"] == "report_locked"
     assert result["failed_precondition"] == "threshold_gate_blocked"
     assert "set_threshold_decision" in result["legal_next_tools"]
-    assert "Red override enforcement" in result["missing"]
+    assert "RED veto enforcement" in result["missing"]
+
+
+def test_operator_cost_review_requires_explicit_disposition_without_claiming_red_veto() -> None:
+    svc = EngineApiService()
+    svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 0.5, "c_fn": 9.5},
+    )
+    svc.operator_run_report(
+        report_text="obs: critical signal absent\nobs: no policy violation",
+        sign={"critical_signal": False, "policy_violation": False},
+        interpretation={
+            **_passing_operator_report_context(),
+            "report_text": "obs: critical signal absent\nobs: no policy violation",
+        },
+    )
+    svc.operator_lock_report()
+
+    blocked = svc.operator_set_threshold_decision(decision="recommend")
+
+    assert blocked["schema_id"] == "nepsis.phase_rejection"
+    assert blocked["failed_precondition"] == "threshold_gate_blocked"
+    assert "Cost-review disposition" in blocked["missing"]
+
+    accepted = svc.operator_set_threshold_decision(
+        decision="recommend",
+        cost_review_acknowledged=True,
+        cost_review_rationale=(
+            "The bounded protective burden is proportionate while the low-risk path remains monitored."
+        ),
+    )
+    assert accepted["phase"] == "threshold_set"
+
+    committed = svc.operator_commit_iteration()
+    assert committed["packet"]["red_override"]["active"] is False
+    review = committed["packet"]["protective_action_review"]
+    assert review["active"] is True
+    assert review["cost_review_required"] is True
+    assert review["cost_review_acknowledged"] is True
+    assert "bounded protective burden" in review["cost_review_rationale"]
+    checkpoint = svc._sessions[committed["session_id"]].seed_navigation_checkpoint
+    assert checkpoint is not None
+    assert checkpoint["red_state"]["direct_ruin_criterion_latched"] is False
+
+
+def test_runtime_red_veto_cannot_be_cleared_by_false_request_or_compiler_gate() -> None:
+    threshold = _build_threshold_stage_packet(
+        {"gate_crossed": False},
+        {
+            "posterior": {"safety_blue": 0.43, "safety_red": 0.57},
+            "governance": {
+                "red_veto_active": True,
+                "trigger_codes": ["RUIN_MASS_HIGH"],
+                "theta": 0.1,
+                "loss_treat": 0.9,
+                "loss_notreat": 0.5,
+                "metrics": {"p_bad": 0.05, "ruin_mass": 0.57},
+            },
+        },
+        interpretation_context={
+            "case_reasoning": {
+                "threshold_decision": {"gate_crossed": False},
+            }
+        },
+    )
+
+    assert threshold["gate_crossed"] is True
 
 
 def test_operator_commit_iteration_emits_audit_packet_and_cycles_phase() -> None:
@@ -192,6 +338,327 @@ def test_operator_commit_iteration_emits_audit_packet_and_cycles_phase() -> None
     assert committed["packet"]["threshold"]["decision"] == "hold"
     assert committed["packet"]["final_frame"]["text"].startswith("Continue escalation")
     assert svc.get_operator_session_state()["phase"] == "frame_draft"
+
+
+def test_operator_packet_lineage_continues_across_live_loops() -> None:
+    svc = EngineApiService()
+    svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    first = svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "loop-one-red",
+        },
+        interpretation=_passing_operator_report_context(),
+    )
+    first_packet = first["step"]["iteration_packet"]
+    svc.operator_lock_report()
+    svc.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Collect an independent discriminator.",
+    )
+    svc.operator_commit_iteration()
+
+    svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    second = svc.operator_run_report(
+        report_text="obs: critical signal absent\nobs: no policy violation",
+        sign={
+            "critical_signal": False,
+            "policy_violation": False,
+            "evidence_id": "loop-two-observation",
+        },
+        interpretation={
+            **_passing_operator_report_context(),
+            "report_text": "obs: critical signal absent\nobs: no policy violation",
+        },
+    )
+    second_meta = second["step"]["iteration_packet"]["meta"]
+
+    assert second_meta["iteration"] == 1
+    assert second_meta["parent_packet_id"] == first_packet["meta"]["packet_id"]
+
+
+def test_operator_red_checkpoint_survives_restart_and_qualified_release(
+    tmp_path,
+) -> None:
+    store_path = tmp_path / "operator-red-checkpoint.json"
+    svc = EngineApiService(store_path=str(store_path))
+    locked = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    sid = locked["session_id"]
+    first = svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "restart-red",
+        },
+        interpretation=_passing_operator_report_context(),
+    )
+    first_packet = first["step"]["iteration_packet"]
+    svc.operator_lock_report()
+    svc.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Await an independent negative observation.",
+    )
+    svc.operator_commit_iteration()
+    retained_packets = svc.get_packets(sid)["packets"]
+    assert svc._sessions[sid].actions == []
+    assert svc._sessions[sid].steps == 0
+    assert svc._sessions[sid].navigation.direct_ruin_criterion_active is True
+
+    restored = EngineApiService(store_path=str(store_path))
+    assert restored.get_packets(sid)["packets"] == retained_packets
+    assert restored.get_session(sid)["operator_phase"] == "frame_draft"
+    assert restored._sessions[sid].navigation.direct_ruin_criterion_active is True
+
+    restored.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    ordinary = restored.operator_run_report(
+        report_text="obs: critical signal absent\nobs: no policy violation",
+        sign={
+            "critical_signal": False,
+            "policy_violation": False,
+            "evidence_id": "ordinary-negative",
+        },
+        interpretation={
+            **_passing_operator_report_context(),
+            "report_text": "obs: critical signal absent\nobs: no policy violation",
+        },
+    )
+    ordinary_step = ordinary["step"]
+    assert ordinary_step["direct_ruin_criterion_active"] is True
+    assert ordinary_step["red_veto_active"] is True
+    ordinary_meta = ordinary_step["iteration_packet"]["meta"]
+    assert ordinary_meta["iteration"] == 1
+    assert ordinary_meta["parent_packet_id"] == first_packet["meta"]["packet_id"]
+
+    qualified = restored.operator_run_report(
+        report_text="obs: independent critical signal assessment is negative",
+        sign={
+            "critical_signal": False,
+            "policy_violation": False,
+            "evidence_id": "qualified-independent-negative",
+            "independent_observation": True,
+        },
+        interpretation={
+            **_passing_operator_report_context(),
+            "report_text": "obs: independent critical signal assessment is negative",
+        },
+    )
+    assert qualified["step"]["direct_ruin_criterion_active"] is False
+
+
+@pytest.mark.parametrize("suffix", [".json", ".db"])
+def test_restore_rejects_tampered_operator_red_checkpoint(
+    tmp_path,
+    monkeypatch,
+    suffix,
+) -> None:
+    monkeypatch.delenv("NEPSIS_API_DATA_KEY", raising=False)
+    store_path = tmp_path / f"operator-checkpoint-tamper{suffix}"
+    svc = EngineApiService(store_path=str(store_path))
+    locked = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    sid = locked["session_id"]
+    report = svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "tamper-red",
+        },
+        interpretation=_passing_operator_report_context(),
+    )
+    assert report["step"]["direct_ruin_criterion_active"] is True
+    svc.operator_lock_report()
+    svc.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Retain the RED boundary pending a discriminator.",
+    )
+    svc.operator_commit_iteration()
+    checkpoint = svc._sessions[sid].seed_navigation_checkpoint
+    assert checkpoint is not None
+    assert checkpoint["red_state"]["direct_ruin_criterion_latched"] is True
+
+    if suffix == ".json":
+        stored = json.loads(store_path.read_text(encoding="utf-8"))
+        stored_checkpoint = stored["sessions"][0]["seed_navigation_checkpoint"]
+        stored_checkpoint["red_state"]["direct_ruin_criterion_latched"] = False
+        store_path.write_text(json.dumps(stored), encoding="utf-8")
+    else:
+        with sqlite3.connect(store_path) as conn:
+            raw_checkpoint = conn.execute(
+                "SELECT seed_navigation_checkpoint_json FROM engine_sessions "
+                "WHERE session_id = ?",
+                (sid,),
+            ).fetchone()[0]
+            stored_checkpoint = json.loads(raw_checkpoint)
+            stored_checkpoint["red_state"]["direct_ruin_criterion_latched"] = False
+            conn.execute(
+                "UPDATE engine_sessions SET seed_navigation_checkpoint_json = ? "
+                "WHERE session_id = ?",
+                (json.dumps(stored_checkpoint), sid),
+            )
+
+    with pytest.raises(ValueError, match="failed integrity validation"):
+        EngineApiService(store_path=str(store_path))
+
+
+@pytest.mark.parametrize("suffix", [".json", ".db"])
+def test_restore_rejects_tampered_operator_audit_packet(
+    tmp_path,
+    monkeypatch,
+    suffix,
+) -> None:
+    monkeypatch.delenv("NEPSIS_API_DATA_KEY", raising=False)
+    store_path = tmp_path / f"operator-audit-tamper{suffix}"
+    svc = EngineApiService(store_path=str(store_path))
+    locked = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    sid = locked["session_id"]
+    svc.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "audit-tamper-red",
+        },
+        interpretation=_passing_operator_report_context(),
+    )
+    svc.operator_lock_report()
+    svc.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Retain the RED boundary pending independent evidence.",
+    )
+    committed = svc.operator_commit_iteration()
+    assert committed["packet"]["threshold"]["decision"] == "hold"
+    assert committed["packet"]["red_override"]["active"] is True
+
+    if suffix == ".json":
+        stored = json.loads(store_path.read_text(encoding="utf-8"))
+        packets = stored["sessions"][0]["packets"]
+        audit_packet = next(
+            packet
+            for packet in packets
+            if packet.get("schema_id") == "nepsis.operator_audit_packet"
+        )
+        audit_packet["threshold"]["decision"] = "recommend"
+        audit_packet["red_override"]["active"] = False
+        store_path.write_text(json.dumps(stored), encoding="utf-8")
+    else:
+        with sqlite3.connect(store_path) as conn:
+            raw_packets = conn.execute(
+                "SELECT packets_json FROM engine_sessions WHERE session_id = ?",
+                (sid,),
+            ).fetchone()[0]
+            packets = json.loads(raw_packets)
+            audit_packet = next(
+                packet
+                for packet in packets
+                if packet.get("schema_id") == "nepsis.operator_audit_packet"
+            )
+            audit_packet["threshold"]["decision"] = "recommend"
+            audit_packet["red_override"]["active"] = False
+            conn.execute(
+                "UPDATE engine_sessions SET packets_json = ? WHERE session_id = ?",
+                (json.dumps(packets), sid),
+            )
+
+    with pytest.raises(
+        ValueError,
+        match="packet artifacts failed integrity validation",
+    ):
+        EngineApiService(store_path=str(store_path))
+
+
+def test_operator_red_capture_dwell_survives_restart_and_reframe_releases_review(
+    tmp_path,
+) -> None:
+    store_path = tmp_path / "operator-red-dwell.json"
+    svc = EngineApiService(store_path=str(store_path))
+    locked = svc.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    sid = locked["session_id"]
+    for index in range(2):
+        result = svc.operator_run_report(
+            report_text="obs: critical signal present\nobs: no policy violation",
+            sign={
+                "critical_signal": True,
+                "policy_violation": False,
+                "evidence_id": f"repeated-red-{index}",
+            },
+            interpretation=_passing_operator_report_context(),
+        )
+        assert result["step"]["governance"]["posture"] == "red_override"
+    svc.operator_lock_report()
+    svc.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Review whether the repeated RED signal still applies.",
+    )
+    svc.operator_commit_iteration()
+    checkpoint = svc._sessions[sid].seed_navigation_checkpoint
+    assert checkpoint is not None
+    assert checkpoint["red_state"]["red_override_dwell_iters"] == 2
+
+    restored = EngineApiService(store_path=str(store_path))
+    restored.operator_lock_frame(
+        family="safety",
+        frame=_passing_operator_frame(),
+        governance_costs={"c_fp": 1, "c_fn": 9},
+    )
+    review = restored.operator_run_report(
+        report_text="obs: critical signal present\nobs: no policy violation",
+        sign={
+            "critical_signal": True,
+            "policy_violation": False,
+            "evidence_id": "repeated-red-2",
+        },
+        interpretation=_passing_operator_report_context(),
+    )
+    assert review["step"]["governance"]["posture"] == "red_review"
+    assert "RED_CAPTURE_REVIEW" in review["step"]["governance"]["trigger_codes"]
+
+    restored.operator_lock_report()
+    restored.operator_set_threshold_decision(
+        decision="hold",
+        hold_reason="Substantively narrow the frame before another review.",
+    )
+    restored.operator_commit_iteration(
+        carry_forward_frame={
+            "text": "Assess only whether the repeated signal applies to this bounded action.",
+            "rationale_for_change": "Narrow RED applicability after explicit capture review.",
+        }
+    )
+    transitioned = restored._sessions[sid].seed_navigation_checkpoint
+    assert transitioned is not None
+    assert transitioned["red_state"]["direct_ruin_criterion_latched"] is True
+    assert transitioned["red_state"]["red_capture_review_active"] is False
+    assert transitioned["red_state"]["red_override_dwell_iters"] == 0
 
 
 def test_operator_abandon_session_emits_fragment_and_starts_fresh_session() -> None:
@@ -675,7 +1142,7 @@ def test_stage_audit_adversarial_forced_red_override_conflict_blocks_threshold()
     checks = {check["key"]: check for check in audit["threshold"]["checks"]}
     assert checks["decision_declared"]["status"] == "pass"
     assert checks["red_override_enforced"]["status"] == "block"
-    assert checks["red_override_enforced"]["detail"].startswith("Red gate crossed")
+    assert checks["red_override_enforced"]["detail"].startswith("RED veto active")
 
 
 def test_packets_endpoint_tracks_history() -> None:
@@ -742,7 +1209,8 @@ def test_sessions_persist_and_restore_from_disk(tmp_path) -> None:
     )
     sid = created["session_id"]
 
-    svc.step_session(sid, sign={"critical_signal": True})
+    first = svc.step_session(sid, sign={"critical_signal": True})
+    original_packet = first["iteration_packet"]
     svc.reframe_session(
         sid,
         frame={
@@ -758,6 +1226,58 @@ def test_sessions_persist_and_restore_from_disk(tmp_path) -> None:
     assert session["steps"] == 1
     assert session["frame"]["frame_version"] == 2
     assert packets["count"] == 1
+    assert session["governance_policy_version"] == created["governance_policy_version"]
+    assert session["evidence_policy_version"] == created["evidence_policy_version"]
+    assert session["manifest_digest"] == created["manifest_digest"]
+    assert session["replay_contract_version"] == "nepsis.session_replay@0.3.0"
+    assert packets["packets"][0]["meta"]["registry_version"] == session["manifest_digest"]
+    assert packets["packets"][0] == original_packet
+
+    continued = restored.step_session(
+        sid,
+        sign={"critical_signal": False, "policy_violation": False},
+    )
+    continued_meta = continued["iteration_packet"]["meta"]
+    assert continued_meta["iteration"] == 1
+    assert continued_meta["parent_packet_id"] == original_packet["meta"]["packet_id"]
+
+
+@pytest.mark.parametrize("suffix", [".json", ".db"])
+def test_empty_clinical_session_checkpoint_round_trips(tmp_path, suffix) -> None:
+    store_path = tmp_path / f"empty-clinical{suffix}"
+    svc = EngineApiService(store_path=str(store_path))
+    created = svc.create_session(family="clinical")
+
+    restored = EngineApiService(store_path=str(store_path))
+    session = restored.get_session(created["session_id"])
+
+    assert session["family"] == "clinical"
+    assert session["steps"] == 0
+    assert restored.get_packets(created["session_id"])["packets"] == []
+    posterior = restored._sessions[created["session_id"]].navigation.manager.posterior()
+    assert sum(posterior.values()) == pytest.approx(1.0)
+
+
+def test_restore_rejects_semantically_tampered_packet(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("NEPSIS_API_DATA_KEY", raising=False)
+    store_path = tmp_path / "tampered-session.json"
+    svc = EngineApiService(store_path=str(store_path))
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        frame={"text": "Pinned replay frame"},
+    )
+    svc.step_session(
+        created["session_id"],
+        sign={"critical_signal": False, "policy_violation": False},
+    )
+
+    stored = json.loads(store_path.read_text(encoding="utf-8"))
+    stored["sessions"][0]["packets"][0]["result"]["decision"] = "tampered"
+    store_path.write_text(json.dumps(stored), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="packet artifacts failed integrity validation"):
+        EngineApiService(store_path=str(store_path))
 
 
 def test_calibration_payload_changes_governance_probability() -> None:
@@ -808,6 +1328,40 @@ def test_calibration_version_allowlist_enforced(monkeypatch) -> None:
         )
 
 
+def test_default_calibration_uses_v2_without_uncertainty_as_badness() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        governance_calibration={},
+    )
+
+    calibration = svc._sessions[created["session_id"]].governance_calibration
+    assert calibration is not None
+    assert calibration.version == "logit-v2"
+    assert calibration.w_ambiguity_pressure == 0.0
+    assert calibration.w_contradiction_density == 0.0
+    assert calibration.w_entropy == 0.0
+    assert calibration.w_margin_collapse == 0.0
+
+
+def test_explicit_v1_calibration_preserves_legacy_default_weights() -> None:
+    svc = EngineApiService()
+    created = svc.create_session(
+        family="safety",
+        governance_costs={"c_fp": 1, "c_fn": 9},
+        governance_calibration={"version": "logit-v1"},
+    )
+
+    calibration = svc._sessions[created["session_id"]].governance_calibration
+    assert calibration is not None
+    assert calibration.version == "logit-v1"
+    assert calibration.w_ambiguity_pressure == 1.0
+    assert calibration.w_contradiction_density == 0.8
+    assert calibration.w_entropy == 0.4
+    assert calibration.w_margin_collapse == 0.6
+
+
 def test_purge_sessions_by_ttl_removes_only_old_sessions() -> None:
     svc = EngineApiService()
     old = svc.create_session(family="safety")
@@ -844,13 +1398,16 @@ def test_sqlite_store_round_trip(tmp_path) -> None:
         governance_costs={"c_fp": 1, "c_fn": 9},
     )
     sid = created["session_id"]
-    svc.step_session(sid, sign={"critical_signal": True})
+    original = svc.step_session(sid, sign={"critical_signal": True})[
+        "iteration_packet"
+    ]
     restored = EngineApiService(store_path=str(db_path))
     session = restored.get_session(sid)
     assert session["steps"] == 1
     assert session["storage"] == "disk"
     assert session["lineage_version"] >= 1
     assert isinstance(session["branch_id"], str)
+    assert restored.get_packets(sid)["packets"] == [original]
 
 
 def test_corrupt_json_store_is_recovered(tmp_path) -> None:

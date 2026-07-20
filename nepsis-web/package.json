@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:unit": "node --no-warnings --test src/lib/*.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config=playwright.auth.config.ts",
     "test:e2e:auth:hosted": "playwright test --config=playwright.hosted-auth.config.ts"

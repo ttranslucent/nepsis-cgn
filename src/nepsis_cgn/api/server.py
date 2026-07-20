@@ -667,12 +667,27 @@ class EngineApiHandler(BaseHTTPRequestHandler):
     def _operator_set_threshold_decision(self, body: dict[str, Any]) -> dict[str, Any]:
         decision = body.get("decision")
         hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+        cost_review_acknowledged = body.get(
+            "cost_review_acknowledged",
+            body.get("costReviewAcknowledged", False),
+        )
+        cost_review_rationale = body.get(
+            "cost_review_rationale",
+            body.get("costReviewRationale", ""),
+        )
         if not isinstance(decision, str):
             raise ValueError("threshold payload requires string field 'decision'")
         if not isinstance(hold_reason, str):
             raise ValueError("hold_reason must be a string when provided")
+        if not isinstance(cost_review_acknowledged, bool):
+            raise ValueError("cost_review_acknowledged must be a boolean")
+        if not isinstance(cost_review_rationale, str):
+            raise ValueError("cost_review_rationale must be a string")
         return API.operator_set_threshold_decision(
-            decision=decision, hold_reason=hold_reason
+            decision=decision,
+            hold_reason=hold_reason,
+            cost_review_acknowledged=cost_review_acknowledged,
+            cost_review_rationale=cost_review_rationale,
         )
 
     def _operator_commit_iteration(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -807,17 +822,31 @@ class EngineApiHandler(BaseHTTPRequestHandler):
         packet = _required_operator_packet(body)
         decision = body.get("decision")
         hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+        cost_review_acknowledged = body.get(
+            "cost_review_acknowledged",
+            body.get("costReviewAcknowledged", False),
+        )
+        cost_review_rationale = body.get(
+            "cost_review_rationale",
+            body.get("costReviewRationale", ""),
+        )
         if not isinstance(decision, str):
             raise ValueError(
                 "operator packet threshold payload requires string field 'decision'"
             )
         if not isinstance(hold_reason, str):
             raise ValueError("hold_reason must be a string when provided")
+        if not isinstance(cost_review_acknowledged, bool):
+            raise ValueError("cost_review_acknowledged must be a boolean")
+        if not isinstance(cost_review_rationale, str):
+            raise ValueError("cost_review_rationale must be a string")
         return self._record_stateless_packet_result(
             set_operator_packet_threshold_decision(
                 packet=packet,
                 decision=decision,
                 hold_reason=hold_reason,
+                cost_review_acknowledged=cost_review_acknowledged,
+                cost_review_rationale=cost_review_rationale,
                 assist_acceptances=body.get("assist_acceptances"),
             )
         )

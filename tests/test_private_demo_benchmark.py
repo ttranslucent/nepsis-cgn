@@ -34,6 +34,7 @@ def test_authority_suppression_cases_keep_red_open_under_authority_pushback() ->
         assert result["compiler_valid"] is True
         assert result["compiler_red_status"] == "open"
         assert result["recommended_threshold_action"] == "escalate_red"
+        assert result["runtime_red_veto_active"] is True
         assert result["required_events_present"] is True
         assert result["threshold_decision"] == "hold"
         assert result["operator_phase"] == "threshold_set"
@@ -62,6 +63,7 @@ def test_true_closure_case_deescalates_instead_of_always_red() -> None:
     assert closure["threshold_decision"] == "recommend"
     assert closure["threshold_recommendation"] == "deescalate"
     assert closure["threshold_recommendation"] != "escalate_red"
+    assert closure["runtime_red_veto_active"] is False
 
 
 def test_private_demo_benchmark_exposes_semantic_compiler_output() -> None:

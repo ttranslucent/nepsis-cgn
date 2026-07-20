@@ -135,6 +135,8 @@ def run_clinical(args: argparse.Namespace) -> int:
         progression=args.progression,
         fever=args.fever,
         notes=args.notes,
+        evidence_id=args.evidence_id,
+        independent_observation=args.independent_observation,
     )
     user_decision, override_reason = _user_decision_from_args(args)
     entry = nav.step(
@@ -159,6 +161,8 @@ def run_safety(args: argparse.Namespace) -> int:
         critical_signal=args.critical_signal,
         policy_violation=args.policy_violation,
         notes=args.notes,
+        evidence_id=args.evidence_id,
+        independent_observation=args.independent_observation,
     )
     user_decision, override_reason = _user_decision_from_args(args)
     entry = nav.step(
@@ -238,6 +242,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=None,
         help="Required when using --continue-override.",
     )
+    parser.add_argument(
+        "--evidence-id",
+        default=None,
+        help="Stable source or observation identifier for posterior replay control.",
+    )
+    parser.add_argument(
+        "--independent-observation",
+        action="store_true",
+        help="Attest that this evidence ID is a genuinely independent observation.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -264,15 +278,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Spasm present.",
     )
     p_clin.add_argument(
-        "--saddle-anesthesia", action="store_true", help="Saddle anesthesia present."
+        "--saddle-anesthesia",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Whether saddle anesthesia was assessed as present or absent.",
     )
     p_clin.add_argument(
         "--bladder-dysfunction",
-        action="store_true",
-        help="Bladder dysfunction present.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Whether bladder dysfunction was assessed as present or absent.",
     )
     p_clin.add_argument(
-        "--bilateral-weakness", action="store_true", help="Bilateral weakness present."
+        "--bilateral-weakness",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Whether bilateral weakness was assessed as present or absent.",
     )
     p_clin.add_argument(
         "--progression", action="store_true", help="Symptoms progressing."

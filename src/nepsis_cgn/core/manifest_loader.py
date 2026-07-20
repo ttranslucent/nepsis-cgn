@@ -20,6 +20,7 @@ class InterpretantSpec:
     likelihood_keyword: Optional[str] = None  # legacy single keyword support
     likelihood_keywords: Optional[List[str]] = None
     likelihood_boost: float = 1.0
+    likelihood_miss: float = 1.0
     catastrophic: bool = False
 
 
@@ -73,6 +74,7 @@ def load_manifest_spec(path: str) -> ManifestSpec:
                     else None
                 ),
                 likelihood_boost=float(item.get("likelihood", {}).get("boost", 1.0)),
+                likelihood_miss=float(item.get("likelihood", {}).get("miss", 1.0)),
                 catastrophic=bool(item.get("catastrophic", False)),
             )
         )
@@ -93,19 +95,38 @@ def load_manifest_spec(path: str) -> ManifestSpec:
     return ManifestSpec(interpretants=interpretants, manifolds=manifolds)
 
 
-def _keyword_likelihood(keywords: Sequence[str], boost: float) -> Callable[[Any], float]:
+def _keyword_likelihood(
+    keywords: Sequence[str],
+    boost: float,
+    miss: float = 1.0,
+) -> Callable[[Any], float]:
+    if boost <= 0.0 or miss <= 0.0:
+        raise ValueError("likelihood boost and miss factors must be > 0")
     lowered = [k.lower() for k in keywords]
 
     def _fn(sign: Any) -> float:
         # Attribute-aware keyword check (flags or text).
         attrs: Dict[str, Any] = {}
+        matching_attribute_unassessed = False
         if hasattr(sign, "__dict__"):
             attrs = dict(vars(sign))
+            followup = attrs.get("followup")
+            if isinstance(followup, dict):
+                # A follow-up observation supersedes the corresponding base
+                # field for likelihood scoring, just as it does in the
+                # manifold projection. This keeps positive and assessed-
+                # negative follow-up evidence epistemically symmetric.
+                for key, value in followup.items():
+                    if key in attrs:
+                        attrs[key] = value
         for key, val in attrs.items():
             key_l = key.lower()
             for kw in lowered:
-                if kw in key_l and bool(val):
-                    return boost
+                if kw in key_l:
+                    if val is None:
+                        matching_attribute_unassessed = True
+                    elif bool(val):
+                        return boost
 
         # Coarse text surface for matching keyword hints.
         if hasattr(sign, "text"):
@@ -117,7 +138,11 @@ def _keyword_likelihood(keywords: Sequence[str], boost: float) -> Callable[[Any]
         else:
             text = str(sign)
         haystack = text.lower()
-        return boost if any(k in haystack for k in lowered) else 1.0
+        if any(k in haystack for k in lowered):
+            return boost
+        if matching_attribute_unassessed:
+            return 1.0
+        return miss
 
     return _fn
 
@@ -188,6 +213,7 @@ def build_interpretants_from_spec(
             likelihood_fn = _keyword_likelihood(
                 keywords,
                 interpretant.likelihood_boost,
+                interpretant.likelihood_miss,
             )
         hypotheses.append(
             InterpretantHypothesis(

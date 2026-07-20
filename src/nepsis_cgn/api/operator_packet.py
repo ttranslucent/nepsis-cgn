@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..core import (
+    DEFAULT_EVIDENCE_POLICY_VERSION,
+    DEFAULT_GOVERNANCE_POLICY_VERSION,
+)
 from ..core.case_reasoning import threshold_fields_from_case_reasoning
+from ..core.runtime import default_manifest_path
 from .orchestration_packet import (
     LAYER_ORDER as V3_LAYER_ORDER,
     lock_v3_layer as _lock_v3_orchestration_layer,
@@ -22,8 +27,9 @@ from .orchestration_packet import (
 from .service import EngineApiService, Family
 
 SCHEMA_ID = "nepsis.operator_packet"
-SCHEMA_VERSION = "2.1.0"
+SCHEMA_VERSION = "2.2.0"
 INTEGRITY_SEAL_VERSION = "hmac-sha256:v1"
+REPLAY_CONTRACT_VERSION = "nepsis.operator_packet_replay@0.1.0"
 V3_LAYER_LOOP_SCHEMA_ID = "nepsis.operator_v3_layer_loop"
 V3_LAYER_LOOP_SCHEMA_VERSION = "0.1.0"
 GUIDE_STATE_SCHEMA_ID = "nepsis.operator_guide_state"
@@ -156,6 +162,10 @@ def start_operator_packet(
         latest_step=None,
         last_commit_packet=None,
         last_abandoned_packet=None,
+        manifest_digest=_manifest_digest(manifest_path),
+        governance_policy_version=DEFAULT_GOVERNANCE_POLICY_VERSION,
+        evidence_policy_version=DEFAULT_EVIDENCE_POLICY_VERSION,
+        replay_contract_version=REPLAY_CONTRACT_VERSION,
     )
 
 
@@ -310,6 +320,14 @@ def lock_frame(
     resolved_manifest = (
         manifest_path if manifest_path is not None else _packet_manifest_path(packet)
     )
+    resolved_manifest_digest = _manifest_digest(resolved_manifest)
+    if (
+        _packet_red_evidence_checkpoint(packet) is not None
+        and resolved_manifest_digest != _packet_manifest_digest(packet)
+    ):
+        raise PacketReplayError(
+            "manifest cannot change while a RED/evidence checkpoint is active"
+        )
     result = svc.operator_lock_frame(
         family=resolved_family,
         frame=frame,
@@ -332,10 +350,16 @@ def lock_frame(
             "governance_costs": resolved_governance,
             "governance_calibration": resolved_calibration,
             "manifest_path": resolved_manifest,
+            "manifest_digest": session.get("manifest_digest"),
+            "governance_policy_version": session.get(
+                "governance_policy_version"
+            ),
+            "evidence_policy_version": session.get("evidence_policy_version"),
+            "replay_contract_version": REPLAY_CONTRACT_VERSION,
             "assist_acceptances": accepted_assists,
         },
     )
-    return _packet_from_transition(packet, result, trace)
+    return _packet_from_transition(packet, result, trace, svc=svc)
 
 
 def run_report(
@@ -356,7 +380,7 @@ def run_report(
         "RUN_REPORT",
         {"report_text": report_text, "sign": sign, "interpretation": interpretation},
     )
-    return _packet_from_transition(packet, result, trace)
+    return _packet_from_transition(packet, result, trace, svc=svc)
 
 
 def lock_report(*, packet: dict[str, Any]) -> dict[str, Any]:
@@ -365,7 +389,7 @@ def lock_report(*, packet: dict[str, Any]) -> dict[str, Any]:
     if _is_rejection(result):
         return _stateless_rejection(result)
     trace = _append_trace(packet, "LOCK_REPORT", {})
-    return _packet_from_transition(packet, result, trace)
+    return _packet_from_transition(packet, result, trace, svc=svc)
 
 
 def set_threshold_decision(
@@ -373,8 +397,14 @@ def set_threshold_decision(
     packet: dict[str, Any],
     decision: str,
     hold_reason: str = "",
+    cost_review_acknowledged: bool = False,
+    cost_review_rationale: str = "",
     assist_acceptances: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(cost_review_acknowledged, bool):
+        raise ValueError("cost_review_acknowledged must be a boolean")
+    if not isinstance(cost_review_rationale, str):
+        raise ValueError("cost_review_rationale must be a string")
     accepted_assists = _normalize_assist_acceptances(
         assist_acceptances,
         final_values=_threshold_assist_values(hold_reason),
@@ -382,7 +412,10 @@ def set_threshold_decision(
     )
     svc = _service_from_packet(packet)
     result = svc.operator_set_threshold_decision(
-        decision=decision, hold_reason=hold_reason
+        decision=decision,
+        hold_reason=hold_reason,
+        cost_review_acknowledged=cost_review_acknowledged,
+        cost_review_rationale=cost_review_rationale,
     )
     if _is_rejection(result):
         return _stateless_rejection(result)
@@ -392,10 +425,12 @@ def set_threshold_decision(
         {
             "decision": decision,
             "hold_reason": hold_reason,
+            "cost_review_acknowledged": cost_review_acknowledged,
+            "cost_review_rationale": cost_review_rationale,
             "assist_acceptances": accepted_assists,
         },
     )
-    return _packet_from_transition(packet, result, trace)
+    return _packet_from_transition(packet, result, trace, svc=svc)
 
 
 def set_threshold_decision_from_case_reasoning(
@@ -676,6 +711,7 @@ def commit_iteration(
     )
     committed_packet = _json_copy(result.get("packet"))
     session = _transition_session(result)
+    previous_trace = [*_packet_previous_trace(packet), *trace]
     return _packet(
         loop_id=_packet_loop_id(packet),
         phase=str(result.get("phase") or "frame_draft"),
@@ -697,7 +733,23 @@ def commit_iteration(
         latest_step=None,
         last_commit_packet=committed_packet,
         last_abandoned_packet=_json_copy(packet.get("last_abandoned_packet")),
-        previous_trace=trace,
+        previous_trace=previous_trace,
+        parent_packet_id=_packet_id(packet),
+        manifest_digest=_session_identity_value(
+            session, "manifest_digest", _packet_manifest_digest(packet)
+        ),
+        governance_policy_version=_session_identity_value(
+            session,
+            "governance_policy_version",
+            _packet_governance_policy_version(packet),
+        ),
+        evidence_policy_version=_session_identity_value(
+            session,
+            "evidence_policy_version",
+            _packet_evidence_policy_version(packet),
+        ),
+        replay_contract_version=REPLAY_CONTRACT_VERSION,
+        red_evidence_checkpoint=_service_red_evidence_checkpoint(svc),
     )
 
 
@@ -705,20 +757,28 @@ def abandon_packet(*, packet: dict[str, Any], reason: str = "") -> dict[str, Any
     svc = _service_from_packet(packet)
     result = svc.operator_abandon_session(reason=reason)
     abandoned = _json_copy(result.get("packet"))
-    started = start_operator_packet(
+    trace = _append_trace(packet, "ABANDON_PACKET", {"reason": reason})
+    return _packet(
+        loop_id=_packet_loop_id(packet),
+        phase="frame_draft",
         family=_packet_family(packet),
         frame=_packet_frame(packet),
         governance_costs=_packet_governance(packet),
         governance_calibration=_packet_calibration(packet),
         manifest_path=_packet_manifest_path(packet),
+        audit_trace=[],
+        latest_audit={},
+        latest_step=None,
+        last_commit_packet=_json_copy(packet.get("last_commit_packet")),
+        last_abandoned_packet=abandoned,
+        previous_trace=[*_packet_previous_trace(packet), *trace],
+        parent_packet_id=_packet_id(packet),
+        manifest_digest=_packet_manifest_digest(packet),
+        governance_policy_version=_packet_governance_policy_version(packet),
+        evidence_policy_version=_packet_evidence_policy_version(packet),
+        replay_contract_version=REPLAY_CONTRACT_VERSION,
+        red_evidence_checkpoint=None,
     )
-    started["loop_id"] = _packet_loop_id(packet)
-    started["last_commit_packet"] = _json_copy(packet.get("last_commit_packet"))
-    started["last_abandoned_packet"] = abandoned
-    started["previous_trace"] = _append_trace(
-        packet, "ABANDON_PACKET", {"reason": reason}
-    )
-    return started
 
 
 def inspect_operator_packet(packet: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1756,11 +1816,18 @@ def _packet(
     previous_trace: list[dict[str, Any]] | None = None,
     v3_layer_loop: dict[str, Any] | None = None,
     guide_state: dict[str, Any] | None = None,
+    parent_packet_id: str | None = None,
+    manifest_digest: str | None = None,
+    governance_policy_version: str = DEFAULT_GOVERNANCE_POLICY_VERSION,
+    evidence_policy_version: str = DEFAULT_EVIDENCE_POLICY_VERSION,
+    replay_contract_version: str = REPLAY_CONTRACT_VERSION,
+    red_evidence_checkpoint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     packet = {
         "schema_id": SCHEMA_ID,
         "schema_version": SCHEMA_VERSION,
         "packet_id": str(uuid4()),
+        "parent_packet_id": parent_packet_id,
         "loop_id": loop_id,
         "created_at": _now(),
         "phase": phase,
@@ -1769,6 +1836,11 @@ def _packet(
         "governance_costs": _json_copy(governance_costs),
         "governance_calibration": _json_copy(governance_calibration),
         "manifest_path": manifest_path,
+        "manifest_digest": manifest_digest or _manifest_digest(manifest_path),
+        "governance_policy_version": governance_policy_version,
+        "evidence_policy_version": evidence_policy_version,
+        "replay_contract_version": replay_contract_version,
+        "red_evidence_checkpoint": _json_copy(red_evidence_checkpoint),
         "audit_trace": _json_copy(audit_trace) or [],
         "legal_next_tools": _legal_next_tools(phase, v3_layer_loop=v3_layer_loop),
         "latest_audit": _json_copy(latest_audit) or {},
@@ -1789,6 +1861,8 @@ def _packet_from_transition(
     previous: dict[str, Any],
     result: dict[str, Any],
     trace: list[dict[str, Any]],
+    *,
+    svc: EngineApiService,
 ) -> dict[str, Any]:
     session = _transition_session(result)
     phase = str(
@@ -1817,8 +1891,25 @@ def _packet_from_transition(
         latest_step=_json_copy(result.get("step")),
         last_commit_packet=_json_copy(previous.get("last_commit_packet")),
         last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
+        previous_trace=_packet_previous_trace(previous),
         v3_layer_loop=_packet_v3_layer_loop(previous),
         guide_state=_packet_guide_state(previous),
+        parent_packet_id=_packet_id(previous),
+        manifest_digest=_session_identity_value(
+            session, "manifest_digest", _packet_manifest_digest(previous)
+        ),
+        governance_policy_version=_session_identity_value(
+            session,
+            "governance_policy_version",
+            _packet_governance_policy_version(previous),
+        ),
+        evidence_policy_version=_session_identity_value(
+            session,
+            "evidence_policy_version",
+            _packet_evidence_policy_version(previous),
+        ),
+        replay_contract_version=REPLAY_CONTRACT_VERSION,
+        red_evidence_checkpoint=_service_red_evidence_checkpoint(svc),
     )
 
 
@@ -1840,8 +1931,15 @@ def _packet_from_guide_transition(
         latest_step=_json_copy(previous.get("latest_step")),
         last_commit_packet=_json_copy(previous.get("last_commit_packet")),
         last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
+        previous_trace=_packet_previous_trace(previous),
         v3_layer_loop=_packet_v3_layer_loop(previous),
         guide_state=guide_state,
+        parent_packet_id=_packet_id(previous),
+        manifest_digest=_packet_manifest_digest(previous),
+        governance_policy_version=_packet_governance_policy_version(previous),
+        evidence_policy_version=_packet_evidence_policy_version(previous),
+        replay_contract_version=_packet_replay_contract_version(previous),
+        red_evidence_checkpoint=_packet_red_evidence_checkpoint(previous),
     )
 
 
@@ -1863,15 +1961,99 @@ def _packet_from_v3_transition(
         latest_step=_json_copy(previous.get("latest_step")),
         last_commit_packet=_json_copy(previous.get("last_commit_packet")),
         last_abandoned_packet=_json_copy(previous.get("last_abandoned_packet")),
+        previous_trace=_packet_previous_trace(previous),
         v3_layer_loop=v3_layer_loop,
         guide_state=_packet_guide_state(previous),
+        parent_packet_id=_packet_id(previous),
+        manifest_digest=_packet_manifest_digest(previous),
+        governance_policy_version=_packet_governance_policy_version(previous),
+        evidence_policy_version=_packet_evidence_policy_version(previous),
+        replay_contract_version=_packet_replay_contract_version(previous),
+        red_evidence_checkpoint=_packet_red_evidence_checkpoint(previous),
     )
+
+
+def _manifest_digest(manifest_path: str | None) -> str:
+    path = Path(manifest_path) if manifest_path else default_manifest_path()
+    if not path.exists():
+        raise FileNotFoundError(f"Manifest not found at {path}")
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def _is_sha256_digest(value: str) -> bool:
+    prefix = "sha256:"
+    digest = value.removeprefix(prefix)
+    return (
+        value.startswith(prefix)
+        and len(digest) == 64
+        and all(char in "0123456789abcdef" for char in digest)
+    )
+
+
+def _session_identity_value(
+    session: dict[str, Any], key: str, fallback: str
+) -> str:
+    value = session.get(key)
+    return value if isinstance(value, str) and value else fallback
+
+
+def _service_red_evidence_checkpoint(svc: EngineApiService) -> dict[str, Any]:
+    state = svc.get_operator_session_state()
+    session_id = state.get("session_id")
+    sessions = getattr(svc, "_sessions", None)
+    session = sessions.get(session_id) if isinstance(sessions, dict) else None
+    navigation = getattr(session, "navigation", None)
+    exporter = getattr(navigation, "export_red_evidence_checkpoint", None)
+    if not callable(exporter):
+        raise PacketReplayError(
+            "operator runtime cannot export the RED/evidence checkpoint"
+        )
+    checkpoint = exporter()
+    if not isinstance(checkpoint, dict):
+        raise PacketReplayError("operator runtime returned an invalid RED/evidence checkpoint")
+    return _json_copy(checkpoint)
+
+
+def _verify_replayed_runtime_identity(
+    svc: EngineApiService, packet: dict[str, Any]
+) -> None:
+    state = svc.get_operator_session_state()
+    session = state.get("session")
+    if not isinstance(session, dict):
+        raise PacketReplayError("replayed operator session identity is missing")
+    expected = {
+        "manifest_digest": _packet_manifest_digest(packet),
+        "governance_policy_version": _packet_governance_policy_version(packet),
+        "evidence_policy_version": _packet_evidence_policy_version(packet),
+    }
+    for key, value in expected.items():
+        if session.get(key) != value:
+            raise PacketReplayError(
+                f"operator packet {key} does not match replayed runtime"
+            )
+
+
+def _verify_trace_runtime_identity(
+    arguments: dict[str, Any], session: dict[str, Any]
+) -> None:
+    expected = {
+        "manifest_digest": session.get("manifest_digest"),
+        "governance_policy_version": session.get("governance_policy_version"),
+        "evidence_policy_version": session.get("evidence_policy_version"),
+        "replay_contract_version": REPLAY_CONTRACT_VERSION,
+    }
+    for key, value in expected.items():
+        if not isinstance(value, str) or arguments.get(key) != value:
+            raise PacketReplayError(
+                f"LOCK_FRAME {key} does not match replayed runtime"
+            )
 
 
 def _service_from_packet(packet: dict[str, Any]) -> EngineApiService:
     _validate_packet(packet)
     svc = EngineApiService(store_path="", record_provenance=False)
-    for entry in _packet_trace(packet):
+    replay_trace = [*_packet_previous_trace(packet), *_packet_trace(packet)]
+    for entry in replay_trace:
         event = entry.get("event")
         args = entry.get("arguments")
         if not isinstance(event, str) or not isinstance(args, dict):
@@ -1883,6 +2065,14 @@ def _service_from_packet(packet: dict[str, Any]) -> EngineApiService:
             raise PacketReplayError(
                 f"operator packet trace is not replayable at {event}: {result}"
             )
+    expected_checkpoint = _packet_red_evidence_checkpoint(packet)
+    if expected_checkpoint is not None:
+        actual_checkpoint = _service_red_evidence_checkpoint(svc)
+        if actual_checkpoint != expected_checkpoint:
+            raise PacketReplayError(
+                "operator packet RED/evidence checkpoint does not match replayed state"
+            )
+        _verify_replayed_runtime_identity(svc, packet)
     return svc
 
 
@@ -1890,13 +2080,16 @@ def _replay_event(
     svc: EngineApiService, event: str, args: dict[str, Any]
 ) -> dict[str, Any]:
     if event == "LOCK_FRAME":
-        return svc.operator_lock_frame(
+        result = svc.operator_lock_frame(
             family=args.get("family", "safety"),
             frame=args.get("frame") or {},
             governance_costs=args.get("governance_costs"),
             governance_calibration=args.get("governance_calibration"),
             manifest_path=args.get("manifest_path"),
         )
+        if not _is_rejection(result):
+            _verify_trace_runtime_identity(args, _transition_session(result))
+        return result
     if event == "RUN_REPORT":
         return svc.operator_run_report(
             report_text=str(args.get("report_text") or ""),
@@ -1909,13 +2102,22 @@ def _replay_event(
         return svc.operator_set_threshold_decision(
             decision=str(args.get("decision") or ""),
             hold_reason=str(args.get("hold_reason") or ""),
+            cost_review_acknowledged=args.get("cost_review_acknowledged") is True,
+            cost_review_rationale=str(args.get("cost_review_rationale") or ""),
         )
     if event in _GUIDE_EVENT_TYPES:
         return svc.get_operator_session_state()
     if event in _V3_OPERATOR_TRACE_EVENTS:
         return svc.get_operator_session_state()
-    if event in {"COMMIT_ITERATION", "ABANDON_PACKET"}:
-        return svc.get_operator_session_state()
+    if event == "COMMIT_ITERATION":
+        carry_forward = args.get("carry_forward_frame")
+        if carry_forward is not None and not isinstance(carry_forward, dict):
+            raise PacketReplayError(
+                "COMMIT_ITERATION carry_forward_frame must be an object or null"
+            )
+        return svc.operator_commit_iteration(carry_forward_frame=carry_forward)
+    if event == "ABANDON_PACKET":
+        return svc.operator_abandon_session(reason=str(args.get("reason") or ""))
     raise PacketReplayError(f"unsupported operator packet trace event: {event}")
 
 
@@ -1939,13 +2141,53 @@ def _validate_packet(packet: dict[str, Any]) -> None:
     trace = packet.get("audit_trace")
     if not isinstance(trace, list):
         raise ValueError("operator packet audit_trace must be a list")
+    previous_trace = packet.get("previous_trace")
+    if not isinstance(previous_trace, list):
+        raise ValueError("operator packet previous_trace must be a list")
     max_trace = _operator_packet_max_trace_events()
-    if len(trace) > max_trace:
+    if len(trace) + len(previous_trace) > max_trace:
         raise ValueError(
-            f"operator packet audit_trace exceeds configured maximum of {max_trace} events"
+            "operator packet audit_trace plus previous_trace exceeds configured maximum of "
+            f"{max_trace} events"
         )
     _verify_packet_integrity(packet)
+    _validate_packet_lineage(packet)
+    _validate_runtime_identity(packet)
     _verify_guide_projection(packet)
+
+
+def _validate_packet_lineage(packet: dict[str, Any]) -> None:
+    _packet_id(packet)
+    parent_packet_id = packet.get("parent_packet_id")
+    if parent_packet_id is not None and (
+        not isinstance(parent_packet_id, str) or not parent_packet_id
+    ):
+        raise ValueError("operator packet parent_packet_id must be a string or null")
+    _packet_red_evidence_checkpoint(packet)
+
+
+def _validate_runtime_identity(packet: dict[str, Any]) -> None:
+    manifest_digest = _packet_manifest_digest(packet)
+    current_manifest_digest = _manifest_digest(_packet_manifest_path(packet))
+    if manifest_digest != current_manifest_digest:
+        raise PacketReplayError(
+            "operator packet manifest digest does not match current manifest content"
+        )
+    governance_policy_version = _packet_governance_policy_version(packet)
+    if governance_policy_version != DEFAULT_GOVERNANCE_POLICY_VERSION:
+        raise PacketReplayError(
+            "operator packet governance policy version is not supported by this runtime"
+        )
+    evidence_policy_version = _packet_evidence_policy_version(packet)
+    if evidence_policy_version != DEFAULT_EVIDENCE_POLICY_VERSION:
+        raise PacketReplayError(
+            "operator packet evidence policy version is not supported by this runtime"
+        )
+    replay_contract_version = _packet_replay_contract_version(packet)
+    if replay_contract_version != REPLAY_CONTRACT_VERSION:
+        raise PacketReplayError(
+            "operator packet replay contract version is not supported by this runtime"
+        )
 
 
 def _verify_guide_projection(packet: dict[str, Any]) -> None:
@@ -2054,6 +2296,20 @@ def _packet_trace(packet: dict[str, Any]) -> list[dict[str, Any]]:
     return _json_copy(trace) or []
 
 
+def _packet_previous_trace(packet: dict[str, Any]) -> list[dict[str, Any]]:
+    trace = packet.get("previous_trace")
+    if not isinstance(trace, list):
+        raise ValueError("operator packet previous_trace must be a list")
+    return _json_copy(trace) or []
+
+
+def _packet_id(packet: dict[str, Any]) -> str:
+    value = packet.get("packet_id")
+    if not isinstance(value, str) or not value:
+        raise ValueError("operator packet packet_id is required")
+    return value
+
+
 def _packet_loop_id(packet: dict[str, Any]) -> str:
     value = packet.get("loop_id")
     return value if isinstance(value, str) and value else str(uuid4())
@@ -2091,6 +2347,45 @@ def _packet_calibration(packet: dict[str, Any]) -> dict[str, Any] | None:
 def _packet_manifest_path(packet: dict[str, Any]) -> str | None:
     value = packet.get("manifest_path")
     return value if isinstance(value, str) and value else None
+
+
+def _packet_manifest_digest(packet: dict[str, Any]) -> str:
+    value = packet.get("manifest_digest")
+    if not isinstance(value, str) or not _is_sha256_digest(value):
+        raise ValueError("operator packet manifest_digest must be a sha256 digest")
+    return value
+
+
+def _packet_governance_policy_version(packet: dict[str, Any]) -> str:
+    value = packet.get("governance_policy_version")
+    if not isinstance(value, str) or not value:
+        raise ValueError("operator packet governance_policy_version is required")
+    return value
+
+
+def _packet_evidence_policy_version(packet: dict[str, Any]) -> str:
+    value = packet.get("evidence_policy_version")
+    if not isinstance(value, str) or not value:
+        raise ValueError("operator packet evidence_policy_version is required")
+    return value
+
+
+def _packet_replay_contract_version(packet: dict[str, Any]) -> str:
+    value = packet.get("replay_contract_version")
+    if not isinstance(value, str) or not value:
+        raise ValueError("operator packet replay_contract_version is required")
+    return value
+
+
+def _packet_red_evidence_checkpoint(
+    packet: dict[str, Any],
+) -> dict[str, Any] | None:
+    value = packet.get("red_evidence_checkpoint")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("operator packet red_evidence_checkpoint must be an object or null")
+    return _json_copy(value)
 
 
 def _packet_guide_state(packet: dict[str, Any]) -> dict[str, Any] | None:
@@ -2192,6 +2487,7 @@ def _now() -> str:
 
 def _seal_packet(packet: dict[str, Any]) -> dict[str, Any]:
     sealed = _json_copy(packet) or {}
+    sealed.pop("integrity", None)
     counter = _packet_integrity_counter(sealed)
     sealed["integrity"] = {
         "seal_version": INTEGRITY_SEAL_VERSION,
@@ -2216,6 +2512,9 @@ def _verify_packet_integrity(packet: dict[str, Any]) -> None:
         raise ValueError(
             "operator packet integrity counter must be a non-negative integer"
         )
+    expected_sealed_fields = sorted(key for key in packet if key != "integrity")
+    if integrity.get("sealed_fields") != expected_sealed_fields:
+        raise ValueError("operator packet integrity sealed_fields do not match packet")
     expected_counter = _packet_integrity_counter(packet)
     if counter != expected_counter:
         raise ValueError(
@@ -2254,12 +2553,10 @@ def _packet_integrity_seal(packet: dict[str, Any], counter: int) -> str:
 
 def _packet_integrity_counter(packet: dict[str, Any]) -> int:
     trace = packet.get("audit_trace")
-    if isinstance(trace, list) and trace:
-        return len(trace)
     previous_trace = packet.get("previous_trace")
-    if isinstance(previous_trace, list) and previous_trace:
-        return len(previous_trace)
-    return 0
+    return (len(previous_trace) if isinstance(previous_trace, list) else 0) + (
+        len(trace) if isinstance(trace, list) else 0
+    )
 
 
 def _operator_packet_max_trace_events() -> int:

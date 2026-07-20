@@ -10,6 +10,8 @@ Posture = Literal[
     "continue",
     "mixture_mode",
     "collapse_mode",
+    "cost_review",
+    "red_review",
     "red_override",
     "anti_stall",
     "zeroback",
@@ -17,6 +19,21 @@ Posture = Literal[
 WarningLevel = Literal["green", "yellow", "red"]
 
 EPS = 1e-9
+DEFAULT_CALIBRATION_VERSION = "logit-v2"
+DEFAULT_GOVERNANCE_POLICY_VERSION = "gov-v1.1.0"
+DEFAULT_EVIDENCE_POLICY_VERSION = "evidence-v2"
+
+
+def threshold_crossed(value: float, threshold: float) -> bool:
+    """Return true only when a value materially exceeds a policy boundary."""
+
+    return value > threshold + EPS
+
+
+def threshold_met(value: float, threshold: float) -> bool:
+    """Return true when a value meets or materially exceeds a safety boundary."""
+
+    return value + EPS >= threshold
 
 
 def _clip_unit(value: float, *, label: str) -> float:
@@ -89,11 +106,11 @@ class GovernanceCalibration:
     intercept: float = 0.0
     slope: float = 1.0
     w_violation_pressure: float = 1.4
-    w_ambiguity_pressure: float = 1.0
-    w_contradiction_density: float = 0.8
-    w_entropy: float = 0.4
-    w_margin_collapse: float = 0.6
-    version: str = "logit-v1"
+    w_ambiguity_pressure: float = 0.0
+    w_contradiction_density: float = 0.0
+    w_entropy: float = 0.0
+    w_margin_collapse: float = 0.0
+    version: str = DEFAULT_CALIBRATION_VERSION
 
     def validate(self) -> None:
         _clip_prior(self.prior_pi)
@@ -160,6 +177,8 @@ class GovernanceMetrics:
     zeroback_count: int = 0
     filter_ess: float | None = None
     hotspot_score: float | None = None
+    direct_ruin_criterion_active: bool = False
+    direct_ruin_criterion_observed: bool = False
 
     def validate(self) -> None:
         _clip_unit(self.p_bad, label="p_bad")
@@ -176,6 +195,8 @@ class GovernanceMetrics:
 class GovernanceContext:
     contradiction_streak: int = 0
     mixture_dwell_iters: int = 0
+    red_override_dwell_iters: int = 0
+    red_capture_review_active: bool = False
     stable_iters: int = 0
 
     def validate(self) -> None:
@@ -183,6 +204,8 @@ class GovernanceContext:
             raise ValueError("contradiction_streak must be >= 0.")
         if self.mixture_dwell_iters < 0:
             raise ValueError("mixture_dwell_iters must be >= 0.")
+        if self.red_override_dwell_iters < 0:
+            raise ValueError("red_override_dwell_iters must be >= 0.")
         if self.stable_iters < 0:
             raise ValueError("stable_iters must be >= 0.")
 
@@ -197,7 +220,7 @@ class GovernanceThresholds:
     tau_collapse: float = 0.8
     eps_collapse: float = 0.2
     max_dwell_iters: int = 3
-    zeroback_limit: int = 2
+    max_red_dwell_iters: int = 3
     contradiction_streak_min: int = 2
     stable_iters_required: int = 2
     yellow_factor: float = 0.8
@@ -213,8 +236,8 @@ class GovernanceThresholds:
         _clip_unit(self.yellow_factor, label="yellow_factor")
         if self.max_dwell_iters < 0:
             raise ValueError("max_dwell_iters must be >= 0.")
-        if self.zeroback_limit < 0:
-            raise ValueError("zeroback_limit must be >= 0.")
+        if self.max_red_dwell_iters < 1:
+            raise ValueError("max_red_dwell_iters must be >= 1.")
         if self.contradiction_streak_min < 0:
             raise ValueError("contradiction_streak_min must be >= 0.")
         if self.stable_iters_required < 0:
@@ -226,6 +249,7 @@ class GovernanceDecision:
     posture: Posture
     warning_level: WarningLevel
     recommended_action: str
+    red_veto_active: bool
     trigger_codes: Tuple[str, ...]
     theta: float
     loss_treat: float
@@ -250,41 +274,90 @@ def evaluate_governance_policy(
     loss_treat, loss_notreat = expected_losses(metrics.p_bad, costs.c_fp, costs.c_fn)
 
     trigger_codes: List[str] = []
-    red_condition = metrics.ruin_mass >= th.tau_red or metrics.p_bad >= theta
-    if metrics.ruin_mass >= th.tau_red:
+    ruin_mass_boundary_met = threshold_met(metrics.ruin_mass, th.tau_red)
+    ruin_boundary_met = metrics.direct_ruin_criterion_active or ruin_mass_boundary_met
+    cost_gate_crossed = threshold_crossed(metrics.p_bad, theta)
+    red_condition = ruin_boundary_met
+    if metrics.direct_ruin_criterion_active:
+        trigger_codes.append("DIRECT_RUIN_CRITERION_ACTIVE")
+    if ruin_mass_boundary_met:
         trigger_codes.append("RUIN_MASS_HIGH")
-    if metrics.p_bad >= theta:
+    if cost_gate_crossed:
         trigger_codes.append("COST_GATE_CROSSED")
-
-    if red_condition:
-        return GovernanceDecision(
-            posture="red_override",
-            warning_level="red",
-            recommended_action="escalate_red",
-            trigger_codes=tuple(trigger_codes),
-            theta=theta,
-            loss_treat=loss_treat,
-            loss_notreat=loss_notreat,
-            details={"p_bad": metrics.p_bad, "ruin_mass": metrics.ruin_mass},
-        )
 
     recurrence_condition = (
         ctx.mixture_dwell_iters >= th.max_dwell_iters
         and ctx.contradiction_streak >= th.contradiction_streak_min
         and metrics.contradiction_density > th.c_high
     )
-    if metrics.zeroback_count >= th.zeroback_limit or recurrence_condition:
+    red_capture_review = (
+        red_condition
+        and (
+            ctx.red_capture_review_active
+            or ctx.red_override_dwell_iters >= th.max_red_dwell_iters
+        )
+    )
+    if recurrence_condition or red_capture_review:
+        if recurrence_condition:
+            trigger_codes.append("RECURRENCE_PATTERN")
+        if red_capture_review:
+            trigger_codes.append("RED_CAPTURE_REVIEW")
         return GovernanceDecision(
-            posture="zeroback",
+            posture="red_review" if red_capture_review else "zeroback",
             warning_level="red",
-            recommended_action="reset_priors",
-            trigger_codes=("RECURRENCE_PATTERN",),
+            recommended_action=(
+                "review_red_applicability"
+                if red_capture_review
+                else "perform_zeroback"
+            ),
+            red_veto_active=red_condition,
+            trigger_codes=tuple(dict.fromkeys(trigger_codes)),
             theta=theta,
             loss_treat=loss_treat,
             loss_notreat=loss_notreat,
             details={
                 "zeroback_count": float(metrics.zeroback_count),
                 "recurrence_condition": float(1.0 if recurrence_condition else 0.0),
+                "red_override_dwell_iters": float(ctx.red_override_dwell_iters),
+                "red_capture_review": float(1.0 if red_capture_review else 0.0),
+            },
+        )
+
+    if red_condition:
+        recommended_action = (
+            "escalate_red"
+            if cost_gate_crossed
+            else "contain_and_discriminate"
+        )
+        return GovernanceDecision(
+            posture="red_override",
+            warning_level="red",
+            recommended_action=recommended_action,
+            red_veto_active=True,
+            trigger_codes=tuple(trigger_codes),
+            theta=theta,
+            loss_treat=loss_treat,
+            loss_notreat=loss_notreat,
+            details={
+                "p_bad": metrics.p_bad,
+                "ruin_mass": metrics.ruin_mass,
+                "red_override_dwell_iters": float(ctx.red_override_dwell_iters),
+            },
+        )
+
+    if cost_gate_crossed:
+        return GovernanceDecision(
+            posture="cost_review",
+            warning_level="yellow",
+            recommended_action="review_protective_action",
+            red_veto_active=False,
+            trigger_codes=tuple(trigger_codes),
+            theta=theta,
+            loss_treat=loss_treat,
+            loss_notreat=loss_notreat,
+            details={
+                "p_bad": metrics.p_bad,
+                "ruin_mass": metrics.ruin_mass,
             },
         )
 
@@ -304,6 +377,7 @@ def evaluate_governance_policy(
             posture="anti_stall",
             warning_level="yellow",
             recommended_action="run_test",
+            red_veto_active=False,
             trigger_codes=tuple(sorted(set(trigger_codes + ["ANTI_STALL"]))),
             theta=theta,
             loss_treat=loss_treat,
@@ -325,6 +399,7 @@ def evaluate_governance_policy(
             posture="collapse_mode",
             warning_level="green",
             recommended_action="collapse",
+            red_veto_active=False,
             trigger_codes=(),
             theta=theta,
             loss_treat=loss_treat,
@@ -340,6 +415,7 @@ def evaluate_governance_policy(
             posture="mixture_mode",
             warning_level="yellow",
             recommended_action="abduct",
+            red_veto_active=False,
             trigger_codes=tuple(sorted(set(trigger_codes))),
             theta=theta,
             loss_treat=loss_treat,
@@ -358,6 +434,7 @@ def evaluate_governance_policy(
         posture="continue",
         warning_level=warning_level,
         recommended_action="continue",
+        red_veto_active=False,
         trigger_codes=(),
         theta=theta,
         loss_treat=loss_treat,
@@ -412,6 +489,9 @@ class IterationStateMachine:
 
 
 __all__ = [
+    "DEFAULT_CALIBRATION_VERSION",
+    "DEFAULT_EVIDENCE_POLICY_VERSION",
+    "DEFAULT_GOVERNANCE_POLICY_VERSION",
     "Event",
     "GovernanceCalibration",
     "GovernanceContext",
@@ -429,4 +509,6 @@ __all__ = [
     "posterior_from_lr",
     "posterior_from_score",
     "sigmoid",
+    "threshold_crossed",
+    "threshold_met",
 ]

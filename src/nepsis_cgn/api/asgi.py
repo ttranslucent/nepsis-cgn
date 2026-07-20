@@ -359,18 +359,32 @@ def create_app():
         try:
             decision = body.get("decision")
             hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+            cost_review_acknowledged = body.get(
+                "cost_review_acknowledged",
+                body.get("costReviewAcknowledged", False),
+            )
+            cost_review_rationale = body.get(
+                "cost_review_rationale",
+                body.get("costReviewRationale", ""),
+            )
             if not isinstance(decision, str):
                 raise ValueError(
                     "operator packet threshold payload requires string field 'decision'"
                 )
             if not isinstance(hold_reason, str):
                 raise ValueError("hold_reason must be a string when provided")
+            if not isinstance(cost_review_acknowledged, bool):
+                raise ValueError("cost_review_acknowledged must be a boolean")
+            if not isinstance(cost_review_rationale, str):
+                raise ValueError("cost_review_rationale must be a string")
             return _phase_json_response(
                 _record_stateless_packet_result(
                     set_operator_packet_threshold_decision(
                         packet=_required_operator_packet(body),
                         decision=decision,
                         hold_reason=hold_reason,
+                        cost_review_acknowledged=cost_review_acknowledged,
+                        cost_review_rationale=cost_review_rationale,
                         assist_acceptances=body.get("assist_acceptances"),
                     ),
                     request,
@@ -664,6 +678,14 @@ def create_app():
         body = await _read_json_body(request)
         decision = body.get("decision")
         hold_reason = body.get("hold_reason", body.get("holdReason", ""))
+        cost_review_acknowledged = body.get(
+            "cost_review_acknowledged",
+            body.get("costReviewAcknowledged", False),
+        )
+        cost_review_rationale = body.get(
+            "cost_review_rationale",
+            body.get("costReviewRationale", ""),
+        )
         if not isinstance(decision, str):
             raise HTTPException(
                 status_code=400,
@@ -673,10 +695,23 @@ def create_app():
             raise HTTPException(
                 status_code=400, detail="hold_reason must be a string when provided"
             )
+        if not isinstance(cost_review_acknowledged, bool):
+            raise HTTPException(
+                status_code=400,
+                detail="cost_review_acknowledged must be a boolean",
+            )
+        if not isinstance(cost_review_rationale, str):
+            raise HTTPException(
+                status_code=400,
+                detail="cost_review_rationale must be a string",
+            )
         try:
             return _phase_json_response(
                 API.operator_set_threshold_decision(
-                    decision=decision, hold_reason=hold_reason
+                    decision=decision,
+                    hold_reason=hold_reason,
+                    cost_review_acknowledged=cost_review_acknowledged,
+                    cost_review_rationale=cost_review_rationale,
                 )
             )
         except ValueError as exc:

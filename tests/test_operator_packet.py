@@ -8,6 +8,7 @@ import subprocess
 from uuid import uuid4
 
 import pytest
+import nepsis_cgn.api.operator_packet as operator_packet_module
 
 from nepsis_cgn.api.operator_packet import (
     _read_rationale_segment,
@@ -314,7 +315,7 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
     )
 
     assert committed["schema_id"] == "nepsis.operator_packet"
-    assert committed["schema_version"] == "2.1.0"
+    assert committed["schema_version"] == "2.2.0"
     assert committed["integrity"]["seal_version"] == "hmac-sha256:v1"
     assert committed["integrity"]["seal"]
     assert committed["phase"] == "frame_draft"
@@ -325,6 +326,17 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
         "abandon_packet",
     ]
     assert committed["audit_trace"] == []
+    assert [entry["event"] for entry in committed["previous_trace"]] == [
+        "LOCK_FRAME",
+        "RUN_REPORT",
+        "LOCK_REPORT",
+        "SET_THRESHOLD_DECISION",
+        "COMMIT_ITERATION",
+    ]
+    assert committed["parent_packet_id"] == threshold["packet_id"]
+    assert committed["red_evidence_checkpoint"]["schema_id"] == (
+        "nepsis.navigation_red_evidence_checkpoint"
+    )
     assert (
         committed["last_commit_packet"]["schema_id"] == "nepsis.operator_audit_packet"
     )
@@ -336,6 +348,154 @@ def test_stateless_operator_packet_valid_flow_commits_and_cycles() -> None:
         "COMMIT_ITERATION",
     ]
     assert committed["frame"]["text"].startswith("Continue escalation")
+
+    relocked = lock_frame(packet=committed, frame=_operator_frame())
+    assert relocked["previous_trace"] == committed["previous_trace"]
+    assert relocked["parent_packet_id"] == committed["packet_id"]
+
+
+def test_stateless_cost_review_disposition_survives_trace_replay() -> None:
+    packet = start_operator_packet()
+    locked = lock_frame(
+        packet=packet,
+        family="safety",
+        frame=_operator_frame(),
+        governance_costs={"c_fp": 0.5, "c_fn": 9.5},
+    )
+    report_text = "obs: critical signal absent\nobs: no policy violation"
+    reported = run_report(
+        packet=locked,
+        report_text=report_text,
+        sign={"critical_signal": False, "policy_violation": False},
+        interpretation={
+            **_report_interpretation(),
+            "report_text": report_text,
+        },
+    )
+    report_locked = lock_report(packet=reported)
+
+    blocked = set_threshold_decision(
+        packet=report_locked,
+        decision="recommend",
+    )
+    assert blocked["schema_id"] == "nepsis.phase_rejection"
+    assert "Cost-review disposition" in blocked["missing"]
+
+    rationale = (
+        "The bounded protective burden is proportionate while the low-risk path remains monitored."
+    )
+    threshold = set_threshold_decision(
+        packet=report_locked,
+        decision="recommend",
+        cost_review_acknowledged=True,
+        cost_review_rationale=rationale,
+    )
+    assert threshold["phase"] == "threshold_set"
+    threshold_args = threshold["audit_trace"][-1]["arguments"]
+    assert threshold_args["cost_review_acknowledged"] is True
+    assert threshold_args["cost_review_rationale"] == rationale
+
+    committed = commit_iteration(packet=threshold)
+    review = committed["last_commit_packet"]["protective_action_review"]
+    assert review["active"] is True
+    assert review["cost_review_acknowledged"] is True
+    assert review["cost_review_rationale"] == rationale
+
+
+def test_stateless_commit_preserves_direct_ruin_latch_until_qualified_release() -> None:
+    packet = start_operator_packet(family="safety")
+    locked = lock_frame(packet=packet, frame=_operator_frame())
+    reported = run_report(
+        packet=locked,
+        report_text="obs: critical signal present\nobs: policy violation present",
+        sign={
+            "critical_signal": True,
+            "policy_violation": True,
+            "evidence_id": "hazard-1",
+            "independent_observation": True,
+        },
+        interpretation=_report_interpretation(),
+    )
+    assert reported["latest_step"]["direct_ruin_criterion_active"] is True
+    assert reported["latest_step"]["red_veto_active"] is True
+
+    report_locked = lock_report(packet=reported)
+    threshold = set_threshold_decision(
+        packet=report_locked,
+        decision="hold",
+        hold_reason="Preserve the unresolved direct hazard.",
+    )
+    committed = commit_iteration(packet=threshold)
+    assert committed["red_evidence_checkpoint"]["red_state"][
+        "direct_ruin_criterion_latched"
+    ] is True
+
+    relocked = lock_frame(packet=committed, frame=committed["frame"])
+    follow_up = run_report(
+        packet=relocked,
+        report_text="obs: negative follow-up without qualified release provenance",
+        sign={"critical_signal": False, "policy_violation": False},
+    )
+
+    assert follow_up["latest_step"]["direct_ruin_criterion_active"] is True
+    assert follow_up["latest_step"]["red_veto_active"] is True
+    assert follow_up["latest_step"]["governance"]["posture"] == "red_override"
+
+
+def test_stateless_packet_rejects_same_path_manifest_drift(tmp_path) -> None:
+    manifest = tmp_path / "manifest.yaml"
+    shutil.copy(operator_packet_module.default_manifest_path(), manifest)
+    packet = start_operator_packet(family="safety", manifest_path=str(manifest))
+    locked = lock_frame(packet=packet, frame=_operator_frame())
+
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "\n# deployment drift\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        operator_packet_module.PacketReplayError,
+        match="manifest digest",
+    ):
+        run_report(
+            packet=locked,
+            report_text="obs: critical signal absent",
+            sign={"critical_signal": False, "policy_violation": False},
+        )
+
+
+@pytest.mark.parametrize(
+    ("constant_name", "drifted_value", "message"),
+    [
+        ("DEFAULT_GOVERNANCE_POLICY_VERSION", "gov-v-next", "governance policy"),
+        ("DEFAULT_EVIDENCE_POLICY_VERSION", "evidence-v1", "evidence policy"),
+        (
+            "REPLAY_CONTRACT_VERSION",
+            "nepsis.operator_packet_replay@next",
+            "replay contract",
+        ),
+    ],
+)
+def test_stateless_packet_rejects_runtime_policy_drift(
+    monkeypatch, constant_name: str, drifted_value: str, message: str
+) -> None:
+    packet = start_operator_packet(family="safety")
+    locked = lock_frame(packet=packet, frame=_operator_frame())
+    monkeypatch.setattr(operator_packet_module, constant_name, drifted_value)
+
+    with pytest.raises(operator_packet_module.PacketReplayError, match=message):
+        operator_packet_module.inspect_operator_packet(locked)
+
+
+def test_stateless_packet_checkpoint_is_integrity_sealed() -> None:
+    packet = start_operator_packet(family="safety")
+    locked = lock_frame(packet=packet, frame=_operator_frame())
+    locked["red_evidence_checkpoint"]["red_state"][
+        "direct_ruin_criterion_latched"
+    ] = True
+
+    with pytest.raises(ValueError, match="integrity seal verification failed"):
+        operator_packet_module.inspect_operator_packet(locked)
 
 
 def test_stateless_operator_packet_rejects_report_before_frame_lock() -> None:

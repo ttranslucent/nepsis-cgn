@@ -165,13 +165,15 @@ def mcp_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "set_threshold_decision",
-            "description": "Guarded transition: set recommend/hold after a locked report.",
+            "description": "Guarded transition: set recommend/hold after a locked report; cost review requires explicit disposition and never overrides a RED veto.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "packet": packet_schema,
                     "decision": {"type": "string", "enum": ["recommend", "hold"]},
                     "hold_reason": {"type": "string"},
+                    "cost_review_acknowledged": {"type": "boolean"},
+                    "cost_review_rationale": {"type": "string"},
                 },
                 "required": ["packet", "decision"],
                 "additionalProperties": False,
@@ -487,6 +489,12 @@ def _tool_payload(
             packet=_required_object(arguments, "packet"),
             decision=_required_string(arguments, "decision"),
             hold_reason=_optional_string(arguments, "hold_reason") or "",
+            cost_review_acknowledged=(
+                _optional_boolean(arguments, "cost_review_acknowledged") or False
+            ),
+            cost_review_rationale=(
+                _optional_string(arguments, "cost_review_rationale") or ""
+            ),
         )
     if name == "commit_iteration":
         return commit_iteration(
@@ -599,6 +607,15 @@ def _optional_string(arguments: dict[str, Any], name: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string when provided")
     return value or None
+
+
+def _optional_boolean(arguments: dict[str, Any], name: str) -> bool | None:
+    value = arguments.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean when provided")
+    return value
 
 
 def _request_capability_token(headers: dict[str, Any]) -> str | None:

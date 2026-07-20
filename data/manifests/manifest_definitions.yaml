@@ -35,6 +35,8 @@ families:
         channel_invariants:
           - "Catastrophic miss is a boundary condition, not a utility term."
           - "Escalate or hold until explicit release back to the blue utility space."
+          - "Severity constrains unsafe commitment; it does not establish hypothesis truth."
+          - "RED applicability remains falsifiable and competing explanations remain visible."
         governor:
           tension_warn: 0.5
           tension_ruin: 1.5
@@ -59,6 +61,8 @@ families:
         channel_invariants:
           - "Policy-violation ruin is a boundary, not a utility penalty."
           - "Release back to blue requires explicit re-evaluation or reframe."
+          - "Severity constrains unsafe commitment; it does not establish hypothesis truth."
+          - "Use the least-burdensome reversible protection while gathering a discriminator."
         governor:
           tension_warn: 0.5
           tension_ruin: 1.0
@@ -85,8 +89,10 @@ interpretants:
     manifold_id: cauda_equina
     prior: 0.2
     likelihood:
-      keywords: ["saddle", "saddle_anesthesia", "bladder", "retention", "incontinence"]
+      keywords: ["saddle_anesthesia", "bladder_dysfunction", "bilateral_weakness"]
       boost: 8.0
+      miss: 0.4
+    catastrophic: true
   - id: safety_blue
     description: "Routine blue-channel handling; no critical signal expected."
     manifold_id: blue_channel
@@ -96,5 +102,7 @@ interpretants:
     manifold_id: red_channel
     prior: 0.4
     likelihood:
-      keywords: ["critical_signal", "urgent"]
+      keywords: ["critical_signal", "policy_violation"]
       boost: 2.0
+      miss: 0.4
+    catastrophic: true

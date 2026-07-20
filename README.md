@@ -19,9 +19,11 @@ Flow:
 
 RED → STILL → BLUE → STILL → commitment → state feedback → audit
 
-The MVP demonstrates:
+The public deterministic MVP illustrates:
 
 - RED Channel hazard and constraint preservation.
+- RED authority over unsafe commitment without treating severity as truth in
+  the frozen demonstration cases.
 - BLUE Channel bounded analysis inside the RED safety boundary.
 - STILL metacognitive checkpoints before BLUE and before commitment.
 - Contradiction, denominator collapse, and non-quiescence detection.
@@ -32,6 +34,9 @@ The MVP demonstrates:
 
 `state_feedback` in public v0.4 is deterministic MVP scaffolding only, not a
 live runtime feedback engine.
+
+The public cases illustrate governing semantics; they do not prove live
+repeated-RED capture review or a typed, action-scoped RED-hazard lifecycle.
 
 ## What This Is Not
 
@@ -64,6 +69,7 @@ and model-authored commitment remain impossible. Atomic run forking freezes
 the predecessor before creating a lineage-bound successor. See
 [canonical operator run contract](docs/canonical-operator-run-contract.md),
 [operator governance profile contract](docs/governance-profile-contract.md),
+the [RED authority and anti-capture contract](docs/red-authority-contract.md),
 and the pinned [neutral interop contracts](interop/README.md). The CGN writer
 must remain non-authoritative until its adoption gate passes and a separately
 signed cutover marker is activated; this implementation does not activate that
@@ -347,6 +353,9 @@ Open `http://localhost:3000/mvp`, choose `Jailing` or `Clinical`, then click `Ru
 
 - Signal intake parses scenario input into observations, context, constraints, hypotheses, and unknowns.
 - RED Channel runs first and preserves must-not-miss hazards and governing constraints.
+- RED constrains unsafe commitments but does not select the true hypothesis; in
+  the experimental reference runtime, substantively repeated RED can latch an
+  applicability review rather than repeat escalation without new information.
 - STILL asks whether the engine has permission to continue, hold, retessellate, or stop.
 - BLUE Channel performs bounded analytic reasoning inside the RED safety boundary.
 - Contradiction and denominator collapse detection prevent premature narrative closure.

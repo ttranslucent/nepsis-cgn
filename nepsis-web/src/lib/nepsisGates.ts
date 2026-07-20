@@ -72,9 +72,13 @@ export type ThresholdGateInput = {
   lossNotTreat: number | null | undefined;
   warningLevel: string | null | undefined;
   gateCrossed: boolean | null;
+  redVetoActive: boolean | null;
+  costReviewRequired: boolean | null;
   recommendation: string | null | undefined;
   decision: ThresholdDecision;
   holdReason: string;
+  costReviewAcknowledged: boolean;
+  costReviewRationale: string;
 };
 
 export type ThresholdPacket = {
@@ -83,9 +87,13 @@ export type ThresholdPacket = {
   loss_not_treat: number | null;
   warning_level: string | null;
   gate_crossed: boolean | null;
+  red_veto_active: boolean | null;
+  cost_review_required: boolean | null;
   recommendation: string | null;
   decision: ThresholdDecision;
   hold_reason: string;
+  cost_review_acknowledged: boolean;
+  cost_review_rationale: string;
 };
 
 function textPresent(value: string): boolean {
@@ -333,16 +341,33 @@ export function evaluateThresholdGate(input: ThresholdGateInput): GateResult<Thr
     loss_not_treat: finiteNumber(input.lossNotTreat) ? Number(input.lossNotTreat) : null,
     warning_level: input.warningLevel ?? null,
     gate_crossed: input.gateCrossed,
+    red_veto_active: input.redVetoActive,
+    cost_review_required: input.costReviewRequired,
     recommendation: input.recommendation ?? null,
     decision: input.decision,
     hold_reason: input.holdReason.trim(),
+    cost_review_acknowledged: input.costReviewAcknowledged,
+    cost_review_rationale: input.costReviewRationale.trim(),
   };
 
   const lossAsymmetryDefined = packet.loss_treat != null && packet.loss_not_treat != null;
-  const redGateMetadataReady = packet.warning_level != null && packet.gate_crossed != null;
+  const redGateMetadataReady =
+    packet.warning_level != null &&
+    packet.gate_crossed != null &&
+    packet.red_veto_active != null &&
+    packet.cost_review_required != null;
   const decisionDeclared = packet.decision !== "undecided";
   const holdReasonReady = packet.decision !== "hold" || textPresent(packet.hold_reason);
-  const redOverrideViolation = packet.gate_crossed === true && packet.decision === "recommend";
+  const redOverrideViolation = packet.red_veto_active === true && packet.decision === "recommend";
+  const costReviewReady =
+    packet.cost_review_required !== true ||
+    packet.decision !== "recommend" ||
+    (packet.cost_review_acknowledged && textPresent(packet.cost_review_rationale));
+  const unclassifiedGateViolation =
+    packet.gate_crossed === true &&
+    packet.red_veto_active !== true &&
+    packet.cost_review_required !== true &&
+    packet.decision === "recommend";
 
   const checks: GateCheck[] = [
     {
@@ -364,7 +389,7 @@ export function evaluateThresholdGate(input: ThresholdGateInput): GateResult<Thr
     },
     {
       key: "red_override_metadata",
-      label: "Red override check",
+      label: "Protective-action gate",
       status: redGateMetadataReady ? "pass" : "block",
       detail: redGateMetadataReady
         ? "Gate metadata available."
@@ -384,11 +409,24 @@ export function evaluateThresholdGate(input: ThresholdGateInput): GateResult<Thr
     },
     {
       key: "red_override_enforced",
-      label: "Red override enforcement",
-      status: redOverrideViolation ? "block" : "pass",
+      label: "RED veto enforcement",
+      status: redOverrideViolation || unclassifiedGateViolation ? "block" : "pass",
       detail: redOverrideViolation
-        ? "Red gate crossed. Choose hold or reframe; recommendation cannot proceed while red risk is active."
-        : "Red override discipline satisfied.",
+        ? "RED veto active. Choose hold or reframe; recommendation cannot proceed while the protected criterion remains active."
+        : unclassifiedGateViolation
+          ? "Unclassified protective-action gate requires hold or re-evaluation."
+          : "RED veto discipline satisfied.",
+    },
+    {
+      key: "cost_review_disposition",
+      label: "Cost-review disposition",
+      status: costReviewReady ? "pass" : "block",
+      detail:
+        packet.cost_review_required === true && costReviewReady
+          ? "Cost-derived review was explicitly dispositioned."
+          : !costReviewReady
+            ? "Acknowledge the cost-derived review and provide a rationale before recommending."
+            : "No cost-derived review requires disposition.",
     },
   ];
 
@@ -403,6 +441,8 @@ export function buildThresholdCoach(gate: GateResult<ThresholdPacket>): StageCoa
     decision_declared: "Declare threshold decision: recommend action or hold.",
     hold_reason: "If holding, explain what clarification or evidence is required.",
     red_override_enforced: "Red space is active. Recommendation stays blocked until you reframe, release, or gather the discriminator you need.",
+    cost_review_disposition:
+      "Review the expected-loss tradeoff, including protective-action cost and alternatives it could obscure, then record why the burden is proportionate.",
   };
   const prompts = uniquePrompts(
     topPendingChecks(gate.checks).map((check) => promptByKey[check.key] ?? check.detail),

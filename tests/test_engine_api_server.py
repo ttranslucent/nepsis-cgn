@@ -712,10 +712,18 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
                 "packet": packet,
                 "decision": "hold",
                 "hold_reason": "Collect one additional discriminator before recommendation.",
+                "cost_review_acknowledged": True,
+                "cost_review_rationale": "Expected-loss tradeoff reviewed before holding.",
             },
         )
         assert status == 200
         assert packet["phase"] == "threshold_set"
+        threshold_args = packet["audit_trace"][-1]["arguments"]
+        assert threshold_args["cost_review_acknowledged"] is True
+        assert (
+            threshold_args["cost_review_rationale"]
+            == "Expected-loss tradeoff reviewed before holding."
+        )
 
         status, committed = _post_json(
             port,
@@ -737,6 +745,31 @@ def test_http_operator_packet_flow_is_stateless_and_commits(monkeypatch) -> None
     assert committed["audit_trace"] == []
     assert committed["previous_trace"][-1]["event"] == "COMMIT_ITERATION"
     assert committed["last_commit_packet"]["schema_id"] == "nepsis.operator_audit_packet"
+
+
+def test_http_operator_packet_threshold_rejects_non_boolean_cost_review_acknowledgment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NEPSIS_API_ALLOW_ANON", "true")
+    monkeypatch.setattr(api_server, "API", EngineApiService())
+    httpd, thread, port = _start_test_server()
+    try:
+        status, packet = _post_json(port, "/v1/operator-packet/start", {})
+        assert status == 200
+        status, result = _post_json(
+            port,
+            "/v1/operator-packet/threshold",
+            {
+                "packet": packet,
+                "decision": "hold",
+                "cost_review_acknowledged": "yes",
+            },
+        )
+    finally:
+        _stop_test_server(httpd, thread)
+
+    assert 400 <= status < 500
+    assert "cost_review_acknowledged must be a boolean" in json.dumps(result)
 
 
 def test_http_operator_packet_v3_layer_loop_is_stateless_and_inspectable(

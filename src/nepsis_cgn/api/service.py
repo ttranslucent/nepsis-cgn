@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import logging
 import os
 import sqlite3
@@ -14,7 +16,15 @@ from threading import RLock
 from typing import Any, Dict, Literal, Optional
 from uuid import uuid4
 
-from ..core import FrameVersion, GovernanceCalibration, GovernanceCosts, NavigationController
+from ..core import (
+    DEFAULT_CALIBRATION_VERSION,
+    DEFAULT_EVIDENCE_POLICY_VERSION,
+    DEFAULT_GOVERNANCE_POLICY_VERSION,
+    FrameVersion,
+    GovernanceCalibration,
+    GovernanceCosts,
+    NavigationController,
+)
 from ..core.case_reasoning import (
     compile_case_reasoning,
     mark_case_reasoning_validation,
@@ -23,6 +33,7 @@ from ..core.case_reasoning import (
     validate_case_reasoning,
 )
 from ..core.interpretant import WordPuzzleSign
+from ..core.governance import threshold_crossed
 from ..core.runtime import build_navigation_controller
 from ..manifolds.clinical import ClinicalSign
 from ..manifolds.red_blue import SafetySign
@@ -37,8 +48,9 @@ from ..runtime_storage import is_serverless_runtime, serverless_runtime_sessions
 
 Family = Literal["puzzle", "clinical", "safety"]
 _STORE_SCHEMA_ID = "nepsis.engine_api_sessions"
-_STORE_SCHEMA_VERSION = "1.3.0"
-_SQLITE_SCHEMA_VERSION = 5
+_STORE_SCHEMA_VERSION = "1.7.0"
+_SQLITE_SCHEMA_VERSION = 9
+_REPLAY_CONTRACT_VERSION = "nepsis.session_replay@0.3.0"
 _WORKSPACE_STATE_MAX_BYTES = 64 * 1024
 _STAGE_AUDIT_POLICY = {
     "name": "nepsis_cgn.stage_audit",
@@ -95,6 +107,8 @@ class EngineSession:
     governance_costs: Optional[GovernanceCosts] = None
     governance_calibration: Optional[GovernanceCalibration] = None
     seed_frame_payload: Optional[Dict[str, Any]] = None
+    seed_navigation_checkpoint: Optional[Dict[str, Any]] = None
+    seed_navigation_checkpoint_digest: Optional[str] = None
     actions: list[Dict[str, Any]] = field(default_factory=list)
     branch_id: str = ""
     lineage_version: int = 1
@@ -105,6 +119,11 @@ class EngineSession:
     operator_events: list[Dict[str, Any]] = field(default_factory=list)
     operator_audit: Dict[str, Any] = field(default_factory=dict)
     operator_ambient: bool = False
+    operator_checkpoint_active: bool = False
+    governance_policy_version: str = DEFAULT_GOVERNANCE_POLICY_VERSION
+    evidence_policy_version: str = DEFAULT_EVIDENCE_POLICY_VERSION
+    manifest_digest: Optional[str] = None
+    replay_contract_version: str = _REPLAY_CONTRACT_VERSION
 
 
 class EngineApiService:
@@ -132,7 +151,10 @@ class EngineApiService:
             session_id = str(uuid4())
             normalized_owner_id = _normalize_owner_id(owner_id)
             costs = _parse_governance_costs(governance_costs)
-            calibration = _parse_governance_calibration(governance_calibration)
+            calibration = (
+                _parse_governance_calibration(governance_calibration)
+                or GovernanceCalibration()
+            )
             seed_frame_payload = _json_copy(frame)
             seed_frame = _frame_from_payload(seed_frame_payload, costs)
             nav = build_navigation_controller(
@@ -143,8 +165,13 @@ class EngineApiService:
                 emit_iteration_packet=emit_packet,
                 session_id=session_id,
                 frame=seed_frame,
+                policy_version=DEFAULT_GOVERNANCE_POLICY_VERSION,
+                evidence_policy_version=DEFAULT_EVIDENCE_POLICY_VERSION,
             )
+            if nav.frame is not None:
+                seed_frame_payload = nav.frame.to_dict()
             created_at = _now_iso8601()
+            seed_navigation_checkpoint = nav.export_red_evidence_checkpoint()
             self._sessions[session_id] = EngineSession(
                 session_id=session_id,
                 family=family,
@@ -156,11 +183,18 @@ class EngineApiService:
                 governance_costs=costs,
                 governance_calibration=calibration,
                 seed_frame_payload=seed_frame_payload,
+                seed_navigation_checkpoint=seed_navigation_checkpoint,
+                seed_navigation_checkpoint_digest=(
+                    _navigation_checkpoint_digest(seed_navigation_checkpoint)
+                ),
                 branch_id=_initial_branch_id(session_id),
                 lineage_version=max(1, _frame_lineage_version(nav.frame)),
                 parent_frame_id=None,
                 owner_id=normalized_owner_id,
                 workspace_state={},
+                governance_policy_version=nav.policy_version,
+                evidence_policy_version=nav.evidence_policy_version,
+                manifest_digest=nav.registry_version,
             )
             self._persist_sessions()
             return self.get_session(session_id)
@@ -219,6 +253,15 @@ class EngineApiService:
                     coach_prompts=["Commit or abandon the current operator loop before locking a new frame."],
                 )
 
+            navigation_checkpoint = None
+            if session.operator_checkpoint_active:
+                if family != session.family:
+                    raise ValueError(
+                        "Cannot change operator family while a RED/evidence checkpoint is active; abandon the session to start a new family."
+                    )
+                navigation_checkpoint = (
+                    session.navigation.export_red_evidence_checkpoint()
+                )
             self._reset_operator_navigation(
                 session,
                 family=family,
@@ -226,6 +269,12 @@ class EngineApiService:
                 governance_costs=governance_costs,
                 governance_calibration=governance_calibration,
                 manifest_path=manifest_path,
+                navigation_checkpoint=navigation_checkpoint,
+                frame_transition_rationale=(
+                    frame.get("rationale_for_change")
+                    if isinstance(frame, dict)
+                    else None
+                ),
             )
             audit = self.stage_audit_session(session.session_id)
             if audit["frame"]["status"] != "PASS":
@@ -356,6 +405,8 @@ class EngineApiService:
         *,
         decision: str,
         hold_reason: str = "",
+        cost_review_acknowledged: bool = False,
+        cost_review_rationale: str = "",
     ) -> Dict[str, Any]:
         with self._lock:
             session = self._ensure_operator_session()
@@ -376,6 +427,12 @@ class EngineApiService:
                 threshold_context = {}
             threshold_context["decision"] = decision
             threshold_context["hold_reason"] = hold_reason
+            threshold_context["cost_review_acknowledged"] = bool(
+                cost_review_acknowledged
+            )
+            threshold_context["cost_review_rationale"] = str(
+                cost_review_rationale or ""
+            )
             context["threshold"] = threshold_context
             # Thresholding must never run on raw frame text alone; it depends on
             # a validated Case Reasoning Compiler packet tied to this frame.
@@ -453,6 +510,10 @@ class EngineApiService:
                 "last_commit_packet": _json_copy(packet),
                 "latest_audit": _json_copy(audit),
             }
+            navigation_checkpoint = (
+                session.navigation.export_red_evidence_checkpoint()
+            )
+            session.operator_checkpoint_active = True
             self._reset_operator_navigation(
                 session,
                 family=session.family,
@@ -460,6 +521,12 @@ class EngineApiService:
                 governance_costs=_serialize_governance_costs(session.governance_costs),
                 governance_calibration=_serialize_governance_calibration(session.governance_calibration),
                 manifest_path=session.manifest_path,
+                navigation_checkpoint=navigation_checkpoint,
+                frame_transition_rationale=(
+                    carry_forward_frame.get("rationale_for_change")
+                    if isinstance(carry_forward_frame, dict)
+                    else None
+                ),
             )
             self._persist_sessions()
             return {
@@ -906,7 +973,7 @@ class EngineApiService:
     def _create_operator_session_unlocked(self) -> EngineSession:
         session_id = str(uuid4())
         costs = _parse_governance_costs(_DEFAULT_OPERATOR_GOVERNANCE_COSTS)
-        calibration = _parse_governance_calibration(None)
+        calibration = GovernanceCalibration()
         seed_frame_payload = _json_copy(_DEFAULT_OPERATOR_FRAME)
         seed_frame = _frame_from_payload(seed_frame_payload, costs)
         nav = build_navigation_controller(
@@ -917,7 +984,12 @@ class EngineApiService:
             emit_iteration_packet=True,
             session_id=session_id,
             frame=seed_frame,
+            policy_version=DEFAULT_GOVERNANCE_POLICY_VERSION,
+            evidence_policy_version=DEFAULT_EVIDENCE_POLICY_VERSION,
         )
+        if nav.frame is not None:
+            seed_frame_payload = nav.frame.to_dict()
+        seed_navigation_checkpoint = nav.export_red_evidence_checkpoint()
         session = EngineSession(
             session_id=session_id,
             family="safety",
@@ -929,9 +1001,16 @@ class EngineApiService:
             governance_costs=costs,
             governance_calibration=calibration,
             seed_frame_payload=seed_frame_payload,
+            seed_navigation_checkpoint=seed_navigation_checkpoint,
+            seed_navigation_checkpoint_digest=(
+                _navigation_checkpoint_digest(seed_navigation_checkpoint)
+            ),
             branch_id=_initial_branch_id(session_id),
             lineage_version=max(1, _frame_lineage_version(nav.frame)),
             operator_ambient=True,
+            governance_policy_version=nav.policy_version,
+            evidence_policy_version=nav.evidence_policy_version,
+            manifest_digest=nav.registry_version,
         )
         self._sessions[session_id] = session
         self._operator_session_id = session_id
@@ -946,13 +1025,19 @@ class EngineApiService:
         governance_costs: Optional[Dict[str, float]],
         governance_calibration: Optional[Dict[str, Any]],
         manifest_path: Optional[str],
+        navigation_checkpoint: Optional[Dict[str, Any]] = None,
+        frame_transition_rationale: Optional[str] = None,
     ) -> None:
         if family not in {"puzzle", "clinical", "safety"}:
             raise ValueError("family must be one of: puzzle, clinical, safety")
         costs = _parse_governance_costs(governance_costs)
-        calibration = _parse_governance_calibration(governance_calibration)
+        calibration = (
+            _parse_governance_calibration(governance_calibration)
+            or GovernanceCalibration()
+        )
         seed_frame_payload = _json_copy(frame)
         seed_frame = _frame_from_payload(seed_frame_payload, costs)
+        prior_frame = session.navigation.frame
         nav = build_navigation_controller(
             manifest_path=manifest_path,
             families=[family],
@@ -961,13 +1046,42 @@ class EngineApiService:
             emit_iteration_packet=session.emit_packet,
             session_id=session.session_id,
             frame=seed_frame,
+            policy_version=session.governance_policy_version,
+            evidence_policy_version=session.evidence_policy_version,
+            expected_manifest_digest=(
+                session.manifest_digest
+                if manifest_path == session.manifest_path
+                else None
+            ),
+            red_evidence_checkpoint=navigation_checkpoint,
         )
+        if navigation_checkpoint is not None:
+            nav.apply_frame_transition(
+                prior_frame=prior_frame,
+                rationale_for_change=frame_transition_rationale,
+            )
+        retained_iteration = _latest_iteration_packet(session)
+        if retained_iteration is not None:
+            retained_meta = _validated_iteration_packet_meta(retained_iteration)
+            nav.restore_packet_lineage(
+                last_packet_id=retained_meta["packet_id"],
+                next_iteration=retained_meta["iteration"] + 1,
+            )
+        if nav.frame is not None:
+            seed_frame_payload = nav.frame.to_dict()
         session.family = family
         session.manifest_path = manifest_path
         session.governance_costs = costs
         session.governance_calibration = calibration
+        session.manifest_digest = nav.registry_version
         session.seed_frame_payload = seed_frame_payload
+        session.seed_navigation_checkpoint = nav.export_red_evidence_checkpoint()
+        session.seed_navigation_checkpoint_digest = _navigation_checkpoint_digest(
+            session.seed_navigation_checkpoint
+        )
         session.navigation = nav
+        session.actions = []
+        session.steps = 0
         session.branch_id = _initial_branch_id(session.session_id)
         session.lineage_version = max(1, _frame_lineage_version(nav.frame))
         session.parent_frame_id = None
@@ -1058,6 +1172,15 @@ class EngineApiService:
         record_provenance: bool = True,
     ) -> Dict[str, Any]:
         nav = session.navigation
+        if session.seed_navigation_checkpoint is None and not session.actions:
+            session.seed_navigation_checkpoint = (
+                nav.export_red_evidence_checkpoint()
+            )
+            session.seed_navigation_checkpoint_digest = (
+                _navigation_checkpoint_digest(
+                    session.seed_navigation_checkpoint
+                )
+            )
         typed_sign = _build_sign(session.family, sign)
         entry = nav.step(
             typed_sign,
@@ -1066,6 +1189,8 @@ class EngineApiService:
             override_reason=override_reason,
             carry_forward_policy=carry_forward,
         )
+        if session.seed_frame_payload is None and nav.frame is not None:
+            session.seed_frame_payload = nav.frame.to_dict()
         session.steps += 1
 
         payload = _trace_payload(entry)
@@ -1172,6 +1297,11 @@ class EngineApiService:
             "manifest_path": session.manifest_path,
             "governance": _serialize_governance_costs(session.governance_costs),
             "calibration": _serialize_governance_calibration(session.governance_calibration),
+            "governance_policy_version": session.governance_policy_version,
+            "evidence_policy_version": session.evidence_policy_version,
+            "manifest_digest": session.manifest_digest,
+            "replay_contract_version": session.replay_contract_version,
+            "operator_checkpoint_active": session.operator_checkpoint_active,
             "operator_phase": session.operator_phase,
             "operator_ambient": session.operator_ambient,
         }
@@ -1224,9 +1354,15 @@ class EngineApiService:
                 rows = conn.execute(
                     """
                     SELECT session_id, family, created_at, steps, manifest_path, emit_packet,
-                           governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
+                           governance_costs_json, governance_calibration_json,
+                           governance_policy_version, evidence_policy_version, manifest_digest,
+                           replay_contract_version, seed_frame_json, actions_json, packets_json,
+                           packet_artifacts_digest,
+                           seed_navigation_checkpoint_json,
+                           seed_navigation_checkpoint_digest,
                            branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json,
-                           operator_phase, operator_events_json, operator_audit_json, operator_ambient
+                           operator_phase, operator_events_json, operator_audit_json, operator_ambient,
+                           operator_checkpoint_active
                     FROM engine_sessions
                     """
                 ).fetchall()
@@ -1246,17 +1382,28 @@ class EngineApiService:
                 "emit_packet": bool(row[5]),
                 "governance_costs": _json_loads_or_none(row[6], encrypted=True),
                 "governance_calibration": _json_loads_or_none(row[7], encrypted=True),
-                "seed_frame": _json_loads_or_none(row[8], encrypted=True),
-                "actions": _json_loads_or_none(row[9], encrypted=True) or [],
-                "branch_id": row[10],
-                "lineage_version": row[11],
-                "parent_frame_id": row[12],
-                "owner_id": row[13],
-                "workspace_state": _json_loads_or_none(row[14], encrypted=True) or {},
-                "operator_phase": row[15],
-                "operator_events": _json_loads_or_none(row[16], encrypted=True) or [],
-                "operator_audit": _json_loads_or_none(row[17], encrypted=True) or {},
-                "operator_ambient": bool(row[18]),
+                "governance_policy_version": row[8],
+                "evidence_policy_version": row[9],
+                "manifest_digest": row[10],
+                "replay_contract_version": row[11],
+                "seed_frame": _json_loads_or_none(row[12], encrypted=True),
+                "actions": _json_loads_or_none(row[13], encrypted=True) or [],
+                "packets": _json_loads_or_none(row[14], encrypted=True) or [],
+                "packet_artifacts_digest": row[15],
+                "seed_navigation_checkpoint": _json_loads_or_none(
+                    row[16], encrypted=True
+                ),
+                "seed_navigation_checkpoint_digest": row[17],
+                "branch_id": row[18],
+                "lineage_version": row[19],
+                "parent_frame_id": row[20],
+                "owner_id": row[21],
+                "workspace_state": _json_loads_or_none(row[22], encrypted=True) or {},
+                "operator_phase": row[23],
+                "operator_events": _json_loads_or_none(row[24], encrypted=True) or [],
+                "operator_audit": _json_loads_or_none(row[25], encrypted=True) or {},
+                "operator_ambient": bool(row[26]),
+                "operator_checkpoint_active": bool(row[27]),
             }
             restored = self._restore_session(payload)
             self._sessions[restored.session_id] = restored
@@ -1275,9 +1422,110 @@ class EngineApiService:
         owner_id = _normalize_owner_id(payload.get("owner_id"))
         emit_packet = bool(payload.get("emit_packet", True))
         costs = _parse_governance_costs(payload.get("governance_costs"))
-        calibration = _parse_governance_calibration(payload.get("governance_calibration"))
+        stored_actions = payload.get("actions")
+        if stored_actions is not None and not isinstance(stored_actions, list):
+            raise ValueError("Stored session actions must be a list.")
+        actions = stored_actions or []
+        stored_packets_raw = payload.get("packets")
+        if stored_packets_raw is not None and not isinstance(stored_packets_raw, list):
+            raise ValueError("Stored session packets must be a list.")
+        stored_packets = stored_packets_raw or []
+        if not all(isinstance(packet, dict) for packet in stored_packets):
+            raise ValueError("Stored session packets must contain only objects.")
+        operator_checkpoint_active = payload.get(
+            "operator_checkpoint_active", False
+        )
+        if not isinstance(operator_checkpoint_active, bool):
+            raise ValueError("Stored operator_checkpoint_active must be boolean.")
+        replay_contract_version = str(payload.get("replay_contract_version") or "")
+        if (
+            actions or stored_packets or operator_checkpoint_active
+        ) and replay_contract_version != _REPLAY_CONTRACT_VERSION:
+            raise ValueError(
+                "Stored replay state predates the pinned artifact contract and cannot be restored safely."
+            )
+        stored_packet_artifacts_digest = payload.get("packet_artifacts_digest")
+        if replay_contract_version == _REPLAY_CONTRACT_VERSION and (
+            not isinstance(stored_packet_artifacts_digest, str)
+            or not stored_packet_artifacts_digest.strip()
+        ):
+            raise ValueError(
+                "Stored packet artifacts have no integrity digest."
+            )
+        if stored_packet_artifacts_digest is not None:
+            if not isinstance(stored_packet_artifacts_digest, str):
+                raise ValueError("Stored packet artifact digest must be a string.")
+            expected_packet_artifacts_digest = _packet_artifacts_digest(
+                stored_packets
+            )
+            if not hmac.compare_digest(
+                stored_packet_artifacts_digest,
+                expected_packet_artifacts_digest,
+            ):
+                raise ValueError(
+                    "Stored packet artifacts failed integrity validation."
+                )
+        governance_policy_version = str(
+            payload.get("governance_policy_version")
+            or DEFAULT_GOVERNANCE_POLICY_VERSION
+        )
+        evidence_policy_version = str(
+            payload.get("evidence_policy_version")
+            or DEFAULT_EVIDENCE_POLICY_VERSION
+        )
+        manifest_digest = payload.get("manifest_digest")
+        if manifest_digest is not None:
+            manifest_digest = str(manifest_digest)
+        if (actions or stored_packets or operator_checkpoint_active) and not manifest_digest:
+            raise ValueError(
+                "Stored replay state has no pinned manifest digest and cannot be restored safely."
+            )
+        calibration = (
+            _parse_governance_calibration(payload.get("governance_calibration"))
+            or GovernanceCalibration()
+        )
 
         seed_frame_payload = _json_copy(payload.get("seed_frame"))
+        seed_navigation_checkpoint = _json_copy(
+            payload.get("seed_navigation_checkpoint")
+        )
+        if seed_navigation_checkpoint is not None and not isinstance(
+            seed_navigation_checkpoint, dict
+        ):
+            raise ValueError("Stored navigation checkpoint must be an object.")
+        seed_navigation_checkpoint_digest = payload.get(
+            "seed_navigation_checkpoint_digest"
+        )
+        if seed_navigation_checkpoint is None:
+            if seed_navigation_checkpoint_digest is not None:
+                raise ValueError(
+                    "Stored navigation checkpoint digest has no checkpoint."
+                )
+        else:
+            if not isinstance(seed_navigation_checkpoint_digest, str) or not (
+                seed_navigation_checkpoint_digest.strip()
+            ):
+                raise ValueError(
+                    "Stored navigation checkpoint has no integrity digest."
+                )
+            expected_checkpoint_digest = _navigation_checkpoint_digest(
+                seed_navigation_checkpoint
+            )
+            if not hmac.compare_digest(
+                seed_navigation_checkpoint_digest,
+                expected_checkpoint_digest,
+            ):
+                raise ValueError(
+                    "Stored navigation checkpoint failed integrity validation."
+                )
+        if actions and seed_frame_payload is None:
+            raise ValueError(
+                "Stored action stream has no canonical seed frame and cannot be replayed safely."
+            )
+        if (actions or operator_checkpoint_active) and seed_navigation_checkpoint is None:
+            raise ValueError(
+                "Stored replay state has no RED/evidence checkpoint and cannot be restored safely."
+            )
         seed_frame = _frame_from_payload(seed_frame_payload, costs)
         nav = build_navigation_controller(
             manifest_path=manifest_path,
@@ -1287,7 +1535,16 @@ class EngineApiService:
             emit_iteration_packet=emit_packet,
             session_id=session_id,
             frame=seed_frame,
+            policy_version=governance_policy_version,
+            evidence_policy_version=evidence_policy_version,
+            expected_manifest_digest=manifest_digest,
+            red_evidence_checkpoint=seed_navigation_checkpoint,
         )
+        if seed_navigation_checkpoint is None:
+            seed_navigation_checkpoint = nav.export_red_evidence_checkpoint()
+            seed_navigation_checkpoint_digest = _navigation_checkpoint_digest(
+                seed_navigation_checkpoint
+            )
         session = EngineSession(
             session_id=session_id,
             family=family,
@@ -1300,6 +1557,8 @@ class EngineApiService:
             governance_costs=costs,
             governance_calibration=calibration,
             seed_frame_payload=seed_frame_payload,
+            seed_navigation_checkpoint=seed_navigation_checkpoint,
+            seed_navigation_checkpoint_digest=seed_navigation_checkpoint_digest,
             branch_id=_initial_branch_id(session_id),
             lineage_version=max(1, _frame_lineage_version(nav.frame)),
             parent_frame_id=None,
@@ -1309,41 +1568,107 @@ class EngineApiService:
             operator_events=_normalize_operator_events(payload.get("operator_events")),
             operator_audit=_normalize_operator_audit(payload.get("operator_audit")),
             operator_ambient=bool(payload.get("operator_ambient", False)),
+            operator_checkpoint_active=operator_checkpoint_active,
+            governance_policy_version=governance_policy_version,
+            evidence_policy_version=evidence_policy_version,
+            manifest_digest=nav.registry_version,
+            replay_contract_version=(
+                replay_contract_version or _REPLAY_CONTRACT_VERSION
+            ),
         )
 
-        actions = payload.get("actions")
-        if isinstance(actions, list):
-            for action in actions:
-                if not isinstance(action, dict):
-                    continue
-                kind = action.get("kind")
-                if kind == "step":
-                    self._step_session_internal(
-                        session,
-                        sign=_json_copy(action.get("sign")) or {},
-                        commit=bool(action.get("commit", False)),
-                        user_decision=action.get("user_decision"),
-                        override_reason=action.get("override_reason"),
-                        carry_forward=_json_copy(action.get("carry_forward")),
-                        record_action=True,
-                        persist=False,
-                        record_provenance=False,
-                    )
-                elif kind == "reframe":
-                    frame = _json_copy(action.get("frame"))
-                    if isinstance(frame, dict):
-                        self._reframe_session_internal(
-                            session,
-                            frame=frame,
-                            branch_id=action.get("branch_id"),
-                            parent_frame_id=action.get("parent_frame_id"),
-                            record_action=True,
-                            persist=False,
-                        )
+        step_action_count = 0
+        for action in actions:
+            if not isinstance(action, dict):
+                raise ValueError("Stored replay actions must contain only objects.")
+            kind = action.get("kind")
+            if kind == "step":
+                step_action_count += 1
+            elif kind != "reframe":
+                raise ValueError(f"Unsupported stored replay action kind: {kind!r}.")
 
+        stored_iteration_packets = _iteration_packets_from_artifacts(
+            stored_packets
+        )
+        expected_iteration_count = step_action_count if emit_packet else 0
+        if len(stored_iteration_packets) < expected_iteration_count:
+            raise ValueError(
+                "Stored packet artifacts are incomplete for the replay action stream."
+            )
+        prior_iteration_count = len(stored_iteration_packets) - expected_iteration_count
+        if prior_iteration_count and not operator_checkpoint_active:
+            raise ValueError(
+                "Stored packet artifacts contain history outside the replay action stream."
+            )
+        if not emit_packet and stored_iteration_packets:
+            raise ValueError(
+                "Stored iteration packets are incompatible with emit_packet=false."
+            )
+        if prior_iteration_count:
+            prior_meta = _validated_iteration_packet_meta(
+                stored_iteration_packets[prior_iteration_count - 1]
+            )
+            nav.restore_packet_lineage(
+                last_packet_id=prior_meta["packet_id"],
+                next_iteration=prior_meta["iteration"] + 1,
+            )
+
+        for action in actions:
+            if not isinstance(action, dict):
+                raise ValueError("Stored replay actions must contain only objects.")
+            kind = action.get("kind")
+            if kind == "step":
+                sign = _json_copy(action.get("sign"))
+                if not isinstance(sign, dict):
+                    raise ValueError("Stored step action requires an object sign.")
+                self._step_session_internal(
+                    session,
+                    sign=sign,
+                    commit=bool(action.get("commit", False)),
+                    user_decision=action.get("user_decision"),
+                    override_reason=action.get("override_reason"),
+                    carry_forward=_json_copy(action.get("carry_forward")),
+                    record_action=False,
+                    persist=False,
+                    record_provenance=False,
+                )
+            elif kind == "reframe":
+                frame = _json_copy(action.get("frame"))
+                if not isinstance(frame, dict):
+                    raise ValueError("Stored reframe action requires an object frame.")
+                self._reframe_session_internal(
+                    session,
+                    frame=frame,
+                    branch_id=action.get("branch_id"),
+                    parent_frame_id=action.get("parent_frame_id"),
+                    record_action=False,
+                    persist=False,
+                )
+            else:
+                raise ValueError(f"Unsupported stored replay action kind: {kind!r}.")
+
+        generated_packets = _json_copy(session.packets) or []
+        _validate_replayed_packet_artifacts(
+            stored_packets=stored_packets,
+            generated_packets=generated_packets,
+            emit_packet=emit_packet,
+            allow_prior_history=operator_checkpoint_active,
+        )
+        session.actions = _json_copy(actions) or []
+        session.packets = _json_copy(stored_packets) or []
+        if stored_iteration_packets:
+            last_meta = _validated_iteration_packet_meta(
+                stored_iteration_packets[-1]
+            )
+            nav.restore_packet_lineage(
+                last_packet_id=last_meta["packet_id"],
+                next_iteration=last_meta["iteration"] + 1,
+            )
         stored_steps = int(payload.get("steps") or 0)
-        if stored_steps > session.steps:
-            session.steps = stored_steps
+        if stored_steps != session.steps:
+            raise ValueError(
+                "Stored step count diverges from the replayed action stream."
+            )
         session.branch_id = _normalize_branch_id(payload.get("branch_id"), fallback=session.branch_id)
         stored_lineage_version = _coerce_lineage_version(payload.get("lineage_version"))
         if stored_lineage_version is not None:
@@ -1389,10 +1714,16 @@ class EngineApiService:
                         """
                         INSERT INTO engine_sessions(
                             session_id, family, created_at, steps, manifest_path, emit_packet,
-                            governance_costs_json, governance_calibration_json, seed_frame_json, actions_json,
+                            governance_costs_json, governance_calibration_json,
+                            governance_policy_version, evidence_policy_version, manifest_digest,
+                            replay_contract_version, seed_frame_json, actions_json, packets_json,
+                            packet_artifacts_digest,
+                            seed_navigation_checkpoint_json,
+                            seed_navigation_checkpoint_digest,
                             branch_id, lineage_version, parent_frame_id, owner_id, workspace_state_json,
-                            operator_phase, operator_events_json, operator_audit_json, operator_ambient
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            operator_phase, operator_events_json, operator_audit_json, operator_ambient,
+                            operator_checkpoint_active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             row["session_id"],
@@ -1403,8 +1734,18 @@ class EngineApiService:
                             1 if row["emit_packet"] else 0,
                             _json_dumps_or_none(row.get("governance_costs"), encrypted=True),
                             _json_dumps_or_none(row.get("governance_calibration"), encrypted=True),
+                            row["governance_policy_version"],
+                            row["evidence_policy_version"],
+                            row["manifest_digest"],
+                            row["replay_contract_version"],
                             _json_dumps_or_none(row.get("seed_frame"), encrypted=True),
                             _json_dumps_or_none(row.get("actions"), encrypted=True),
+                            _json_dumps_or_none(row.get("packets"), encrypted=True),
+                            row["packet_artifacts_digest"],
+                            _json_dumps_or_none(
+                                row.get("seed_navigation_checkpoint"), encrypted=True
+                            ),
+                            row["seed_navigation_checkpoint_digest"],
                             row["branch_id"],
                             int(row["lineage_version"]),
                             row["parent_frame_id"],
@@ -1414,6 +1755,7 @@ class EngineApiService:
                             _json_dumps_or_none(row.get("operator_events"), encrypted=True),
                             _json_dumps_or_none(row.get("operator_audit"), encrypted=True),
                             1 if row["operator_ambient"] else 0,
+                            1 if row["operator_checkpoint_active"] else 0,
                         ),
                     )
 
@@ -1444,8 +1786,16 @@ class EngineApiService:
                 emit_packet INTEGER NOT NULL,
                 governance_costs_json TEXT,
                 governance_calibration_json TEXT,
+                governance_policy_version TEXT NOT NULL DEFAULT 'gov-v1.0.0',
+                evidence_policy_version TEXT NOT NULL DEFAULT 'evidence-v1',
+                manifest_digest TEXT,
+                replay_contract_version TEXT,
                 seed_frame_json TEXT,
                 actions_json TEXT NOT NULL,
+                packets_json TEXT NOT NULL DEFAULT '[]',
+                packet_artifacts_digest TEXT,
+                seed_navigation_checkpoint_json TEXT,
+                seed_navigation_checkpoint_digest TEXT,
                 branch_id TEXT,
                 lineage_version INTEGER NOT NULL DEFAULT 1,
                 parent_frame_id TEXT,
@@ -1454,7 +1804,8 @@ class EngineApiService:
                 operator_phase TEXT NOT NULL DEFAULT 'frame_draft',
                 operator_events_json TEXT,
                 operator_audit_json TEXT,
-                operator_ambient INTEGER NOT NULL DEFAULT 0
+                operator_ambient INTEGER NOT NULL DEFAULT 0,
+                operator_checkpoint_active INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -1477,6 +1828,42 @@ class EngineApiService:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN operator_audit_json TEXT")
         if "operator_ambient" not in columns:
             conn.execute("ALTER TABLE engine_sessions ADD COLUMN operator_ambient INTEGER NOT NULL DEFAULT 0")
+        if "governance_policy_version" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN governance_policy_version "
+                "TEXT NOT NULL DEFAULT 'gov-v1.0.0'"
+            )
+        if "evidence_policy_version" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN evidence_policy_version "
+                "TEXT NOT NULL DEFAULT 'evidence-v1'"
+            )
+        if "manifest_digest" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN manifest_digest TEXT")
+        if "replay_contract_version" not in columns:
+            conn.execute("ALTER TABLE engine_sessions ADD COLUMN replay_contract_version TEXT")
+        if "packets_json" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN packets_json "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "packet_artifacts_digest" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN packet_artifacts_digest TEXT"
+            )
+        if "seed_navigation_checkpoint_json" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN seed_navigation_checkpoint_json TEXT"
+            )
+        if "seed_navigation_checkpoint_digest" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN seed_navigation_checkpoint_digest TEXT"
+            )
+        if "operator_checkpoint_active" not in columns:
+            conn.execute(
+                "ALTER TABLE engine_sessions ADD COLUMN operator_checkpoint_active "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             """
             INSERT INTO engine_store_meta(key, value)
@@ -1506,8 +1893,24 @@ class EngineApiService:
             "emit_packet": session.emit_packet,
             "governance_costs": _serialize_governance_costs(session.governance_costs),
             "governance_calibration": _serialize_governance_calibration(session.governance_calibration),
+            "governance_policy_version": session.governance_policy_version,
+            "evidence_policy_version": session.evidence_policy_version,
+            "manifest_digest": session.manifest_digest,
+            "replay_contract_version": session.replay_contract_version,
             "seed_frame": _json_copy(session.seed_frame_payload),
             "actions": _json_copy(session.actions) or [],
+            "packets": _json_copy(session.packets) or [],
+            "packet_artifacts_digest": _packet_artifacts_digest(
+                session.packets
+            ),
+            "seed_navigation_checkpoint": _json_copy(
+                session.seed_navigation_checkpoint
+            ),
+            "seed_navigation_checkpoint_digest": (
+                _navigation_checkpoint_digest(session.seed_navigation_checkpoint)
+                if session.seed_navigation_checkpoint is not None
+                else None
+            ),
             "branch_id": session.branch_id,
             "lineage_version": int(session.lineage_version),
             "parent_frame_id": session.parent_frame_id,
@@ -1517,6 +1920,9 @@ class EngineApiService:
             "operator_events": _json_copy(session.operator_events) or [],
             "operator_audit": _json_copy(session.operator_audit) or {},
             "operator_ambient": bool(session.operator_ambient),
+            "operator_checkpoint_active": bool(
+                session.operator_checkpoint_active
+            ),
         }
 
 
@@ -1537,6 +1943,10 @@ def _trace_payload(entry: Any) -> Dict[str, Any]:
         "active_transforms": evaln.active_transforms,
         "is_ruin": evaln.is_ruin,
         "violation_count": len(evaln.result.violations),
+        "red_veto_active": bool(entry.trace_metadata.get("red_veto_active", False)),
+        "direct_ruin_criterion_active": bool(
+            entry.trace_metadata.get("direct_ruin_criterion_active", False)
+        ),
         "stage": entry.trace_metadata.get("stage"),
         "stage_events": entry.trace_metadata.get("stage_events", []),
         "frame_id": entry.trace_metadata.get("frame_id"),
@@ -1550,6 +1960,11 @@ def _trace_payload(entry: Any) -> Dict[str, Any]:
             "posture": g.posture,
             "warning_level": g.warning_level,
             "recommended_action": g.recommended_action,
+            "red_veto_active": g.red_veto_active,
+            "ruin_boundary_met": "RUIN_MASS_HIGH" in g.trigger_codes,
+            "direct_ruin_criterion_active": "DIRECT_RUIN_CRITERION_ACTIVE"
+            in g.trigger_codes,
+            "cost_gate_crossed": "COST_GATE_CROSSED" in g.trigger_codes,
             "trigger_codes": list(g.trigger_codes),
             "theta": g.theta,
             "loss_treat": g.loss_treat,
@@ -1582,13 +1997,27 @@ def _build_sign(family: Family, payload: Dict[str, Any]) -> Any:
         return ClinicalSign(
             radicular_pain=_coerce_bool(payload["radicular_pain"], field="radicular_pain"),
             spasm_present=_coerce_bool(payload["spasm_present"], field="spasm_present"),
-            saddle_anesthesia=_coerce_bool(payload.get("saddle_anesthesia", False), field="saddle_anesthesia"),
-            bladder_dysfunction=_coerce_bool(payload.get("bladder_dysfunction", False), field="bladder_dysfunction"),
-            bilateral_weakness=_coerce_bool(payload.get("bilateral_weakness", False), field="bilateral_weakness"),
+            saddle_anesthesia=_coerce_optional_bool(
+                payload.get("saddle_anesthesia"),
+                field="saddle_anesthesia",
+            ),
+            bladder_dysfunction=_coerce_optional_bool(
+                payload.get("bladder_dysfunction"),
+                field="bladder_dysfunction",
+            ),
+            bilateral_weakness=_coerce_optional_bool(
+                payload.get("bilateral_weakness"),
+                field="bilateral_weakness",
+            ),
             progression=_coerce_bool(payload.get("progression", False), field="progression"),
             fever=_coerce_bool(payload.get("fever", False), field="fever"),
             notes=payload.get("notes"),
             followup=payload.get("followup"),
+            evidence_id=_normalize_evidence_id(payload.get("evidence_id")),
+            independent_observation=_coerce_bool(
+                payload.get("independent_observation", False),
+                field="independent_observation",
+            ),
         )
 
     if family == "safety":
@@ -1598,6 +2027,11 @@ def _build_sign(family: Family, payload: Dict[str, Any]) -> Any:
             critical_signal=_coerce_bool(payload["critical_signal"], field="critical_signal"),
             policy_violation=_coerce_bool(payload.get("policy_violation", False), field="policy_violation"),
             notes=payload.get("notes"),
+            evidence_id=_normalize_evidence_id(payload.get("evidence_id")),
+            independent_observation=_coerce_bool(
+                payload.get("independent_observation", False),
+                field="independent_observation",
+            ),
         )
 
     raise ValueError(f"Unsupported family: {family}")
@@ -1631,18 +2065,31 @@ def _parse_governance_calibration(payload: Optional[Dict[str, Any]]) -> Optional
         return None
     if not isinstance(payload, dict):
         raise ValueError("Governance calibration must be an object.")
+    version = str(payload.get("version", DEFAULT_CALIBRATION_VERSION))
+    _validate_calibration_version(version)
+    if version == "logit-v1":
+        ambiguity_default = 1.0
+        contradiction_default = 0.8
+        entropy_default = 0.4
+        margin_collapse_default = 0.6
+    else:
+        ambiguity_default = 0.0
+        contradiction_default = 0.0
+        entropy_default = 0.0
+        margin_collapse_default = 0.0
     calibration = GovernanceCalibration(
         prior_pi=float(payload.get("prior_pi", 0.1)),
         intercept=float(payload.get("intercept", 0.0)),
         slope=float(payload.get("slope", 1.0)),
         w_violation_pressure=float(payload.get("w_violation_pressure", 1.4)),
-        w_ambiguity_pressure=float(payload.get("w_ambiguity_pressure", 1.0)),
-        w_contradiction_density=float(payload.get("w_contradiction_density", 0.8)),
-        w_entropy=float(payload.get("w_entropy", 0.4)),
-        w_margin_collapse=float(payload.get("w_margin_collapse", 0.6)),
-        version=str(payload.get("version", "logit-v1")),
+        w_ambiguity_pressure=float(payload.get("w_ambiguity_pressure", ambiguity_default)),
+        w_contradiction_density=float(
+            payload.get("w_contradiction_density", contradiction_default)
+        ),
+        w_entropy=float(payload.get("w_entropy", entropy_default)),
+        w_margin_collapse=float(payload.get("w_margin_collapse", margin_collapse_default)),
+        version=version,
     )
-    _validate_calibration_version(calibration.version)
     return calibration
 
 
@@ -1690,12 +2137,39 @@ def _coerce_bool(value: Any, *, field: str) -> bool:
     raise ValueError(f"{field} must be a boolean (true/false).")
 
 
+def _coerce_optional_bool(value: Any, *, field: str) -> Optional[bool]:
+    if value is None:
+        return None
+    return _coerce_bool(value, field=field)
+
+
+def _normalize_evidence_id(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("evidence_id must be a string when provided.")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("evidence_id must be non-empty when provided.")
+    if len(normalized) > 256:
+        raise ValueError("evidence_id must be 256 characters or fewer.")
+    return normalized
+
+
 def _frame_from_payload(payload: Optional[Dict[str, Any]], costs: Optional[GovernanceCosts]) -> Optional[FrameVersion]:
     if payload is None:
         return None
     text = payload.get("text")
     if not text:
         raise ValueError("Frame payload requires non-empty 'text'.")
+    payload_costs = payload.get("costs")
+    if not isinstance(payload_costs, dict):
+        payload_costs = {}
+
+    def frame_cost(name: str, fallback: Optional[float] = None) -> Optional[float]:
+        raw = payload.get(name, payload_costs.get(name))
+        return float(raw) if raw is not None else fallback
+
     return FrameVersion(
         frame_id=str(payload.get("frame_id") or uuid4()),
         frame_version=int(payload.get("frame_version") or 1),
@@ -1706,10 +2180,127 @@ def _frame_from_payload(payload: Optional[Dict[str, Any]], costs: Optional[Gover
         rationale_for_change=payload.get("rationale_for_change"),
         constraints_hard=tuple(payload.get("constraints_hard", []) or []),
         constraints_soft=tuple(payload.get("constraints_soft", []) or []),
-        c_fp=float(payload.get("c_fp")) if payload.get("c_fp") is not None else (costs.c_fp if costs else None),
-        c_fn=float(payload.get("c_fn")) if payload.get("c_fn") is not None else (costs.c_fn if costs else None),
-        c_delay=float(payload.get("c_delay")) if payload.get("c_delay") is not None else None,
+        c_fp=frame_cost("c_fp", costs.c_fp if costs else None),
+        c_fn=frame_cost("c_fn", costs.c_fn if costs else None),
+        c_delay=frame_cost("c_delay"),
     )
+
+
+def _validated_iteration_packet_meta(packet: Dict[str, Any]) -> Dict[str, Any]:
+    if packet.get("schema_id") != "nepsis.iteration_packet":
+        raise ValueError("Expected an iteration packet artifact.")
+    meta = packet.get("meta")
+    if not isinstance(meta, dict):
+        raise ValueError("Stored iteration packet requires meta.")
+    packet_id = meta.get("packet_id")
+    if not isinstance(packet_id, str) or not packet_id.strip():
+        raise ValueError("Stored iteration packet requires a non-empty packet_id.")
+    iteration = meta.get("iteration")
+    if isinstance(iteration, bool) or not isinstance(iteration, int) or iteration < 0:
+        raise ValueError("Stored iteration packet requires a non-negative iteration.")
+    parent_packet_id = meta.get("parent_packet_id")
+    if parent_packet_id is not None and (
+        not isinstance(parent_packet_id, str) or not parent_packet_id.strip()
+    ):
+        raise ValueError(
+            "Stored iteration packet parent_packet_id must be null or non-empty."
+        )
+    return {
+        "packet_id": packet_id,
+        "parent_packet_id": parent_packet_id,
+        "iteration": iteration,
+    }
+
+
+def _iteration_packets_from_artifacts(
+    packets: list[Dict[str, Any]],
+    *,
+    require_rooted_chain: bool = True,
+) -> list[Dict[str, Any]]:
+    iteration_packets = [
+        packet
+        for packet in packets
+        if packet.get("schema_id") == "nepsis.iteration_packet"
+    ]
+    seen_ids: set[str] = set()
+    previous_meta: Optional[Dict[str, Any]] = None
+    for packet in iteration_packets:
+        meta = _validated_iteration_packet_meta(packet)
+        if meta["packet_id"] in seen_ids:
+            raise ValueError("Stored iteration packet IDs must be unique.")
+        seen_ids.add(meta["packet_id"])
+        if previous_meta is None:
+            if require_rooted_chain and (
+                meta["parent_packet_id"] is not None or meta["iteration"] != 0
+            ):
+                raise ValueError("Stored iteration packet lineage is not rooted.")
+        elif (
+            meta["parent_packet_id"] != previous_meta["packet_id"]
+            or meta["iteration"] != previous_meta["iteration"] + 1
+        ):
+            raise ValueError("Stored iteration packet lineage is discontinuous.")
+        previous_meta = meta
+    return iteration_packets
+
+
+def _normalized_replay_packet(packet: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = _json_copy(packet)
+    if not isinstance(normalized, dict):
+        raise ValueError("Replay packet must be an object.")
+    meta = normalized.get("meta")
+    if not isinstance(meta, dict):
+        raise ValueError("Replay iteration packet requires meta.")
+    for dynamic_key in ("packet_id", "created_at", "parent_packet_id"):
+        meta.pop(dynamic_key, None)
+    return normalized
+
+
+def _validate_replayed_packet_artifacts(
+    *,
+    stored_packets: list[Dict[str, Any]],
+    generated_packets: list[Dict[str, Any]],
+    emit_packet: bool,
+    allow_prior_history: bool,
+) -> list[Dict[str, Any]]:
+    stored_iterations = _iteration_packets_from_artifacts(stored_packets)
+    if any(
+        packet.get("schema_id") != "nepsis.iteration_packet"
+        for packet in generated_packets
+    ):
+        raise ValueError("Semantic replay emitted an unsupported packet artifact.")
+    generated_iterations = _iteration_packets_from_artifacts(
+        generated_packets,
+        require_rooted_chain=False,
+    )
+    if not emit_packet:
+        if generated_iterations or stored_iterations:
+            raise ValueError(
+                "Iteration packet artifacts are incompatible with emit_packet=false."
+            )
+        return []
+    if len(stored_iterations) < len(generated_iterations):
+        raise ValueError(
+            "Stored packet artifacts are incomplete for semantic replay."
+        )
+    if not allow_prior_history and len(stored_iterations) != len(
+        generated_iterations
+    ):
+        raise ValueError(
+            "Stored packet artifacts contain history outside semantic replay."
+        )
+    current_segment = (
+        stored_iterations[-len(generated_iterations) :]
+        if generated_iterations
+        else []
+    )
+    for stored, generated in zip(current_segment, generated_iterations):
+        if _normalized_replay_packet(stored) != _normalized_replay_packet(
+            generated
+        ):
+            raise ValueError(
+                "Stored packet artifact diverges from semantic replay."
+            )
+    return current_segment
 
 
 def _frame_ref(frame: Optional[FrameVersion]) -> Optional[str]:
@@ -1777,10 +2368,11 @@ _THRESHOLD_COACH_PROMPTS: dict[str, str] = {
     "case_reasoning_compiler": "Thresholding requires a valid Case Reasoning Compiler packet tied to this frame.",
     "posterior_available": "Posterior is missing. Run interpretation to generate hypotheses first.",
     "loss_asymmetry": "Define loss asymmetry (false positive vs false negative cost).",
-    "red_override_metadata": "Missing red-gate metadata. Re-run interpretation to refresh governance values.",
+    "red_override_metadata": "Missing protective-action metadata. Re-run interpretation to refresh governance values.",
     "decision_declared": "Declare threshold decision: recommend action or hold.",
     "hold_reason": "If holding, explain what clarification or evidence is required.",
-    "red_override_enforced": "Red space is active. Recommendation stays blocked until you reframe, release, or gather the discriminator you need.",
+    "red_override_enforced": "A RED veto is active. Recommendation stays blocked until governed release or narrowing evidence is recorded.",
+    "cost_review_disposition": "Acknowledge the cost-derived review and record a rationale before recommending.",
 }
 
 
@@ -1941,9 +2533,21 @@ def _build_operator_audit_packet(
         },
         "threshold": threshold_packet,
         "red_override": {
-            "active": threshold_packet.get("gate_crossed") is True,
+            "active": threshold_packet.get("red_veto_active") is True,
             "warning_level": threshold_packet.get("warning_level"),
             "recommendation": threshold_packet.get("recommendation"),
+        },
+        "protective_action_review": {
+            "active": threshold_packet.get("gate_crossed") is True,
+            "cost_review_required": threshold_packet.get("cost_review_required")
+            is True,
+            "cost_review_acknowledged": threshold_packet.get(
+                "cost_review_acknowledged"
+            )
+            is True,
+            "cost_review_rationale": threshold_packet.get(
+                "cost_review_rationale"
+            ),
         },
         "latest_iteration_packet_id": _packet_meta_value(latest_packet, "packet_id"),
         "latest_iteration": _packet_meta_value(latest_packet, "iteration"),
@@ -2236,6 +2840,10 @@ def _build_threshold_stage_packet(
 
     governance = latest_packet.get("governance") if isinstance(latest_packet, dict) else None
     metrics = governance.get("metrics") if isinstance(governance, dict) else None
+    still = latest_packet.get("still") if isinstance(latest_packet, dict) else None
+    finalization_blockers = (
+        still.get("finalization_blockers") if isinstance(still, dict) else None
+    )
 
     loss_treat = _to_optional_float(_context_value(section, "loss_treat", "lossTreat"))
     if loss_treat is None and isinstance(governance, dict):
@@ -2252,14 +2860,60 @@ def _build_threshold_stage_packet(
     if not warning_level and isinstance(governance, dict):
         warning_level = _as_string(governance.get("warning_level"))
 
-    gate_crossed = _to_optional_bool(_context_value(section, "gate_crossed", "gateCrossed"))
-    if gate_crossed is None and "gate_crossed" in compiler_threshold:
-        gate_crossed = _to_optional_bool(compiler_threshold.get("gate_crossed"))
-    if gate_crossed is None and isinstance(governance, dict) and isinstance(metrics, dict):
+    gate_signals: list[bool] = []
+    red_veto_signals: list[bool] = []
+    cost_review_signals: list[bool] = []
+    requested_gate = _to_optional_bool(_context_value(section, "gate_crossed", "gateCrossed"))
+    if requested_gate is not None:
+        gate_signals.append(requested_gate)
+    if "gate_crossed" in compiler_threshold:
+        compiler_gate = _to_optional_bool(compiler_threshold.get("gate_crossed"))
+        if compiler_gate is not None:
+            gate_signals.append(compiler_gate)
+    if isinstance(governance, dict):
+        runtime_veto = _to_optional_bool(governance.get("red_veto_active"))
+        if runtime_veto is not None:
+            gate_signals.append(runtime_veto)
+            red_veto_signals.append(runtime_veto)
+        trigger_codes = governance.get("trigger_codes")
+        if isinstance(trigger_codes, list):
+            direct_or_ruin = any(
+                code
+                in {
+                    "DIRECT_RUIN_CRITERION_ACTIVE",
+                    "RUIN_MASS_HIGH",
+                }
+                for code in trigger_codes
+            )
+            cost_review = "COST_GATE_CROSSED" in trigger_codes
+            red_veto_signals.append(direct_or_ruin)
+            cost_review_signals.append(cost_review)
+            gate_signals.extend((direct_or_ruin, cost_review))
+    if not cost_review_signals and isinstance(governance, dict) and isinstance(metrics, dict):
         p_bad = _to_optional_float(metrics.get("p_bad"))
         theta = _to_optional_float(governance.get("theta"))
         if p_bad is not None and theta is not None:
-            gate_crossed = p_bad >= theta
+            cost_review = threshold_crossed(p_bad, theta)
+            cost_review_signals.append(cost_review)
+            gate_signals.append(cost_review)
+    if isinstance(finalization_blockers, list):
+        authoritative_red_blockers = {
+            "direct_ruin_criterion_active",
+            "red_veto_active",
+            "red_capture_review_required",
+        }
+        runtime_still_veto = any(
+            isinstance(blocker, str)
+            and blocker in authoritative_red_blockers
+            for blocker in finalization_blockers
+        )
+        gate_signals.append(runtime_still_veto)
+        red_veto_signals.append(runtime_still_veto)
+    gate_crossed = any(gate_signals) if gate_signals else None
+    red_veto_active = any(red_veto_signals) if red_veto_signals else False
+    cost_review_required = (
+        any(cost_review_signals) if cost_review_signals else False
+    )
 
     recommendation = _string_or_default(
         section,
@@ -2279,6 +2933,22 @@ def _build_threshold_stage_packet(
         "loss_not_treat": loss_not_treat,
         "warning_level": warning_level or None,
         "gate_crossed": gate_crossed,
+        "red_veto_active": red_veto_active,
+        "cost_review_required": cost_review_required,
+        "cost_review_acknowledged": bool(
+            _to_optional_bool(
+                _context_value(
+                    section,
+                    "cost_review_acknowledged",
+                    "costReviewAcknowledged",
+                )
+            )
+        ),
+        "cost_review_rationale": _string_or_default(
+            section,
+            keys=("cost_review_rationale", "costReviewRationale"),
+            default="",
+        ),
         "recommendation": recommendation or None,
         "recommended_threshold_action": _string_or_default(
             section,
@@ -2448,7 +3118,24 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
     red_gate_metadata_ready = packet["warning_level"] is not None and packet["gate_crossed"] is not None
     decision_declared = packet["decision"] != "undecided"
     hold_reason_ready = packet["decision"] != "hold" or _text_present(packet["hold_reason"])
-    red_override_violation = packet["gate_crossed"] is True and packet["decision"] == "recommend"
+    red_override_violation = (
+        packet.get("red_veto_active") is True
+        and packet["decision"] == "recommend"
+    )
+    cost_review_ready = (
+        packet.get("cost_review_required") is not True
+        or packet["decision"] != "recommend"
+        or (
+            packet.get("cost_review_acknowledged") is True
+            and _text_present(packet.get("cost_review_rationale"))
+        )
+    )
+    unclassified_gate_violation = (
+        packet["gate_crossed"] is True
+        and packet.get("red_veto_active") is not True
+        and packet.get("cost_review_required") is not True
+        and packet["decision"] == "recommend"
+    )
 
     return [
         {
@@ -2477,7 +3164,7 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
         },
         {
             "key": "red_override_metadata",
-            "label": "Red override check",
+            "label": "Protective-action gate",
             "status": "pass" if red_gate_metadata_ready else "block",
             "detail": "Gate metadata available."
             if red_gate_metadata_ready
@@ -2501,11 +3188,25 @@ def _evaluate_threshold_checks(packet: Dict[str, Any]) -> list[Dict[str, Any]]:
         },
         {
             "key": "red_override_enforced",
-            "label": "Red override enforcement",
-            "status": "block" if red_override_violation else "pass",
-            "detail": "Red gate crossed. Choose hold or reframe; recommendation cannot proceed while red risk is active."
+            "label": "RED veto enforcement",
+            "status": "block"
+            if red_override_violation or unclassified_gate_violation
+            else "pass",
+            "detail": "RED veto active. Choose hold or reframe; recommendation cannot proceed while the protected criterion remains active."
             if red_override_violation
-            else "Red override discipline satisfied.",
+            else "Unclassified protective-action gate requires hold or re-evaluation."
+            if unclassified_gate_violation
+            else "RED veto discipline satisfied.",
+        },
+        {
+            "key": "cost_review_disposition",
+            "label": "Cost-review disposition",
+            "status": "pass" if cost_review_ready else "block",
+            "detail": "Cost-derived review was explicitly dispositioned."
+            if packet.get("cost_review_required") is True and cost_review_ready
+            else "Acknowledge the cost-derived review and provide a rationale before recommending."
+            if not cost_review_ready
+            else "No cost-derived review requires disposition.",
         },
     ]
 
@@ -2587,6 +3288,28 @@ def _json_copy(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
 
+def _navigation_checkpoint_digest(checkpoint: Dict[str, Any]) -> str:
+    canonical = json.dumps(
+        checkpoint,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _packet_artifacts_digest(packets: list[Dict[str, Any]]) -> str:
+    canonical = json.dumps(
+        packets,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _resolve_store_path(store_path: Optional[str]) -> Optional[Path]:
     configured = store_path if store_path is not None else os.getenv("NEPSIS_API_STORE_PATH")
     if configured is None:
@@ -2636,7 +3359,10 @@ def _normalize_pagination(*, limit: int, offset: int) -> tuple[int, int]:
 
 
 def _allowed_calibration_versions() -> set[str]:
-    raw = os.getenv("NEPSIS_API_ALLOWED_CALIBRATION_VERSIONS", "logit-v1")
+    raw = os.getenv(
+        "NEPSIS_API_ALLOWED_CALIBRATION_VERSIONS",
+        "logit-v1,logit-v2",
+    )
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 

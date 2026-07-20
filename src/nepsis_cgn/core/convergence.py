@@ -82,16 +82,32 @@ _REASON_MAP: dict[str, ConvergenceReason] = {
     "RUIN_MASS_HIGH": ConvergenceReason(
         code="RUIN_MASS_HIGH",
         title="Ruin Mass Elevated",
-        message="Posterior mass on catastrophic hypotheses exceeds policy threshold.",
+        message="Posterior mass on catastrophic hypotheses meets or exceeds policy threshold.",
         next_discriminator="Take protective action and gather data that can safely de-risk.",
+        severity="high",
+    ),
+    "DIRECT_RUIN_CRITERION_ACTIVE": ConvergenceReason(
+        code="DIRECT_RUIN_CRITERION_ACTIVE",
+        title="Direct Ruin Criterion Active",
+        message=(
+            "A deterministic protected criterion is active independently of posterior mass."
+        ),
+        next_discriminator=(
+            "Contain the named exposure and verify the criterion without treating severity as hypothesis truth."
+        ),
         severity="high",
     ),
     "COST_GATE_CROSSED": ConvergenceReason(
         code="COST_GATE_CROSSED",
-        title="Cost Gate Crossed",
-        message="Estimated bad-state probability exceeds cost-derived decision threshold.",
-        next_discriminator="Validate risk estimate calibration and run one high-yield check.",
-        severity="high",
+        title="Protective-Action Cost Review",
+        message=(
+            "Estimated bad-state probability exceeds the cost-derived action threshold; "
+            "this requests review but does not establish truth or activate a RED veto."
+        ),
+        next_discriminator=(
+            "Check calibration and explicitly weigh the bounded safeguard burden before acting."
+        ),
+        severity="medium",
     ),
     "ANTI_STALL": ConvergenceReason(
         code="ANTI_STALL",
@@ -99,6 +115,19 @@ _REASON_MAP: dict[str, ConvergenceReason] = {
         message="Mixture mode dwell time exceeded without decisive separation.",
         next_discriminator="Run mandatory discriminator action or choose safest fallback policy.",
         severity="medium",
+    ),
+    "RED_CAPTURE_REVIEW": ConvergenceReason(
+        code="RED_CAPTURE_REVIEW",
+        title="RED Capture Review",
+        message=(
+            "RED has remained action-governing across the review limit; the veto stays active "
+            "while its applicability and frame are challenged."
+        ),
+        next_discriminator=(
+            "Run a safe discriminator or ZeroBack that preserves the hazard record while testing "
+            "whether it applies to the current frame."
+        ),
+        severity="high",
     ),
 }
 

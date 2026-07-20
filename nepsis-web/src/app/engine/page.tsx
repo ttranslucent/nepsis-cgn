@@ -53,6 +53,11 @@ import {
   type AssistReview,
 } from "@/app/engine/operatorAssist";
 import { withCsrfHeader } from "@/lib/csrfClient";
+import {
+  containsAffirmedAny,
+  parseBoolTag,
+  parseStringTag,
+} from "@/lib/evidenceParsing";
 
 type ChatRole = "human" | "nepsis";
 type DetachedRole = "human" | "assistant";
@@ -229,6 +234,8 @@ type EngineWorkspaceState = {
   contradictions_note: string;
   threshold_decision: ThresholdDecision;
   threshold_hold_reason: string;
+  threshold_cost_review_acknowledged: boolean;
+  threshold_cost_review_rationale: string;
   report_result: EngineStepResponse | null;
   stage_audit_context: StageAuditContextOverrides;
 };
@@ -381,48 +388,32 @@ function formatPct(value: number | undefined | null): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function parseBoolTag(text: string, tag: string): boolean | undefined {
-  const regex = new RegExp(`${tag}\\s*[:=]\\s*(true|false|yes|no|1|0)`, "i");
-  const match = text.match(regex);
-  if (!match) {
-    return undefined;
+function unevaluatedReportEvidence(fullText: string, lastEvaluatedText: string): string {
+  const full = fullText.trim();
+  const previous = lastEvaluatedText.trim();
+  if (!previous) {
+    return full;
   }
-  const token = match[1].toLowerCase();
-  return token === "true" || token === "yes" || token === "1";
-}
-
-function containsAny(haystack: string, terms: readonly string[]): boolean {
-  return terms.some((term) => haystack.includes(term));
-}
-
-function containsAffirmedAny(haystack: string, terms: readonly string[]): boolean {
-  return terms.some((term) => containsAffirmedTerm(haystack, term));
-}
-
-function containsAffirmedTerm(haystack: string, term: string): boolean {
-  let start = 0;
-  while (start < haystack.length) {
-    const index = haystack.indexOf(term, start);
-    if (index === -1) {
-      return false;
-    }
-    if (!isNegatedEvidenceWindow(haystack, index, term.length)) {
-      return true;
-    }
-    start = index + term.length;
+  if (full === previous) {
+    return "";
   }
-  return false;
+  if (full.startsWith(previous)) {
+    return full.slice(previous.length).replace(/^\s+/, "");
+  }
+  return full;
 }
 
-function isNegatedEvidenceWindow(text: string, termIndex: number, termLength: number): boolean {
-  const before = text.slice(Math.max(0, termIndex - 72), termIndex);
-  const after = text.slice(termIndex + termLength, termIndex + termLength + 48);
-  const around = `${before}${text.slice(termIndex, termIndex + termLength)}${after}`;
-  return (
-    /\b(no|not|without|none|denies|denied|absent|negative for|unconfirmed)\b/.test(before) ||
-    /\bnot\s+(confirmed|present|observed|identified|established)\b/.test(after) ||
-    /\b(no|not|without)\b[^.!?\n;]{0,80}\b(confirmed|present|observed|identified|established|yet)\b/.test(around)
-  );
+async function reportEvidenceId(sessionId: string, text: string): Promise<string> {
+  const explicit = parseStringTag(text, "evidence_id");
+  if (explicit) {
+    return explicit;
+  }
+  const input = new TextEncoder().encode(`${sessionId}\n${text}`);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", input);
+  const hex = Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+  return `report-sha256:${hex}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -737,6 +728,12 @@ function readWorkspaceState(value: unknown): Partial<EngineWorkspaceState> | nul
     contradictions_note: readString(record.contradictions_note) ?? "",
     threshold_decision: isThresholdDecision(record.threshold_decision) ? record.threshold_decision : "undecided",
     threshold_hold_reason: readString(record.threshold_hold_reason) ?? "",
+    threshold_cost_review_acknowledged: readBoolean(
+      record.threshold_cost_review_acknowledged,
+      false,
+    ),
+    threshold_cost_review_rationale:
+      readString(record.threshold_cost_review_rationale) ?? "",
     report_result: isEngineStepResponse(record.report_result) ? record.report_result : null,
     stage_audit_context: stageAuditContext as StageAuditContextOverrides | undefined,
   };
@@ -851,18 +848,28 @@ function deriveClinicalSign(text: string): SignBuildResult {
     if (tagged !== undefined) {
       return tagged;
     }
-    if (containsAny(lower, terms)) {
+    if (containsAffirmedAny(lower, terms)) {
       return true;
     }
     return fallback;
+  };
+  const redFlagValue = (tag: string, terms: readonly string[]): boolean | null => {
+    const tagged = parseBoolTag(text, tag);
+    if (tagged !== undefined) {
+      return tagged;
+    }
+    if (containsAffirmedAny(lower, terms)) {
+      return true;
+    }
+    return null;
   };
   return {
     sign: {
       radicular_pain: value("radicular_pain", ["radicular", "shooting pain", "nerve root"]),
       spasm_present: value("spasm_present", ["spasm", "muscle spasm", "muscle tight"]),
-      saddle_anesthesia: value("saddle_anesthesia", ["saddle anesthesia", "saddle numbness"]),
-      bladder_dysfunction: value("bladder_dysfunction", ["bladder dysfunction", "urinary retention", "incontinence"]),
-      bilateral_weakness: value("bilateral_weakness", ["bilateral weakness", "both legs weak"]),
+      saddle_anesthesia: redFlagValue("saddle_anesthesia", ["saddle anesthesia", "saddle numbness"]),
+      bladder_dysfunction: redFlagValue("bladder_dysfunction", ["bladder dysfunction", "urinary retention", "incontinence"]),
+      bilateral_weakness: redFlagValue("bilateral_weakness", ["bilateral weakness", "both legs weak"]),
       progression: value("progression", ["worsening", "progression", "deteriorating"]),
       fever: value("fever", ["fever", "febrile"]),
       notes: optionalText(text),
@@ -1310,6 +1317,9 @@ function gateTargetId(stageId: GateStageId, checkKey: string): string {
   if (checkKey === "hold_reason") {
     return "threshold-hold-reason";
   }
+  if (checkKey === "cost_review_disposition") {
+    return "threshold-cost-review-rationale";
+  }
   return "stage-threshold";
 }
 
@@ -1450,6 +1460,8 @@ export default function EnginePage() {
   const [contradictionsNote, setContradictionsNote] = useState("");
   const [thresholdDecision, setThresholdDecision] = useState<ThresholdDecision>("undecided");
   const [thresholdHoldReason, setThresholdHoldReason] = useState("");
+  const [costReviewAcknowledged, setCostReviewAcknowledged] = useState(false);
+  const [costReviewRationale, setCostReviewRationale] = useState("");
 
   const [frameLocked, setFrameLocked] = useState(false);
   const [reportLocked, setReportLocked] = useState(false);
@@ -1818,8 +1830,12 @@ export default function EnginePage() {
     [reportResult?.posterior],
   );
   const posteriorHypotheses = useMemo(() => posteriorRows.map(([name]) => name), [posteriorRows]);
+  const redVetoActive = governance?.red_veto_active ?? null;
+  const costReviewRequired = governance?.cost_gate_crossed ?? null;
   const gateCrossed =
-    governance?.p_bad != null && governance?.theta != null ? governance.p_bad >= governance.theta : null;
+    redVetoActive != null || costReviewRequired != null
+      ? Boolean(redVetoActive || costReviewRequired)
+      : null;
 
   const frameGate = useMemo(
     () =>
@@ -1863,9 +1879,13 @@ export default function EnginePage() {
         lossNotTreat: governance?.loss_notreat,
         warningLevel: governance?.warning_level,
         gateCrossed,
+        redVetoActive,
+        costReviewRequired,
         recommendation: governance?.recommended_action ?? reportResult?.decision ?? null,
         decision: thresholdDecision,
         holdReason: thresholdHoldReason,
+        costReviewAcknowledged,
+        costReviewRationale,
       }),
     [
       posteriorHypotheses,
@@ -1873,10 +1893,14 @@ export default function EnginePage() {
       governance?.loss_notreat,
       governance?.warning_level,
       gateCrossed,
+      redVetoActive,
+      costReviewRequired,
       governance?.recommended_action,
       reportResult?.decision,
       thresholdDecision,
       thresholdHoldReason,
+      costReviewAcknowledged,
+      costReviewRationale,
     ],
   );
   const frameGateView = useMemo<GateResult<unknown>>(() => {
@@ -2188,6 +2212,8 @@ export default function EnginePage() {
           current_frame: frameDraft,
           threshold_decision: thresholdDecision,
           threshold_hold_reason: thresholdHoldReason,
+          threshold_cost_review_acknowledged: costReviewAcknowledged,
+          threshold_cost_review_rationale: costReviewRationale,
           next_frame: nextFrameDraft,
           gate_status: {
             frame: displayFrameGateStatus,
@@ -2263,6 +2289,10 @@ export default function EnginePage() {
           threshold: {
             decision: thresholdDecision,
             hold_reason: thresholdHoldReason,
+            red_veto_active: redVetoActive,
+            cost_review_required: costReviewRequired,
+            cost_review_acknowledged: costReviewAcknowledged,
+            cost_review_rationale: costReviewRationale,
             posterior_hypotheses: posteriorHypotheses,
             recommendation: governance?.recommended_action ?? reportResult?.decision ?? null,
             warning_level: governance?.warning_level ?? null,
@@ -2601,6 +2631,8 @@ export default function EnginePage() {
     setContradictionsNote("");
     setThresholdDecision("undecided");
     setThresholdHoldReason("");
+    setCostReviewAcknowledged(false);
+    setCostReviewRationale("");
     setReportChat([REPORT_STARTER_MESSAGE]);
     setPosteriorChat([POSTERIOR_STARTER_MESSAGE]);
   }
@@ -2656,6 +2688,11 @@ export default function EnginePage() {
     } else if (stage === "threshold") {
       lines.push(`Posterior hypotheses: ${posteriorHypotheses.length > 0 ? posteriorHypotheses.join(", ") : "none"}`);
       lines.push(`Decision declaration: ${thresholdDecision}`);
+      lines.push(
+        `RED veto: ${redVetoActive == null ? "not evaluated" : redVetoActive ? "active" : "clear"}; cost review: ${
+          costReviewRequired == null ? "not evaluated" : costReviewRequired ? "required" : "not required"
+        }`,
+      );
       lines.push("Explain what is still needed before commit without making the final decision for the operator.");
     } else {
       lines.push("Ask one question or propose one reviewable patch that would make the frame lockable.");
@@ -2717,6 +2754,8 @@ export default function EnginePage() {
         ...(thresholdGate.packet as unknown as Record<string, unknown>),
         decision: thresholdDecision,
         hold_reason: thresholdHoldReason,
+        cost_review_acknowledged: costReviewAcknowledged,
+        cost_review_rationale: costReviewRationale,
         ...(overrides?.threshold ?? {}),
       };
       return stageAudit(
@@ -2737,6 +2776,8 @@ export default function EnginePage() {
       thresholdGate.packet,
       thresholdDecision,
       thresholdHoldReason,
+      costReviewAcknowledged,
+      costReviewRationale,
       stageAudit,
     ],
   );
@@ -2751,6 +2792,10 @@ export default function EnginePage() {
             ...(thresholdGate.packet as unknown as Record<string, unknown>),
             decision: overrides.threshold_decision ?? thresholdDecision,
             hold_reason: overrides.threshold_hold_reason ?? thresholdHoldReason,
+            cost_review_acknowledged:
+              overrides.threshold_cost_review_acknowledged ?? costReviewAcknowledged,
+            cost_review_rationale:
+              overrides.threshold_cost_review_rationale ?? costReviewRationale,
           },
         };
       return {
@@ -2764,6 +2809,10 @@ export default function EnginePage() {
         contradictions_note: overrides.contradictions_note ?? contradictionsNote,
         threshold_decision: overrides.threshold_decision ?? thresholdDecision,
         threshold_hold_reason: overrides.threshold_hold_reason ?? thresholdHoldReason,
+        threshold_cost_review_acknowledged:
+          overrides.threshold_cost_review_acknowledged ?? costReviewAcknowledged,
+        threshold_cost_review_rationale:
+          overrides.threshold_cost_review_rationale ?? costReviewRationale,
         report_result: "report_result" in overrides ? (overrides.report_result ?? null) : reportResult,
         stage_audit_context: stageAuditContext,
       };
@@ -2771,6 +2820,8 @@ export default function EnginePage() {
     [
       contradictionsNote,
       contradictionsStatus,
+      costReviewAcknowledged,
+      costReviewRationale,
       frameGate.packet,
       frameLocked,
       interpretationGate.packet,
@@ -2836,6 +2887,8 @@ export default function EnginePage() {
     reportResult,
     thresholdDecision,
     thresholdHoldReason,
+    costReviewAcknowledged,
+    costReviewRationale,
   ]);
 
   async function handleOpenSession() {
@@ -2886,6 +2939,10 @@ export default function EnginePage() {
     setContradictionsNote(workspace?.contradictions_note ?? "");
     setThresholdDecision(workspace?.threshold_decision ?? "undecided");
     setThresholdHoldReason(workspace?.threshold_hold_reason ?? "");
+    setCostReviewAcknowledged(
+      workspace?.threshold_cost_review_acknowledged ?? false,
+    );
+    setCostReviewRationale(workspace?.threshold_cost_review_rationale ?? "");
     setAssistReviews([]);
     setEditingAssistId(null);
     setActiveAssistTarget(null);
@@ -2983,6 +3040,8 @@ export default function EnginePage() {
         threshold: {
           decision: thresholdDecision,
           hold_reason: thresholdHoldReason,
+          cost_review_acknowledged: costReviewAcknowledged,
+          cost_review_rationale: costReviewRationale,
         },
       },
     });
@@ -3153,6 +3212,8 @@ export default function EnginePage() {
         contradictions_note: "",
         threshold_decision: "undecided",
         threshold_hold_reason: "",
+        threshold_cost_review_acknowledged: false,
+        threshold_cost_review_rationale: "",
         report_result: null,
         stage_audit_context: {
           frame: frameGate.packet as unknown as Record<string, unknown>,
@@ -3195,6 +3256,8 @@ export default function EnginePage() {
       contradictions_note: "",
       threshold_decision: "undecided",
       threshold_hold_reason: "",
+      threshold_cost_review_acknowledged: false,
+      threshold_cost_review_rationale: "",
       report_result: null,
       stage_audit_context: {},
     });
@@ -3342,16 +3405,35 @@ export default function EnginePage() {
       return;
     }
 
-    const signResult = deriveSignFromNarrative(activeSession.family, reportDraftText);
+    const evaluatedReportText = reportDraftText.trim();
+    const newEvidenceText = unevaluatedReportEvidence(
+      evaluatedReportText,
+      lastEvaluatedReportText,
+    );
+    if (!newEvidenceText) {
+      setLocalError("Add a new observation before running CALL + REPORT again.");
+      return;
+    }
+
+    const signResult = deriveSignFromNarrative(activeSession.family, newEvidenceText);
     if (!signResult.sign) {
       setLocalError(signResult.error ?? "Could not build report sign payload.");
       return;
     }
 
-    const evaluatedReportText = reportDraftText.trim();
+    const evidenceId = await reportEvidenceId(
+      activeSession.session_id,
+      newEvidenceText,
+    );
+    const sign = {
+      ...signResult.sign,
+      evidence_id: evidenceId,
+      independent_observation:
+        parseBoolTag(newEvidenceText, "independent_observation") ?? false,
+    };
     const reportRun = await runOperatorReport({
       report_text: evaluatedReportText,
-      sign: signResult.sign,
+      sign,
       interpretation: {
         report_text: evaluatedReportText,
         evidence_count: parseLineList(evaluatedReportText).length,
@@ -3389,12 +3471,20 @@ export default function EnginePage() {
       lossNotTreat: result.governance?.loss_notreat,
       warningLevel: result.governance?.warning_level ?? null,
       gateCrossed:
-        result.governance?.p_bad != null && result.governance?.theta != null
-          ? result.governance.p_bad >= result.governance.theta
+        result.governance?.red_veto_active != null ||
+        result.governance?.cost_gate_crossed != null
+          ? Boolean(
+              result.governance?.red_veto_active ||
+                result.governance?.cost_gate_crossed,
+            )
           : null,
+      redVetoActive: result.governance?.red_veto_active ?? null,
+      costReviewRequired: result.governance?.cost_gate_crossed ?? null,
       recommendation: result.governance?.recommended_action ?? result.decision,
       decision: "undecided",
       holdReason: "",
+      costReviewAcknowledged: false,
+      costReviewRationale: "",
     });
     const interpretationCoachAfterEval = buildInterpretationCoach(evaluatedInterpretationGate);
     const thresholdCoachAfterEval = buildThresholdCoach(evaluatedThresholdGate);
@@ -3411,6 +3501,8 @@ export default function EnginePage() {
             ...evaluatedThresholdGate.packet,
             decision: "undecided",
             hold_reason: "",
+            cost_review_acknowledged: false,
+            cost_review_rationale: "",
           },
         },
       }));
@@ -3422,17 +3514,21 @@ export default function EnginePage() {
         ...(evaluatedThresholdGate.packet as unknown as Record<string, unknown>),
         decision: "undecided",
         hold_reason: "",
+        cost_review_acknowledged: false,
+        cost_review_rationale: "",
       },
     };
     setReportResult(result);
     setLastEvaluatedReportText(evaluatedReportText);
     setThresholdDecision("undecided");
     setThresholdHoldReason("");
+    setCostReviewAcknowledged(false);
+    setCostReviewRationale("");
     if (optionalText(reportInput)) {
       pushReportMessage("human", reportInput.trim());
-      setReportCorpus((prev) => (prev ? `${prev}\n${reportInput.trim()}` : reportInput.trim()));
       setReportInput("");
     }
+    setReportCorpus(evaluatedReportText);
     pushReportMessage(
       "nepsis",
       coachMessage(selectCoach("interpretation", interpretationCoachAfterEval, audit ?? lastAudit)),
@@ -3452,6 +3548,8 @@ export default function EnginePage() {
         contradictions_note: contradictionsNote,
         threshold_decision: "undecided",
         threshold_hold_reason: "",
+        threshold_cost_review_acknowledged: false,
+        threshold_cost_review_rationale: "",
         report_result: result,
         stage_audit_context: persistedStageContext,
       },
@@ -3513,6 +3611,8 @@ export default function EnginePage() {
           ...(thresholdGate.packet as unknown as Record<string, unknown>),
           decision: thresholdDecision,
           hold_reason: thresholdHoldReason,
+          cost_review_acknowledged: costReviewAcknowledged,
+          cost_review_rationale: costReviewRationale,
         },
       },
     });
@@ -3562,6 +3662,8 @@ export default function EnginePage() {
     const thresholdSet = await setOperatorThresholdDecision({
       decision: thresholdDecision,
       hold_reason: thresholdHoldReason,
+      cost_review_acknowledged: costReviewAcknowledged,
+      cost_review_rationale: costReviewRationale,
       assist_acceptances: thresholdAssistAcceptances,
     });
     if (!thresholdSet) {
@@ -3652,6 +3754,8 @@ export default function EnginePage() {
         contradictions_note: "",
         threshold_decision: "undecided",
         threshold_hold_reason: "",
+        threshold_cost_review_acknowledged: false,
+        threshold_cost_review_rationale: "",
         report_result: null,
         stage_audit_context: {},
       },
@@ -3737,7 +3841,9 @@ export default function EnginePage() {
       rationale:
         thresholdDecision === "hold"
           ? thresholdHoldReason || "Hold selected; clarification rationale is not specified."
-          : `Proceed with ${governance?.recommended_action ?? reportResult.decision}.`,
+          : costReviewRequired === true
+            ? costReviewRationale || "Cost-derived review is not yet dispositioned."
+            : `Proceed with ${governance?.recommended_action ?? reportResult.decision}.`,
       evidence,
       nextDiscriminator:
         whyNotConverging[0]?.next_discriminator ||
@@ -3748,6 +3854,8 @@ export default function EnginePage() {
     displayFrameGateStatus,
     displayInterpretationGateStatus,
     displayThresholdGateStatus,
+    costReviewRationale,
+    costReviewRequired,
     frameDraft.red_definition,
     frameDraft.text,
     governance?.recommended_action,
@@ -5023,6 +5131,14 @@ export default function EnginePage() {
                     Send
                   </button>
                 </div>
+                {activeSession?.family === "clinical" ? (
+                  <p className="text-[11px] text-nepsis-muted">
+                    Unmentioned red flags remain unassessed. To record an independent clear exam, use explicit tags such as
+                    {" `saddle_anesthesia:false`, `bladder_dysfunction:false`, `bilateral_weakness:false`, and `independent_observation:true`. "}
+                    Each run updates the posterior from only the observations added since the prior run; earlier report text remains audit context.
+                    Add a source-stable `evidence_id` when available.
+                  </p>
+                ) : null}
 
                 <div className="grid gap-2 md:grid-cols-2">
                   <label className="block text-xs text-nepsis-muted">
@@ -5220,12 +5336,15 @@ export default function EnginePage() {
                   <div className="mt-1 text-nepsis-muted">ruin_mass: {formatPct(governance?.ruin_mass)}</div>
                 </div>
                 <div className="rounded-lg border border-nepsis-border bg-black/20 p-3 text-xs">
-                  <div className="text-nepsis-muted">Gate result</div>
+                  <div className="text-nepsis-muted">Protective gates</div>
                   <div className="mt-1 text-nepsis-text">
                     p_bad {formatPct(governance?.p_bad)} vs theta {formatPct(governance?.theta)}
                   </div>
                   <div className="mt-1 text-nepsis-muted">
-                    gate: {gateCrossed == null ? "n/a" : gateCrossed ? "crossed" : "not crossed"}
+                    RED veto: {redVetoActive == null ? "n/a" : redVetoActive ? "active" : "clear"}
+                  </div>
+                  <div className="text-nepsis-muted">
+                    cost review: {costReviewRequired == null ? "n/a" : costReviewRequired ? "required" : "not required"}
                   </div>
                 </div>
               </div>
@@ -5261,6 +5380,43 @@ export default function EnginePage() {
                       : null}
                   </label>
                 </div>
+                {costReviewRequired === true ? (
+                  <div
+                    id="threshold-cost-review"
+                    className="mt-3 rounded-lg border border-amber-400/40 bg-amber-400/10 p-3"
+                  >
+                    <div className="font-semibold text-amber-100">Cost-derived review</div>
+                    <p className="mt-1 text-nepsis-muted">
+                      The expected-loss threshold was crossed. This calls for explicit review; it is not, by itself, a RED veto.
+                      {redVetoActive === true
+                        ? " A separate RED veto is also active and cannot be overridden by this acknowledgment."
+                        : " A recommendation remains available after the tradeoff is acknowledged and justified."}
+                    </p>
+                    <label className="mt-3 flex items-start gap-2 text-nepsis-text">
+                      <input
+                        id="threshold-cost-review-acknowledged"
+                        type="checkbox"
+                        checked={costReviewAcknowledged}
+                        onChange={(event) => setCostReviewAcknowledged(event.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-nepsis-border bg-black/20"
+                      />
+                      <span>
+                        I reviewed the expected-loss tradeoff, including the cost of protective action and the risk that it obscures a better path.
+                      </span>
+                    </label>
+                    <label className="mt-3 block text-nepsis-muted">
+                      Cost-review rationale
+                      <textarea
+                        id="threshold-cost-review-rationale"
+                        value={costReviewRationale}
+                        onChange={(event) => setCostReviewRationale(event.target.value)}
+                        rows={3}
+                        placeholder="Required to recommend: explain why the protective burden is proportionate and what alternatives remain visible."
+                        className="mt-1 w-full rounded-lg border border-nepsis-border bg-black/20 px-2 py-1.5 text-nepsis-text"
+                      />
+                    </label>
+                  </div>
+                ) : null}
               </div>
 
               {finalDecisionBrief && (

@@ -98,6 +98,10 @@ export type EngineGovernance = {
   posture: string;
   warning_level: string;
   recommended_action: string;
+  red_veto_active?: boolean;
+  ruin_boundary_met?: boolean;
+  direct_ruin_criterion_active?: boolean;
+  cost_gate_crossed?: boolean;
   trigger_codes: string[];
   theta: number;
   loss_treat: number;
@@ -1011,6 +1015,8 @@ export const engineClient = {
     packet: EngineOperatorPacket;
     decision: "recommend" | "hold";
     hold_reason?: string;
+    cost_review_acknowledged?: boolean;
+    cost_review_rationale?: string;
     assist_acceptances?: EngineAssistDisposition[];
   }): Promise<EngineOperatorPacketResult> {
     return requestEngineAllowingPhaseRejection<EngineOperatorPacket>(

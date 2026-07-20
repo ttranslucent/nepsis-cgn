@@ -658,6 +658,8 @@ export function useEngineSession() {
     async (payload: {
       decision: "recommend" | "hold";
       hold_reason?: string;
+      cost_review_acknowledged?: boolean;
+      cost_review_rationale?: string;
       assist_acceptances?: EngineAssistDisposition[];
     }): Promise<EngineOperatorResult | undefined> => {
       const packet = state.operatorPacket;
